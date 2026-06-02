@@ -1,0 +1,28 @@
+{
+  "name": "diablo-management",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "preview": "nuxt preview",
+    "test": "vitest run",
+    "typecheck": "nuxt typecheck"
+  },
+  "dependencies": {
+    "@nuxt/ui": "^3.1.3",
+    "@pinia/nuxt": "^0.11.1",
+    "bcryptjs": "^3.0.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.16.0",
+    "nuxt": "^4.0.0",
+    "pinia": "^3.0.2",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.9",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.3",
+    "vue-tsc": "^3.3.3"
+  }
+}
