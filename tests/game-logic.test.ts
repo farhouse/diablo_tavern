@@ -318,7 +318,7 @@ describe('game logic', () => {
   })
 
     it('portal event is generated and sets portalAvailableUntil and portalEventId', () => {
-      const random = vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0.999999)
       const now = new Date('2026-01-01T00:00:00.000Z')
       const save = createSaveGame('user-1')
       const barbarian = createHero('barbarian')
@@ -328,8 +328,8 @@ describe('game logic', () => {
       startExpedition(save, 'blood-moor', [barbarian.id], now)
       const expedition = save.activeExpeditions[0]
 
-      // Advance to generate events (portal has weight 4, 0.99 of total picks portal)
-      const future = new Date(now.getTime() + 10000)
+      // Portal is the last weighted event bucket, so a near-1 roll selects it.
+      const future = new Date(now.getTime() + 5000)
       advanceExpedition(save, future)
 
       // Verify the portal event went through the real pipeline
@@ -339,6 +339,29 @@ describe('game logic', () => {
       expect(expedition!.portalAvailableUntil).toBeDefined()
       const portalCreatedAt = new Date(portalEvent!.createdAt).getTime()
       expect(new Date(expedition!.portalAvailableUntil!).getTime()).toBe(portalCreatedAt + 30000)
+      random.mockRestore()
+    })
+
+    it('expires portals at each catch-up event time so later events can find a new portal', () => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0.999999)
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      barbarian.derivedStats.life = 200
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+      expedition!.portalAvailableUntil = new Date(now.getTime() + 15000).toISOString()
+      expedition!.portalEventId = 'old-portal'
+
+      advanceExpedition(save, new Date(now.getTime() + 25000))
+
+      const portalEvents = expedition!.events.filter(event => event.type === 'portal')
+      expect(portalEvents).toHaveLength(1)
+      expect(portalEvents[0]?.createdAt).toBe(new Date(now.getTime() + 15000).toISOString())
+      expect(expedition!.portalEventId).toBe(portalEvents[0]?.id)
+      expect(expedition!.portalEventId).not.toBe('old-portal')
       random.mockRestore()
     })
 

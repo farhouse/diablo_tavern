@@ -573,14 +573,9 @@ export function advanceExpedition(save: SaveGame, now: Date = new Date(), expedi
 function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, now: Date, skipPortal = false): void {
   const nowTime = now.getTime()
 
-  // Clear expired portal
-  if (expedition.portalAvailableUntil && new Date(expedition.portalAvailableUntil).getTime() <= nowTime) {
-    delete expedition.portalAvailableUntil
-    delete expedition.portalEventId
-  }
-
   // Returning expedition: check if return is complete, otherwise skip
   if (expedition.status === 'returning') {
+    clearExpiredPortal(expedition, nowTime)
     if (expedition.returnsAt && new Date(expedition.returnsAt).getTime() <= nowTime) {
       completeExpeditionReturn(save, expedition, now)
     }
@@ -595,20 +590,22 @@ function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, n
   const eventsMissed = Math.floor((nowTime - lastEventTime) / EXPEDITION_EVENT_INTERVAL_MS)
   const eventsToGenerate = Math.min(eventsMissed, 5)
 
-  if (eventsToGenerate <= 0) return
+  if (eventsToGenerate <= 0) {
+    clearExpiredPortal(expedition, nowTime)
+    return
+  }
 
   for (let i = 0; i < eventsToGenerate; i++) {
-    const eventTime = new Date(lastEventTime + ((i + 1) * EXPEDITION_EVENT_INTERVAL_MS)).toISOString()
-    const event = generateExpeditionEvent(save, expedition, quest, new Date(eventTime), skipPortal)
+    const eventTimeMs = lastEventTime + ((i + 1) * EXPEDITION_EVENT_INTERVAL_MS)
+    clearExpiredPortal(expedition, eventTimeMs)
+    const eventTime = new Date(eventTimeMs)
+    const event = generateExpeditionEvent(save, expedition, quest, eventTime, skipPortal)
     expedition.events.push(event)
     applyExpeditionEvent(save, expedition, event)
   }
 
   // Clean portal if still expired after catch-up event generation
-  if (expedition.portalAvailableUntil && new Date(expedition.portalAvailableUntil).getTime() <= nowTime) {
-    delete expedition.portalAvailableUntil
-    delete expedition.portalEventId
-  }
+  clearExpiredPortal(expedition, nowTime)
 
   expedition.lastEventAt = new Date(lastEventTime + (eventsToGenerate * EXPEDITION_EVENT_INTERVAL_MS)).toISOString()
   expedition.nextEventAt = new Date(new Date(expedition.lastEventAt).getTime() + EXPEDITION_EVENT_INTERVAL_MS).toISOString()
@@ -902,6 +899,13 @@ function findActiveExpedition(save: SaveGame, expeditionId: string): ActiveExped
   const expedition = save.activeExpeditions.find((candidate) => candidate.id === expeditionId)
   if (!expedition) throw createGameError('Expedition not found')
   return expedition
+}
+
+function clearExpiredPortal(expedition: ActiveExpedition, atTimeMs: number): void {
+  if (expedition.portalAvailableUntil && new Date(expedition.portalAvailableUntil).getTime() <= atTimeMs) {
+    delete expedition.portalAvailableUntil
+    delete expedition.portalEventId
+  }
 }
 
 function rollRarity(lootTableId: string, magicFind: number): ItemRarity {
