@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { EquipmentSlot, HeroClass, Quest, SaveGame } from '~/types/game'
+import type { EquipmentSlot, HeroClass, Quest, SaveGame, CaravanUpgradeId } from '~/types/game'
 import { useAuthStore } from '~/stores/auth'
 
 export const useGameStore = defineStore('game', {
@@ -101,6 +101,24 @@ export const useGameStore = defineStore('game', {
         method: 'POST',
         body: { expeditionId }
       })
+    },
+    async upgradeCaravan(upgradeId: CaravanUpgradeId) {
+      this.error = ''
+      this.save = await this.api<SaveGame>('/api/caravan/upgrade', {
+        method: 'POST',
+        body: { upgradeId }
+      })
+    },
+    async startAppraisal(itemId: string) {
+      this.error = ''
+      this.save = await this.api<SaveGame>('/api/appraiser/start', {
+        method: 'POST',
+        body: { itemId }
+      })
+    },
+    async completeAppraisal() {
+      this.error = ''
+      this.save = await this.api<SaveGame>('/api/appraiser/complete', { method: 'POST' })
     },
     async api<T>(url: string, options: Record<string, unknown> = {}): Promise<T> {
       const auth = useAuthStore()

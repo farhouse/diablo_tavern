@@ -1,0 +1,23 @@
+services:
+  app:
+    build:
+      context: .
+    depends_on:
+      - mongo
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB_NAME: diablo_management
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET before starting production}
+      INVITE_CODE: ${INVITE_CODE:?Set INVITE_CODE before starting production}
+    ports:
+      - "3000:3000"
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:

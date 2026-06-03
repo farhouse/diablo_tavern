@@ -137,6 +137,11 @@ export interface ExpeditionEvent {
     | "boss"
     | "death"
     | "return"
+    | "altar"
+    | "merchant"
+    | "traveler"
+    | "cursedShrine"
+    | "miniBoss"
   createdAt: string
   title: string
   description: string
@@ -145,6 +150,7 @@ export interface ExpeditionEvent {
   goldFound?: number
   lootFound?: Item[]
   depthGained?: number
+  materialsFound?: number
 }
 
 export interface ActiveExpedition {
@@ -162,6 +168,7 @@ export interface ActiveExpedition {
   carriedLoot: Item[]
   carriedGold: number
   carriedXp: number
+  carriedMaterials: number
   bossReady: boolean
   bossDefeated: boolean
 }
@@ -170,20 +177,45 @@ export interface ExpeditionSummary {
   id: string
   questId: string
   heroIds: string[]
+  heroStatuses: { heroId: string; status: HeroStatus }[]
   result: "success" | "retreated" | "defeated" | "death"
   depth: number
   durationMs: number
   loot: Item[]
   gold: number
   xp: number
-  heroesStatus: ExpeditionHeroState[]
+  materials: number
   events: ExpeditionEvent[]
+}
+
+export type CaravanUpgradeId =
+  | "wagons"
+  | "scoutTable"
+  | "stashWagon"
+  | "infirmary"
+  | "appraiser"
+
+export interface AppraisalJob {
+  id: string
+  itemId: string
+  startedAt: string
+  finishesAt: string
+}
+
+export interface CaravanState {
+  level: number
+  upgrades: Record<CaravanUpgradeId, number>
+  services: {
+    appraiserQueue: AppraisalJob[]
+  }
 }
 
 export interface SaveGame {
   _id?: string
   userId: string
   gold: number
+  materials: number
+  caravan: CaravanState
   stashLimit: number
   heroes: Hero[]
   stash: Item[]

@@ -3,7 +3,7 @@
     <div class="section-title">
       <div>
         <h1>Tavern</h1>
-        <p class="muted">Hire heroes and manage your roster.</p>
+        <p class="muted">Hire heroes and manage your active roster. {{ activeHeroCount }} / {{ heroCap }} capacity.</p>
       </div>
       <button class="btn ghost" type="button" @click="game.load">Refresh</button>
     </div>
@@ -52,7 +52,7 @@
           </div>
 
           <p v-if="!hasEnoughGold" class="error">Need {{ hireCost - (game.save?.gold || 0) }} more gold.</p>
-          <p v-else-if="isRosterFull" class="error">Roster is full.</p>
+          <p v-else-if="isRosterFull" class="error">Roster is full. Upgrade Wagons in Caravan.</p>
 
           <div class="row">
             <button class="btn primary" type="button" :disabled="!canHireSelected || hiring" @click="hireSelected">
@@ -67,8 +67,8 @@
 
       <article class="card stack">
         <h2>Roster</h2>
-        <p v-if="!game.save?.heroes.length" class="muted">No heroes hired yet.</p>
-        <div v-for="hero in game.save?.heroes" :key="hero.id" class="card">
+        <p v-if="!activeHeroes.length" class="muted">No active heroes hired yet.</p>
+        <div v-for="hero in activeHeroes" :key="hero.id" class="card">
           <div class="row">
             <div>
               <h3>{{ hero.name }} <span class="muted">Lv {{ hero.level }}</span></h3>
@@ -87,19 +87,53 @@
         </div>
       </article>
     </section>
+
+    <section v-if="cemeteryHeroes.length" class="stack" style="margin-top: 1rem;">
+      <article class="card stack cemetery">
+        <div class="row">
+          <div>
+            <h2>Cemetery</h2>
+            <p class="muted">{{ cemeteryHeroes.length }} fallen {{ cemeteryHeroes.length === 1 ? 'hero' : 'heroes' }} remembered here.</p>
+          </div>
+          <span class="tag bad">{{ cemeteryHeroes.length }} dead</span>
+        </div>
+
+        <div class="grid three">
+          <div v-for="hero in cemeteryHeroes" :key="hero.id" class="card fallen-hero">
+            <div class="row">
+              <div>
+                <h3>{{ hero.name }} <span class="muted">Lv {{ hero.level }}</span></h3>
+                <span class="tag bad">dead</span>
+              </div>
+              <NuxtLink class="btn ghost" :to="`/heroes/${hero.id}`">Details</NuxtLink>
+            </div>
+            <div class="stat-grid">
+              <span class="stat">Power {{ hero.derivedStats.attackPower }}</span>
+              <span class="stat">Defense {{ hero.derivedStats.defense }}</span>
+              <span class="stat">Life {{ hero.derivedStats.life }}</span>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
   </main>
 </template>
 
 <script setup lang="ts">
 import type { HeroClass } from '~/types/game'
 import { heroClassStats } from '~/utils/game-data'
-import { createHero } from '~/utils/game-logic'
+import { createHero, getHeroCapacity, getActiveHeroCount, getHireCost } from '~/utils/game-logic'
 
 const game = useGameStore()
 await game.load()
 
 const selectedClass = ref<HeroClass | null>(null)
 const hiring = ref(false)
+
+const heroCap = computed(() => game.save ? getHeroCapacity(game.save) : 0)
+const activeHeroCount = computed(() => game.save ? getActiveHeroCount(game.save) : 0)
+const activeHeroes = computed(() => game.save?.heroes.filter(hero => hero.status !== 'dead') ?? [])
+const cemeteryHeroes = computed(() => game.save?.heroes.filter(hero => hero.status === 'dead') ?? [])
 
 const classOptions: Array<{ label: string; value: HeroClass; role: string; description: string }> = [
   { label: 'Barbarian', value: 'barbarian', role: 'Frontline', description: 'High life and physical attack.' },
@@ -108,11 +142,11 @@ const classOptions: Array<{ label: string; value: HeroClass; role: string; descr
   { label: 'Necromancer', value: 'necromancer', role: 'Balanced', description: 'Flexible stats with strong energy growth.' }
 ]
 
-const hireCost = computed(() => 120 + (game.save?.heroes.length || 0) * 80)
+const hireCost = computed(() => game.save ? getHireCost(game.save) : 120)
 const selectedCandidate = computed(() => classOptions.find((option) => option.value === selectedClass.value))
 const selectedPreview = computed(() => createHero(selectedClass.value || 'barbarian'))
 const hasEnoughGold = computed(() => Boolean(game.save && game.save.gold >= hireCost.value))
-const isRosterFull = computed(() => Boolean(game.save && game.save.heroes.length >= 8))
+const isRosterFull = computed(() => Boolean(game.save && activeHeroCount.value >= heroCap.value))
 const canHireSelected = computed(() => Boolean(selectedClass.value && hasEnoughGold.value && !isRosterFull.value))
 
 function toggleCandidate(heroClass: HeroClass) {

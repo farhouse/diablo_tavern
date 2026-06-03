@@ -3,268 +3,301 @@
     <div class="section-title">
       <div>
         <h1>Expedition Board</h1>
-        <p class="muted">Send available heroes on concurrent timed expeditions.</p>
+        <p class="muted">Send heroes on expeditions to explore and return with loot.</p>
       </div>
-      <NuxtLink class="btn" to="/stash">Open stash</NuxtLink>
     </div>
 
     <p v-if="game.error" class="error">{{ game.error }}</p>
 
     <section class="grid two">
       <article class="card stack">
-        <div class="row">
-          <h2>Party</h2>
-          <span class="tag">{{ selectedHeroIds.length }}/4 selected</span>
-        </div>
-        <p v-if="!availableHeroes.length" class="muted">Hire or recover an available hero first.</p>
+        <h2>Party</h2>
+        <p class="muted">{{ availableHeroes.length }} / {{ heroCap }} available</p>
+        <p v-if="!availableHeroes.length" class="muted">Hire or recover heroes first.</p>
         <label v-for="hero in availableHeroes" :key="hero.id" class="row card">
           <span>{{ hero.name }} Lv {{ hero.level }}</span>
-          <input
-            v-model="selectedHeroIds"
-            type="checkbox"
-            :value="hero.id"
-            :disabled="selectedHeroIds.length >= 4 && !selectedHeroIds.includes(hero.id)"
-          >
+          <input v-model="selectedHeroIds" type="checkbox" :value="hero.id" :disabled="selectedHeroIds.length >= 4 && !selectedHeroIds.includes(hero.id)">
         </label>
+        <p v-if="availableHeroes.length && selectedHeroIds.length >= 4" class="muted">Max party size reached.</p>
         <div v-for="hero in questingHeroes" :key="hero.id" class="card row">
           <span>{{ hero.name }} Lv {{ hero.level }}</span>
           <span class="tag">on expedition</span>
         </div>
       </article>
 
-      <article class="card stack">
-        <h2>Expedition History</h2>
-        <div v-if="expeditionHistory.length" class="stack">
-          <div v-for="summary in expeditionHistory" :key="summary.id" class="card stack">
-            <div class="row">
-              <span
-                class="tag"
-                :class="{
-                  success: summary.result === 'success',
-                  warning: summary.result === 'retreated',
-                  danger: summary.result === 'defeated' || summary.result === 'death'
-                }"
-              >
-                {{ summary.result }}
-              </span>
-              <span class="tag">{{ questName(summary.questId) }}</span>
-            </div>
-            <p>{{ summary.depth }} depth reached · {{ summary.xp }} XP · {{ summary.gold }} gold</p>
-            <div v-if="summary.loot.length" class="grid two">
-              <div v-for="item in summary.loot" :key="item.id" class="card item" :class="item.rarity">
-                <strong>{{ itemName(item) }}</strong>
-                <p class="muted">{{ item.type }} · {{ item.rarity }} · {{ item.value }}g</p>
-              </div>
-            </div>
-            <p v-else class="muted">No items brought back.</p>
-          </div>
-        </div>
-        <p v-else class="muted">No expeditions completed yet.</p>
+      <article class="card stack expedition-summary">
+        <h2>Expeditions</h2>
+        <p class="muted">{{ expeditions.length }} / {{ expeditionCap }} active.</p>
+        <p v-if="!expeditions.length" class="muted">No active expeditions.</p>
+        <p v-else class="muted">Watch party health and recall before a run turns bad.</p>
       </article>
     </section>
 
-    <section v-if="activeExpeditions.length" class="stack" style="margin-top: 1rem;">
-      <h2>Active Expeditions</h2>
-      <div class="grid two">
-        <article v-for="active in activeExpeditions" :key="active.id" class="card stack">
-          <div class="row">
-            <h3>{{ questName(active.questId) }}</h3>
-            <span class="tag">Depth {{ active.depth }}</span>
-          </div>
-          <p class="muted">Exploring for {{ timeLabel(active) }}</p>
+    <section v-if="expeditions.length" class="active-expeditions">
+      <div class="section-title compact">
+        <div>
+          <h2>Active Expeditions</h2>
+          <p class="muted">Each party keeps loot only if they make it back.</p>
+        </div>
+      </div>
 
-          <div class="row">
-            <span>Danger:</span>
-            <progress class="danger-meter" max="100" :value="active.danger" />
+      <div class="expedition-grid">
+        <UCard
+          v-for="expedition in expeditions"
+          :key="expedition.id"
+          variant="subtle"
+          class="expedition-card"
+          :ui="{ body: 'stack expedition-body', footer: 'expedition-footer' }"
+        >
+          <template #header>
+            <div class="row">
+              <div>
+                <h3>{{ questName(expedition.questId) }}</h3>
+                <p class="muted">{{ timeLabel(expedition) }}</p>
+              </div>
+              <div class="row">
+                <UBadge color="neutral" variant="soft">Depth {{ expedition.depth }}</UBadge>
+                <UBadge v-if="expedition.bossReady && !expedition.bossDefeated" color="warning" variant="soft">Boss Ready</UBadge>
+                <UBadge v-else-if="expedition.bossDefeated" color="success" variant="soft">Boss Defeated</UBadge>
+              </div>
+            </div>
+          </template>
+
+          <div class="meter-block">
+            <div class="row meter-label">
+              <span>Danger</span>
+              <span class="muted">{{ expedition.danger }}%</span>
+            </div>
+            <UProgress :model-value="expedition.danger" :max="100" color="warning" size="sm" />
           </div>
 
-          <div v-for="state in active.partyState" :key="state.heroId" class="row hero-status">
-            <span>{{ heroName(state.heroId) }}:</span>
-            <span class="hp-bar-container">
-              <progress
-                class="hp-bar"
+          <div class="party-health">
+            <div v-for="state in expedition.partyState" :key="state.heroId" class="hero-health">
+              <div class="row meter-label">
+                <span>{{ heroName(state.heroId) }}</span>
+                <UBadge v-if="state.permanentDeath" color="error" variant="soft">Dead</UBadge>
+                <UBadge v-else-if="state.dead" color="warning" variant="soft">Down</UBadge>
+                <span v-else class="muted">{{ state.temporaryHp }}/{{ state.maxTemporaryHp }}</span>
+              </div>
+              <UProgress
+                :model-value="state.temporaryHp"
                 :max="state.maxTemporaryHp"
-                :value="state.temporaryHp"
-                :class="{ critical: state.temporaryHp < state.maxTemporaryHp * 0.3 }"
+                :color="healthColor(state)"
+                size="xs"
               />
-              <span class="hp-text">{{ state.temporaryHp }}/{{ state.maxTemporaryHp }}</span>
-            </span>
-            <span v-if="state.dead" class="tag danger">DEAD</span>
+            </div>
           </div>
 
           <div class="row rewards">
-            <span>Carried:</span>
-            <span class="gold">{{ active.carriedGold }}g</span>
-            <span class="xp">{{ active.carriedXp }}xp</span>
+            <span class="gold">{{ expedition.carriedGold }}g</span>
+            <span class="material">{{ expedition.carriedMaterials }}m</span>
+            <span class="xp">{{ expedition.carriedXp }}xp</span>
+            <span v-if="expedition.carriedLoot.length">{{ expedition.carriedLoot.length }} items</span>
           </div>
 
-          <div v-if="active.carriedLoot.length" class="loot-preview">
-            <span>Loot:</span>
-            <div v-for="item in active.carriedLoot" :key="item.id" class="item loot-item" :class="item.rarity">
-              {{ itemName(item) }}
+          <div v-if="expedition.events.length" class="recent-events">
+            <div class="row meter-label">
+              <span>Recent Events</span>
+              <span class="muted">{{ expedition.events.length }} total</span>
             </div>
-          </div>
-
-          <div v-if="active.bossDefeated" class="boss-status">
-            <span class="tag success">BOSS DEFEATED!</span>
-          </div>
-          <div v-else-if="active.bossReady" class="boss-status">
-            <span class="tag warning">BOSS READY!</span>
-          </div>
-          <div v-else class="boss-status">
-            <span class="tag">Boss Clues: {{ bossCluesFound(active) }}/10</span>
-          </div>
-
-          <div class="actions">
-            <button class="btn danger" type="button" @click="recallExpedition(active.id)">
-              Recall Party
-            </button>
-          </div>
-
-          <div v-if="active.events.length" class="event-log">
-            <h3>Event Log</h3>
-            <div class="log-container">
-              <div v-for="event in active.events.slice().reverse().slice(0, 8)" :key="event.id" class="log-entry">
-                <span class="timestamp">{{ formatTime(event.createdAt) }}</span>
-                <span class="event-title">{{ event.title }}</span>
-                <span class="event-description">{{ event.description }}</span>
+            <div v-for="event in expedition.events.slice().reverse().slice(0, 5)" :key="event.id" class="recent-event">
+              <div class="event-main">
+                <div class="row event-heading">
+                  <span class="event-title">{{ event.title }}</span>
+                  <span class="muted">{{ formatTime(event.createdAt) }}</span>
+                </div>
+                <p class="muted">{{ event.description }}</p>
+              </div>
+              <div class="event-effects">
                 <span v-if="event.damageTaken !== undefined" class="effect negative">-{{ event.damageTaken }} HP</span>
                 <span v-if="event.xpGained !== undefined" class="effect positive">+{{ event.xpGained }} XP</span>
                 <span v-if="event.goldFound !== undefined" class="effect positive">+{{ event.goldFound }}g</span>
-                <span v-if="event.lootFound?.length" class="effect positive">+{{ event.lootFound.length }} item{{ event.lootFound.length > 1 ? 's' : '' }}</span>
+                <span v-if="event.materialsFound !== undefined" class="effect positive">+{{ event.materialsFound }}m</span>
+                <span v-if="event.lootFound?.length" class="effect positive">+{{ event.lootFound.length }} items</span>
               </div>
             </div>
           </div>
-        </article>
+
+          <template #footer>
+            <UButton color="error" variant="soft" type="button" block @click="recall(expedition.id)">
+              Recall Party
+            </UButton>
+          </template>
+        </UCard>
       </div>
     </section>
 
-    <section class="grid three" style="margin-top: 1rem;">
+    <section v-if="lastExpeditions.length" class="grid three" style="margin-top:1rem">
+      <article v-for="summary in lastExpeditions" :key="summary.id" class="card stack">
+        <span class="tag"
+              :class="{ success: summary.result === 'success', warning: summary.result === 'retreated', danger: summary.result === 'defeated' }">
+          {{ summary.result }}
+        </span>
+        <p class="muted">{{ questName(summary.questId) }} · Depth {{ summary.depth }}</p>
+        <p>{{ summary.xp }} XP · {{ summary.gold }}g · {{ summary.materials }}m</p>
+        <p class="muted">{{ summary.loot.length }} items</p>
+      </article>
+    </section>
+
+    <section class="grid three" style="margin-top:1rem">
       <article v-for="quest in game.quests" :key="quest.id" class="card stack">
         <div class="row">
           <h3>{{ quest.name }}</h3>
           <span class="tag">Min Lv {{ quest.minLevel }}</span>
         </div>
-        <p class="muted">Difficulty {{ quest.difficulty }} · {{ quest.rewards.xp }} XP · {{ quest.rewards.gold }} gold</p>
         <span class="tag" :class="{ ok: isCompleted(quest.id), bad: !isUnlocked(quest.id) }">
           {{ isCompleted(quest.id) ? 'completed' : isUnlocked(quest.id) ? 'unlocked' : 'locked' }}
         </span>
-        <button
-          class="btn primary"
-          type="button"
-          :disabled="!canStartQuest(quest.id)"
-          @click="startExpedition(quest.id)"
-        >
-          Send Expedition
+        <button class="btn primary" type="button"
+                :disabled="hasExpeditionsAtCap || !isUnlocked(quest.id) || !selectedHeroIds.length"
+                @click="start(quest.id)">
+          {{ hasExpeditionsAtCap ? 'Capacity Full' : 'Send Expedition' }}
         </button>
       </article>
     </section>
+
   </main>
 </template>
 
 <script setup lang="ts">
-import type { ActiveExpedition, Item } from '~/types/game'
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import type { Item, ActiveExpedition, ExpeditionHeroState } from '~/types/game'
+import { getExpeditionCapacity, getHeroCapacity } from '~/utils/game-logic'
 
 const game = useGameStore()
 await game.load()
 
 const selectedHeroIds = ref<string[]>([])
 
-const availableHeroes = computed(() =>
-  game.save ? game.save.heroes.filter((hero) => hero.status === 'available') : []
-)
+const heroCap = computed(() => game.save ? getHeroCapacity(game.save) : 0)
+const expeditionCap = computed(() => game.save ? getExpeditionCapacity(game.save) : 0)
+const expeditions = computed(() => game.save?.activeExpeditions ?? [])
+const availableHeroes = computed(() => game.save ? game.save.heroes.filter(h => h.status === 'available') : [])
+const questingHeroes = computed(() => game.save ? game.save.heroes.filter(h => h.status === 'onQuest') : [])
+const lastExpeditions = computed(() => game.save?.expeditionHistory ?? [])
+const hasExpeditionsAtCap = computed(() => expeditions.value.length >= expeditionCap.value)
 
-const questingHeroes = computed(() =>
-  game.save ? game.save.heroes.filter((hero) => hero.status === 'onQuest') : []
-)
-
-const activeExpeditions = computed(() => game.save?.activeExpeditions || [])
-const expeditionHistory = computed(() => game.save?.expeditionHistory || [])
-
-function isCompleted(questId: string): boolean {
-  return Boolean(game.save?.questsProgress.find((progress) => progress.questId === questId)?.completed)
+function questName(questId: string) {
+  return game.quests.find(q => q.id === questId)?.name ?? questId
 }
 
-function isUnlocked(questId: string): boolean {
-  return Boolean(game.save?.questsProgress.find((progress) => progress.questId === questId)?.unlocked)
-}
-
-function canStartQuest(questId: string): boolean {
-  return isUnlocked(questId) && selectedHeroIds.value.length >= 1 && selectedHeroIds.value.length <= 4
-}
-
-function questName(questId: string): string {
-  return game.quests.find((quest) => quest.id === questId)?.name || 'Unknown Quest'
-}
-
-function formatTime(timestamp: string): string {
-  const date = new Date(timestamp)
-  return date.toTimeString().slice(0, 8)
-}
-
-function timeLabel(expedition: ActiveExpedition): string {
-  const started = new Date(expedition.startedAt).getTime()
+function timeLabel(e: ActiveExpedition) {
+  const started = new Date(e.startedAt).getTime()
   const seconds = Math.floor((Date.now() - started) / 1000)
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  return `${minutes}m ${remainingSeconds}s`
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-function bossCluesFound(expedition: ActiveExpedition): number {
-  return expedition.events.filter((event) => event.type === 'bossClue').length
+function formatTime(ts: string) {
+  return new Date(ts).toTimeString().slice(0, 8)
 }
 
-function heroName(heroId: string): string {
-  const hero = game.save?.heroes.find((candidate) => candidate.id === heroId)
-  return hero ? hero.name : 'Unknown'
+function heroName(heroId: string) {
+  return game.save?.heroes.find(hero => hero.id === heroId)?.name ?? 'Unknown'
 }
 
-function itemName(item: Item): string {
-  if (item.identified) return item.displayName
-  return `Unidentified ${capitalize(item.rarity)} ${item.baseName}`
+function healthColor(state: ExpeditionHeroState) {
+  if (state.permanentDeath || state.dead) return 'error'
+  const ratio = state.maxTemporaryHp ? state.temporaryHp / state.maxTemporaryHp : 0
+  if (ratio <= 0.3) return 'error'
+  if (ratio <= 0.55) return 'warning'
+  return 'success'
 }
 
-function capitalize(value: string): string {
-  return value.slice(0, 1).toUpperCase() + value.slice(1)
+function progress(questId: string) {
+  return game.save?.questsProgress.find(entry => entry.questId === questId)
 }
+function isUnlocked(questId: string) { return Boolean(progress(questId)?.unlocked) }
+function isCompleted(questId: string) { return Boolean(progress(questId)?.completed) }
 
-async function startExpedition(questId: string) {
+async function start(questId: string) {
   try {
     await game.startExpedition(questId, selectedHeroIds.value)
-    selectedHeroIds.value = selectedHeroIds.value.filter((id) =>
-      game.save?.heroes.find((hero) => hero.id === id)?.status === 'available'
-    )
-  } catch {
-    // Store already records the error.
-  }
+    selectedHeroIds.value = []
+  } catch { /* handled */ }
 }
 
-async function advanceExpeditions() {
-  try {
-    await game.advanceExpeditions()
-  } catch {
-    // Store already records the error.
-  }
-}
-
-async function recallExpedition(expeditionId: string) {
+async function recall(expeditionId: string) {
   try {
     await game.recallExpedition(expeditionId)
-  } catch {
-    // Store already records the error.
-  }
+  } catch { /* handled */ }
 }
 
 let timer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
-  timer = setInterval(() => {
-    if (activeExpeditions.value.length) {
-      advanceExpeditions()
+  timer = setInterval(async () => {
+    if (expeditions.value.length) {
+      try { await game.advanceExpeditions() } catch { /* handled */ }
     }
   }, 3000)
 })
-onBeforeUnmount(() => {
-  if (timer) clearInterval(timer)
-})
+onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
+
+<style scoped>
+.active-expeditions { margin-top: 1rem; }
+.section-title.compact { margin-bottom: 0.75rem; }
+.expedition-summary { min-height: 100%; }
+.expedition-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.expedition-card { border-left: 3px solid var(--accent); }
+.expedition-body { gap: 0.9rem; }
+.expedition-footer { padding-top: 0.75rem; }
+.meter-block,
+.party-health {
+  display: grid;
+  gap: 0.55rem;
+}
+.hero-health {
+  display: grid;
+  gap: 0.35rem;
+}
+.meter-label {
+  font-size: 0.9rem;
+  gap: 0.5rem;
+}
+.recent-events {
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+.recent-event {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid rgba(58,52,45,0.45);
+  font-size: 0.85rem;
+}
+.event-main {
+  display: grid;
+  gap: 0.2rem;
+}
+.event-heading {
+  align-items: baseline;
+  gap: 0.75rem;
+}
+.event-effects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.boss-status .warning {
+  color: var(--accent-2);
+  border-color: var(--accent-2);
+}
+.gold { color: var(--accent-2); }
+.material { color: #7eb8da; }
+.xp { color: var(--ok); }
+.rewards { font-weight: 500; }
+.event-title { font-weight: 500; flex: 1; min-width: 8rem; }
+.effect {
+  font-weight: 500;
+  min-width: 3rem;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid currentColor;
+  border-radius: 0.35rem;
+}
+.positive { color: var(--ok); }
+.negative { color: var(--bad); }
+</style>

@@ -6,9 +6,14 @@
         <NuxtLink to="/tavern">Tavern</NuxtLink>
         <NuxtLink to="/quests">Quests</NuxtLink>
         <NuxtLink to="/stash">Stash</NuxtLink>
+        <NuxtLink to="/caravan">Caravan</NuxtLink>
       </nav>
-      <div class="row">
-        <span class="tag">{{ game.save?.gold ?? 0 }} gold</span>
+      <div class="row topbar-stats">
+        <span class="tag">{{ game.save?.gold ?? 0 }}g</span>
+        <span class="tag material">{{ game.save?.materials ?? 0 }}m</span>
+        <span class="tag">{{ activeHeroCount }}/{{ heroCap }} heroes</span>
+        <span class="tag">{{ expeditionCount }}/{{ expeditionCap }} exp.</span>
+        <span class="tag">{{ stashCount }}/{{ stashCap }} stash</span>
         <button class="btn ghost" type="button" @click="logout">Logout</button>
       </div>
     </header>
@@ -17,8 +22,17 @@
 </template>
 
 <script setup lang="ts">
+import { getHeroCapacity, getExpeditionCapacity, getStashCapacity, getActiveHeroCount } from '~/utils/game-logic'
+
 const auth = useAuthStore()
 const game = useGameStore()
+
+const activeHeroCount = computed(() => game.save ? getActiveHeroCount(game.save) : 0)
+const heroCap = computed(() => game.save ? getHeroCapacity(game.save) : 0)
+const expeditionCount = computed(() => game.save?.activeExpeditions.length ?? 0)
+const expeditionCap = computed(() => game.save ? getExpeditionCapacity(game.save) : 0)
+const stashCount = computed(() => game.save?.stash.length ?? 0)
+const stashCap = computed(() => game.save ? getStashCapacity(game.save) : 0)
 
 onMounted(() => {
   auth.hydrate()

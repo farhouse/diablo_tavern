@@ -1,7 +1,6 @@
-import type { ActiveQuestRun, Affix, DerivedStats, EquipmentSlot, Hero, HeroClass, Item, ItemRarity, Quest, QuestRun, SaveGame, ActiveExpedition, ExpeditionHeroState, ExpeditionEvent, ExpeditionSummary } from '~/types/game'
-import { affixPool, heroClassStats, itemBases, itemTypeToSlots, quests, uniqueItems } from '~/utils/game-data'
+import type { ActiveQuestRun, Affix, DerivedStats, EquipmentSlot, Hero, HeroClass, Item, ItemRarity, Quest, QuestRun, SaveGame, ActiveExpedition, ExpeditionHeroState, ExpeditionEvent, ExpeditionSummary, CaravanUpgradeId, CaravanState, AppraisalJob } from '~/types/game'
+import { affixPool, heroClassStats, itemBases, itemTypeToSlots, quests, uniqueItems, caravanUpgradeCosts, heroCapacities, expeditionCapacities, stashCapacities, infirmaryLevels, deathChanceReduction, appraiserQueueSizes } from '~/utils/game-data'
 
-const STASH_LIMIT = 30
 const QUEST_DURATION_SCALE_MS = 1000
 const EXPEDITION_EVENT_INTERVAL_MS = 5000
 const EXPEDITION_HISTORY_LIMIT = 10
@@ -16,7 +15,13 @@ export function createSaveGame(userId: string): SaveGame {
   return {
     userId,
     gold: 450,
-    stashLimit: STASH_LIMIT,
+    materials: 0,
+    caravan: {
+      level: 0,
+      upgrades: { wagons: 0, scoutTable: 0, stashWagon: 0, infirmary: 0, appraiser: 0 },
+      services: { appraiserQueue: [] }
+    },
+    stashLimit: 20,
     heroes: [],
     stash: [],
     pendingLoot: [],
@@ -33,6 +38,26 @@ export function createSaveGame(userId: string): SaveGame {
 }
 
 export function normalizeSaveGame(save: SaveGame): SaveGame {
+  if (!('materials' in save)) (save as Record<string, unknown>).materials = 0
+  if (!('caravan' in save)) {
+    (save as Record<string, unknown>).caravan = {
+      level: 0,
+      upgrades: { wagons: 0, scoutTable: 0, stashWagon: 0, infirmary: 0, appraiser: 0 },
+      services: { appraiserQueue: [] }
+    }
+  }
+  const car = save.caravan
+  if (typeof car.level !== 'number') car.level = 0
+  if (!car.upgrades) car.upgrades = { wagons: 0, scoutTable: 0, stashWagon: 0, infirmary: 0, appraiser: 0 }
+  if (!car.services) car.services = { appraiserQueue: [] }
+  if (!Array.isArray(car.services.appraiserQueue)) car.services.appraiserQueue = []
+
+  const stashLvl: 0 | 1 | 2 | 3 = Math.min(3, Math.max(0, car.upgrades.stashWagon)) as 0 | 1 | 2 | 3
+  const caravanStashLimit = stashCapacities[stashLvl]
+  if (typeof save.stashLimit !== 'number' || save.stashLimit < caravanStashLimit) {
+    save.stashLimit = caravanStashLimit
+  }
+
   const legacy = save as SaveGame & {
     activeExpedition?: ActiveExpedition
     lastExpeditionRun?: ExpeditionSummary
@@ -44,7 +69,27 @@ export function normalizeSaveGame(save: SaveGame): SaveGame {
   if (legacy.activeExpedition && !save.activeExpeditions.some((expedition) => expedition.id === legacy.activeExpedition?.id)) {
     save.activeExpeditions.push(legacy.activeExpedition)
   }
+
+  for (const expedition of save.activeExpeditions) {
+    const record = expedition as ActiveExpedition & Record<string, unknown>
+    if (!Array.isArray(record.partyState)) record.partyState = []
+    if (!Array.isArray(record.events)) record.events = []
+    if (!Array.isArray(record.carriedLoot)) record.carriedLoot = []
+    if (typeof record.carriedGold !== 'number') record.carriedGold = 0
+    if (typeof record.carriedXp !== 'number') record.carriedXp = 0
+    if (typeof record.carriedMaterials !== 'number') record.carriedMaterials = 0
+    if (typeof record.bossReady !== 'boolean') record.bossReady = record.status === 'bossReady'
+    if (typeof record.bossDefeated !== 'boolean') record.bossDefeated = false
+  }
+
   if (legacy.lastExpeditionRun && !save.expeditionHistory.some((summary) => summary.id === legacy.lastExpeditionRun?.id)) {
+    const oldRun = legacy.lastExpeditionRun as unknown as Record<string, unknown>
+    if (!('heroStatuses' in oldRun)) {
+      oldRun.heroStatuses = []
+    }
+    if (typeof oldRun.materials !== 'number') {
+      oldRun.materials = 0
+    }
     save.expeditionHistory.unshift(legacy.lastExpeditionRun)
   }
 
@@ -53,6 +98,134 @@ export function normalizeSaveGame(save: SaveGame): SaveGame {
   delete legacy.lastExpeditionRun
   return save
 }
+
+// --- Caravan capacity functions ---
+
+function safeIndex<T>(arr: readonly [T, T, T, T], index: number): T {
+  return arr[Math.min(3, Math.max(0, index)) as 0 | 1 | 2 | 3]
+}
+
+export function getHeroCapacity(save: SaveGame): number {
+  return safeIndex(heroCapacities, save.caravan.upgrades.wagons)
+}
+
+export function getActiveHeroCount(save: SaveGame): number {
+  return save.heroes.filter((hero) => hero.status !== 'dead').length
+}
+
+export function getHireCost(save: SaveGame): number {
+  return 120 + getActiveHeroCount(save) * 80
+}
+
+export function getExpeditionCapacity(save: SaveGame): number {
+  return safeIndex(expeditionCapacities, save.caravan.upgrades.scoutTable)
+}
+
+export function getStashCapacity(save: SaveGame): number {
+  return safeIndex(stashCapacities, save.caravan.upgrades.stashWagon)
+}
+
+export function getInfirmaryReduction(save: SaveGame): number {
+  return safeIndex(infirmaryLevels, save.caravan.upgrades.infirmary)
+}
+
+export function getDeathChanceReduction(save: SaveGame): number {
+  return safeIndex(deathChanceReduction, save.caravan.upgrades.infirmary)
+}
+
+export function getAppraiserQueueSize(save: SaveGame): number {
+  return safeIndex(appraiserQueueSizes, save.caravan.upgrades.appraiser)
+}
+
+export function getUpgradeCost(upgradeId: CaravanUpgradeId, level: number): { gold: number; materials: number } | null {
+  const costs = caravanUpgradeCosts[upgradeId]
+  if (!costs || level + 1 >= costs.length || level < 0) return null
+  const cost = costs[level + 1]
+  return cost ?? null
+}
+
+export function getMaxUpgradeLevel(upgradeId: CaravanUpgradeId): number {
+  return (caravanUpgradeCosts[upgradeId]?.length || 1) - 1
+}
+
+export function upgradeCaravan(save: SaveGame, upgradeId: CaravanUpgradeId): SaveGame {
+  normalizeSaveGame(save)
+  const currentLevel = save.caravan.upgrades[upgradeId]
+  const maxLevel = getMaxUpgradeLevel(upgradeId)
+  if (currentLevel >= maxLevel) throw createGameError('Upgrade is already at max level')
+
+  const cost = getUpgradeCost(upgradeId, currentLevel)
+  if (!cost) throw createGameError('Upgrade cost not found')
+
+  if (save.gold < cost.gold) throw createGameError('Not enough gold')
+  if (save.materials < cost.materials) throw createGameError('Not enough materials')
+
+  save.gold -= cost.gold
+  save.materials -= cost.materials
+  save.caravan.upgrades[upgradeId] = currentLevel + 1
+  save.caravan.level = Math.max(save.caravan.level, currentLevel + 1)
+
+  // Recalculate derived capacities
+  save.stashLimit = getStashCapacity(save)
+
+  return touchSave(save)
+}
+
+// --- Appraiser ---
+
+export function startAppraisal(save: SaveGame, itemId: string): SaveGame {
+  normalizeSaveGame(save)
+  const queueSize = getAppraiserQueueSize(save)
+  if (queueSize <= 0) throw createGameError('Appraiser not available. Upgrade your caravan.')
+
+  const item = save.stash.find((stashItem) => stashItem.id === itemId)
+  if (!item) throw createGameError('Item not found in stash')
+  if (item.identified) throw createGameError('Item is already identified')
+  if (save.caravan.services.appraiserQueue.some((job) => job.itemId === itemId)) throw createGameError('Item is already in the appraiser queue')
+  if (save.caravan.services.appraiserQueue.length >= queueSize) throw createGameError('Appraiser queue is full')
+
+  const durationMinutes = item.rarity === 'magic' ? 5 : item.rarity === 'rare' ? 15 : item.rarity === 'unique' ? 30 : 0
+  if (durationMinutes <= 0) throw createGameError('Item does not need appraisal')
+
+  const now = new Date()
+  const job: AppraisalJob = {
+    id: randomId(),
+    itemId,
+    startedAt: now.toISOString(),
+    finishesAt: new Date(now.getTime() + durationMinutes * 60 * 1000).toISOString()
+  }
+
+  save.caravan.services.appraiserQueue.push(job)
+  return touchSave(save)
+}
+
+export function completeAppraisalQueue(save: SaveGame): SaveGame {
+  normalizeSaveGame(save)
+  const now = new Date()
+  const completed: AppraisalJob[] = []
+  const remaining: AppraisalJob[] = []
+
+  for (const job of save.caravan.services.appraiserQueue) {
+    if (new Date(job.finishesAt).getTime() <= now.getTime()) {
+      completed.push(job)
+    } else {
+      remaining.push(job)
+    }
+  }
+
+  for (const job of completed) {
+    const item = save.stash.find((stashItem) => stashItem.id === job.itemId)
+    if (item && !item.identified) {
+      item.identified = true
+      if (item.rarity === 'rare') item.displayName = `${pickOne(rarePrefixes)} ${pickOne(rareSuffixes)}`
+    }
+  }
+
+  save.caravan.services.appraiserQueue = remaining
+  return touchSave(save)
+}
+
+// --- Hero creation ---
 
 export function createHero(heroClass: HeroClass): Hero {
   const template = heroClassStats[heroClass]
@@ -194,6 +367,7 @@ export function equipItem(save: SaveGame, heroId: string, itemId: string, slot?:
   const item = save.stash[itemIndex]
   if (!item) throw createGameError('Item not found in stash')
   if (!item.identified) throw createGameError('Identify this item before equipping it')
+  if (hero.status === 'dead') throw createGameError('Dead heroes cannot equip items')
   if (hero.level < item.requiredLevel) throw createGameError('Hero level is too low')
 
   const allowedSlots = itemTypeToSlots[item.type] as EquipmentSlot[]
@@ -326,6 +500,303 @@ export function touchSave(save: SaveGame): SaveGame {
   return save
 }
 
+// --- Expedition logic ---
+
+export function startExpedition(save: SaveGame, questId: string, heroIds: string[], now: Date = new Date()): SaveGame {
+  normalizeSaveGame(save)
+  if (save.activeQuestRun) throw createGameError('A quest is already in progress')
+
+  const expeditionCap = getExpeditionCapacity(save)
+  if (save.activeExpeditions.length >= expeditionCap) throw createGameError('Expedition capacity reached. Upgrade Scout Table.')
+
+  const quest = quests.find((candidate) => candidate.id === questId)
+  if (!quest) throw createGameError('Quest not found')
+  const progress = save.questsProgress.find((entry) => entry.questId === questId)
+  if (!progress?.unlocked) throw createGameError('Quest is locked')
+
+  const uniqueHeroIds = [...new Set(heroIds)]
+  const heroes = uniqueHeroIds.map((id) => findHero(save, id))
+  if (!heroes.length) throw createGameError('Select at least one hero')
+  if (heroes.length > MAX_EXPEDITION_PARTY_SIZE) throw createGameError(`Select up to ${MAX_EXPEDITION_PARTY_SIZE} heroes`)
+  if (heroes.some((hero) => hero.status !== 'available')) throw createGameError('All selected heroes must be available')
+  if (heroes.some((hero) => hero.level < quest.minLevel)) throw createGameError('A selected hero does not meet the quest level')
+
+  for (const hero of heroes) {
+    hero.status = 'onQuest'
+  }
+
+  const expedition: ActiveExpedition = {
+    id: randomId(),
+    questId,
+    heroIds: uniqueHeroIds,
+    status: "exploring",
+    startedAt: now.toISOString(),
+    lastEventAt: now.toISOString(),
+    nextEventAt: new Date(now.getTime() + EXPEDITION_EVENT_INTERVAL_MS).toISOString(),
+    depth: 0,
+    danger: 0,
+    partyState: heroes.map(hero => ({
+      heroId: hero.id,
+      temporaryHp: hero.derivedStats.life,
+      maxTemporaryHp: hero.derivedStats.life,
+      dead: false
+    })),
+    events: [],
+    carriedLoot: [],
+    carriedGold: 0,
+    carriedXp: 0,
+    carriedMaterials: 0,
+    bossReady: false,
+    bossDefeated: false
+  }
+
+  save.activeExpeditions.push(expedition)
+  return touchSave(save)
+}
+
+export function advanceExpedition(save: SaveGame, now: Date = new Date(), expeditionId?: string): SaveGame {
+  normalizeSaveGame(save)
+  const expeditions = expeditionId
+    ? [findActiveExpedition(save, expeditionId)]
+    : save.activeExpeditions
+
+  if (!expeditions.length) return touchSave(save)
+  for (const expedition of expeditions) {
+    advanceSingleExpedition(save, expedition, now)
+  }
+  return touchSave(save)
+}
+
+function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, now: Date): void {
+  const nowTime = now.getTime()
+  const lastEventTime = new Date(expedition.lastEventAt).getTime()
+  const quest = quests.find(q => q.id === expedition.questId)
+  if (!quest) throw createGameError('Quest not found')
+
+  const eventsMissed = Math.floor((nowTime - lastEventTime) / EXPEDITION_EVENT_INTERVAL_MS)
+  const eventsToGenerate = Math.min(eventsMissed, 5)
+
+  if (eventsToGenerate <= 0) return
+
+  for (let i = 0; i < eventsToGenerate; i++) {
+    const eventTime = new Date(lastEventTime + ((i + 1) * EXPEDITION_EVENT_INTERVAL_MS)).toISOString()
+    const event = generateExpeditionEvent(save, expedition, quest, new Date(eventTime))
+    expedition.events.push(event)
+    applyExpeditionEvent(save, expedition, event)
+  }
+
+  expedition.lastEventAt = new Date(lastEventTime + (eventsToGenerate * EXPEDITION_EVENT_INTERVAL_MS)).toISOString()
+  expedition.nextEventAt = new Date(new Date(expedition.lastEventAt).getTime() + EXPEDITION_EVENT_INTERVAL_MS).toISOString()
+
+  expedition.depth += eventsToGenerate
+  expedition.danger = Math.min(100, expedition.depth)
+
+  if (!expedition.bossReady && expedition.depth >= 100 && expedition.heroIds.some(id => {
+    const hero = save.heroes.find(h => h.id === id)
+    return hero && hero.level >= 10
+  })) {
+    expedition.bossReady = true
+    expedition.status = 'bossReady'
+  }
+}
+
+export function recallExpedition(save: SaveGame, expeditionId: string, now: Date = new Date()): SaveGame {
+  normalizeSaveGame(save)
+  const expedition = findActiveExpedition(save, expeditionId)
+
+  advanceSingleExpedition(save, expedition, now)
+
+  const allDead = expedition.partyState.every(state => state.dead)
+  const anyDowned = expedition.partyState.some(state => state.dead)
+  const injuryThreshold = getInfirmaryReduction(save)
+  const anyInjured = expedition.partyState.some(state => !state.dead && state.temporaryHp < state.maxTemporaryHp * injuryThreshold)
+  const result: ExpeditionSummary['result'] = allDead ? 'defeated' : anyDowned || anyInjured ? 'retreated' : 'success'
+
+  if (allDead) {
+    expedition.carriedGold = Math.floor(expedition.carriedGold * 0.5)
+    expedition.carriedMaterials = Math.floor(expedition.carriedMaterials * 0.5)
+    const lootToKeep = Math.ceil(expedition.carriedLoot.length * 0.5)
+    expedition.carriedLoot = expedition.carriedLoot.slice(0, lootToKeep)
+  }
+
+  save.gold += expedition.carriedGold
+  save.materials += expedition.carriedMaterials
+  addLootToSave(save, expedition.carriedLoot)
+
+  const survivorIds = expedition.partyState.filter((state) => !state.dead).map((state) => state.heroId)
+  const xpPerHero = survivorIds.length ? Math.floor(expedition.carriedXp / survivorIds.length) : 0
+  const heroStatuses: ExpeditionSummary['heroStatuses'] = []
+
+  for (const heroId of expedition.heroIds) {
+    const hero = findHero(save, heroId)
+    const state = expedition.partyState.find(s => s.heroId === heroId)
+    if (!state) throw createGameError('Expedition hero state not found')
+
+    if (state.dead) {
+      hero.status = state.permanentDeath ? 'dead' : 'injured'
+      heroStatuses.push({ heroId, status: state.permanentDeath ? 'dead' : 'injured' })
+    } else if (state.temporaryHp < state.maxTemporaryHp * injuryThreshold) {
+      hero.xp += xpPerHero
+      levelUpHero(hero)
+      hero.status = 'injured'
+      heroStatuses.push({ heroId, status: 'injured' })
+    } else {
+      hero.xp += xpPerHero
+      levelUpHero(hero)
+      hero.status = 'available'
+      heroStatuses.push({ heroId, status: 'available' })
+    }
+    hero.derivedStats = calculateDerivedStats(hero)
+  }
+
+  const summary: ExpeditionSummary = {
+    id: expedition.id,
+    questId: expedition.questId,
+    heroIds: expedition.heroIds,
+    heroStatuses,
+    result,
+    depth: expedition.depth,
+    durationMs: now.getTime() - new Date(expedition.startedAt).getTime(),
+    loot: [...expedition.carriedLoot],
+    gold: expedition.carriedGold,
+    xp: expedition.carriedXp,
+    materials: expedition.carriedMaterials,
+    events: [...expedition.events]
+  }
+
+  save.activeExpeditions = save.activeExpeditions.filter((activeExpedition) => activeExpedition.id !== expedition.id)
+  save.expeditionHistory = [summary, ...save.expeditionHistory].slice(0, EXPEDITION_HISTORY_LIMIT)
+
+  return touchSave(save)
+}
+
+function generateExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, quest: Quest, now: Date): ExpeditionEvent {
+  const type = pickExpeditionEventType(expedition)
+  let title = ''
+  let description = ''
+  let damageTaken: number | undefined
+  let xpGained: number | undefined
+  let goldFound: number | undefined
+  let lootFound: Item[] | undefined
+  let depthGained: number | undefined
+  let materialsFound: number | undefined
+
+  if (type === 'enemy') {
+    title = 'Enemy Encounter'
+    description = 'The party encountered hostile forces.'
+    damageTaken = Math.floor(Math.random() * 10) + 5
+    xpGained = Math.floor(Math.random() * 15) + 5
+    if (Math.random() < 0.3) goldFound = Math.floor(Math.random() * 10) + 5
+  } else if (type === 'treasure') {
+    title = 'Treasure Found'
+    description = 'The party discovered a hidden cache.'
+    goldFound = Math.floor(Math.random() * 20) + 10
+    materialsFound = Math.floor(Math.random() * 4) + 1
+    if (Math.random() < 0.4) lootFound = [generateItem(quest.lootTableId, 0)]
+  } else if (type === 'trap') {
+    title = 'Trap Triggered'
+    description = 'The party triggered a dangerous trap.'
+    damageTaken = Math.floor(Math.random() * 15) + 10
+  } else if (type === 'rest') {
+    title = 'Safe Haven'
+    description = 'The party found a place to rest and recover.'
+  } else if (type === 'champion') {
+    title = 'Champion Encounter'
+    description = 'A powerful champion blocked the party\'s path.'
+    damageTaken = Math.floor(Math.random() * 20) + 15
+    xpGained = Math.floor(Math.random() * 25) + 15
+    materialsFound = Math.floor(Math.random() * 6) + 2
+    if (Math.random() < 0.5) goldFound = Math.floor(Math.random() * 15) + 10
+    if (Math.random() < 0.3) lootFound = [generateItem(quest.lootTableId, 5)]
+  } else if (type === 'evilHero') {
+    title = 'Evil Hero Encounter'
+    description = 'A fallen hero corrupted by darkness ambushed the party.'
+    damageTaken = Math.floor(Math.random() * 25) + 20
+    xpGained = Math.floor(Math.random() * 30) + 20
+    materialsFound = Math.floor(Math.random() * 8) + 3
+    if (Math.random() < 0.4) goldFound = Math.floor(Math.random() * 20) + 15
+    if (Math.random() < 0.4) lootFound = [generateItem(quest.lootTableId, 10)]
+  } else if (type === 'bossClue') {
+    title = 'Boss Clue Found'
+    description = 'The party discovered evidence of the boss\'s presence.'
+    depthGained = Math.floor(Math.random() * 10) + 5
+    materialsFound = Math.floor(Math.random() * 5) + 2
+  } else if (type === 'boss') {
+    title = 'Boss Encounter'
+    description = 'The party has reached the boss chamber!'
+    damageTaken = Math.floor(Math.random() * 30) + 20
+    xpGained = Math.floor(Math.random() * 50) + 30
+    materialsFound = Math.floor(Math.random() * 15) + 5
+    if (Math.random() < 0.6) goldFound = Math.floor(Math.random() * 50) + 25
+    if (Math.random() < 0.5) lootFound = [generateItem(quest.lootTableId, 15)]
+    expedition.bossDefeated = true
+  } else {
+    title = 'Wandering Merchant'
+    description = 'The party met a wandering trader with rare goods.'
+    if (Math.random() < 0.5) goldFound = Math.floor(Math.random() * 30) + 10
+    materialsFound = Math.floor(Math.random() * 5) + 1
+  }
+
+  return {
+    id: randomId(),
+    type,
+    createdAt: now.toISOString(),
+    title,
+    description,
+    damageTaken,
+    xpGained,
+    goldFound,
+    lootFound,
+    depthGained,
+    materialsFound
+  }
+}
+
+function applyExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, event: ExpeditionEvent): void {
+  const BASE_DEATH_CHANCE = 0.08
+  const deathReduction = getDeathChanceReduction(save)
+  const effectiveDeathChance = Math.max(0, BASE_DEATH_CHANCE - deathReduction)
+
+  if (event.damageTaken !== undefined) {
+    const livingStates = expedition.partyState.filter((state) => !state.dead)
+    const damagePerHero = livingStates.length ? Math.max(1, Math.floor(event.damageTaken / livingStates.length)) : 0
+    for (const state of livingStates) {
+      state.temporaryHp = Math.max(0, state.temporaryHp - damagePerHero)
+      if (state.temporaryHp <= 0) {
+        state.dead = true
+        if (Math.random() < effectiveDeathChance) {
+          state.permanentDeath = true
+          expedition.events.push({
+            id: randomId(),
+            type: 'death',
+            createdAt: event.createdAt,
+            title: 'Hero Fallen',
+            description: `A hero has succumbed to their wounds.`,
+            damageTaken: 0
+          })
+        }
+      }
+    }
+  }
+
+  if (event.type === 'rest') {
+    const healAmount = Math.floor(20 + Math.random() * 20)
+    for (const state of expedition.partyState) {
+      if (!state.dead) {
+        state.temporaryHp = Math.min(state.maxTemporaryHp, state.temporaryHp + healAmount)
+      }
+    }
+  }
+
+  if (event.xpGained !== undefined) expedition.carriedXp += event.xpGained
+  if (event.goldFound !== undefined) expedition.carriedGold += event.goldFound
+  if (event.materialsFound !== undefined) expedition.carriedMaterials += event.materialsFound
+  if (event.lootFound?.length) expedition.carriedLoot.push(...event.lootFound)
+  if (event.depthGained !== undefined) expedition.depth += event.depthGained
+}
+
+// --- Private helpers ---
+
 function addLootToSave(save: SaveGame, loot: Item[]) {
   for (const item of loot) {
     if (save.stash.length < save.stashLimit) save.stash.push(item)
@@ -409,6 +880,27 @@ function rarityValueMultiplier(rarity: ItemRarity): number {
   return rarityOrder.indexOf(rarity) + 1
 }
 
+function pickExpeditionEventType(expedition: ActiveExpedition): Exclude<ExpeditionEvent['type'], 'death' | 'return'> {
+  const danger = Math.min(1, expedition.depth / 100)
+  const weights: Array<[Exclude<ExpeditionEvent['type'], 'death' | 'return'>, number]> = [
+    ['enemy', 36 + danger * 10],
+    ['treasure', 20],
+    ['trap', 10 + danger * 8],
+    ['rest', Math.max(4, 10 - danger * 5)],
+    ['champion', 8 + danger * 5],
+    ['evilHero', 5 + danger * 4],
+    ['bossClue', expedition.bossReady ? 0 : 5],
+    ['boss', expedition.bossReady && !expedition.bossDefeated ? 12 : 0]
+  ]
+  const totalWeight = weights.reduce((sum, [, weight]) => sum + weight, 0)
+  let roll = Math.random() * totalWeight
+  for (const [type, weight] of weights) {
+    roll -= weight
+    if (roll <= 0) return type
+  }
+  return 'enemy'
+}
+
 function xpForNextLevel(level: number): number {
   return 100 + level * 75
 }
@@ -429,332 +921,4 @@ function createGameError(message: string): Error {
 
 function randomId(): string {
   return globalThis.crypto.randomUUID()
-}
-
-// Expedition logic
-
-export function startExpedition(save: SaveGame, questId: string, heroIds: string[], now: Date = new Date()): SaveGame {
-  normalizeSaveGame(save)
-  if (save.activeQuestRun) throw createGameError('A quest is already in progress')
-  const quest = quests.find((candidate) => candidate.id === questId)
-  if (!quest) throw createGameError('Quest not found')
-  const progress = save.questsProgress.find((entry) => entry.questId === questId)
-  if (!progress?.unlocked) throw createGameError('Quest is locked')
-
-  const uniqueHeroIds = [...new Set(heroIds)]
-  const heroes = uniqueHeroIds.map((id) => findHero(save, id))
-  if (!heroes.length) throw createGameError('Select at least one hero')
-  if (heroes.length > MAX_EXPEDITION_PARTY_SIZE) throw createGameError(`Select up to ${MAX_EXPEDITION_PARTY_SIZE} heroes`)
-  if (heroes.some((hero) => hero.status !== 'available')) throw createGameError('All selected heroes must be available')
-  if (heroes.some((hero) => hero.level < quest.minLevel)) throw createGameError('A selected hero does not meet the quest level')
-
-  // Mark heroes as onQuest
-  for (const hero of heroes) {
-    hero.status = 'onQuest'
-  }
-
-  // Create expedition state
-  const expedition: ActiveExpedition = {
-    id: randomId(),
-    questId,
-    heroIds: uniqueHeroIds,
-    status: "exploring",
-    startedAt: now.toISOString(),
-    lastEventAt: now.toISOString(),
-    nextEventAt: new Date(now.getTime() + EXPEDITION_EVENT_INTERVAL_MS).toISOString(),
-    depth: 0,
-    danger: 0,
-    partyState: heroes.map(hero => ({
-      heroId: hero.id,
-      temporaryHp: hero.derivedStats.life,
-      maxTemporaryHp: hero.derivedStats.life,
-      dead: false
-    })),
-    events: [],
-    carriedLoot: [],
-    carriedGold: 0,
-    carriedXp: 0,
-    bossReady: false,
-    bossDefeated: false
-  }
-
-  save.activeExpeditions.push(expedition)
-  return touchSave(save)
-}
-
-export function advanceExpedition(save: SaveGame, now: Date = new Date(), expeditionId?: string): SaveGame {
-  normalizeSaveGame(save)
-  const expeditions = expeditionId
-    ? [findActiveExpedition(save, expeditionId)]
-    : save.activeExpeditions
-
-  if (!expeditions.length) return touchSave(save)
-  for (const expedition of expeditions) {
-    advanceSingleExpedition(save, expedition, now)
-  }
-  return touchSave(save)
-}
-
-function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, now: Date): void {
-  const nowTime = now.getTime()
-  const lastEventTime = new Date(expedition.lastEventAt).getTime()
-  const quest = quests.find(q => q.id === expedition.questId)
-  if (!quest) throw createGameError('Quest not found')
-
-  // Calculate how many events should have occurred
-  const eventsMissed = Math.floor((nowTime - lastEventTime) / EXPEDITION_EVENT_INTERVAL_MS)
-  const eventsToGenerate = Math.min(eventsMissed, 5) // max 5 events per advance to prevent bursts
-
-  if (eventsToGenerate <= 0) return
-
-  // Generate events
-  for (let i = 0; i < eventsToGenerate; i++) {
-    const eventTime = new Date(lastEventTime + ((i + 1) * EXPEDITION_EVENT_INTERVAL_MS)).toISOString()
-    const event = generateExpeditionEvent(expedition, quest, new Date(eventTime))
-    expedition.events.push(event)
-    applyExpeditionEvent(expedition, event)
-  }
-
-  // Update expedition timers
-  expedition.lastEventAt = new Date(lastEventTime + (eventsToGenerate * EXPEDITION_EVENT_INTERVAL_MS)).toISOString()
-  expedition.nextEventAt = new Date(new Date(expedition.lastEventAt).getTime() + EXPEDITION_EVENT_INTERVAL_MS).toISOString()
-
-  // Update depth and danger based on events
-  expedition.depth += eventsToGenerate
-  expedition.danger = Math.min(100, expedition.depth) // Simple danger calculation
-
-  // Check for boss readiness
-  if (!expedition.bossReady && expedition.depth >= 100 && expedition.heroIds.some(id => {
-    const hero = save.heroes.find(h => h.id === id)
-    return hero && hero.level >= 10
-  })) {
-    expedition.bossReady = true
-    expedition.status = 'bossReady'
-  }
-}
-
-export function recallExpedition(save: SaveGame, expeditionId: string, now: Date = new Date()): SaveGame {
-  normalizeSaveGame(save)
-  const expedition = findActiveExpedition(save, expeditionId)
-
-  // First advance to current time to process any pending events
-  advanceSingleExpedition(save, expedition, now)
-
-  // Determine result based on expedition state
-  const allDead = expedition.partyState.every(state => state.dead)
-  const anyDowned = expedition.partyState.some(state => state.dead)
-  const anyInjured = expedition.partyState.some(state => !state.dead && state.temporaryHp < state.maxTemporaryHp * 0.5)
-  const result: ExpeditionSummary['result'] = allDead ? 'death' : anyDowned || anyInjured ? 'retreated' : 'success'
-
-  if (allDead) {
-    expedition.carriedGold = Math.floor(expedition.carriedGold * 0.5)
-    const lootToKeep = Math.ceil(expedition.carriedLoot.length * 0.5)
-    expedition.carriedLoot = expedition.carriedLoot.slice(0, lootToKeep)
-  }
-
-  // Transfer carried rewards to save
-  save.gold += expedition.carriedGold
-  addLootToSave(save, expedition.carriedLoot)
-
-  // Apply XP to surviving heroes
-  const survivorIds = expedition.partyState.filter((state) => !state.dead).map((state) => state.heroId)
-  const xpPerHero = survivorIds.length ? Math.floor(expedition.carriedXp / survivorIds.length) : 0
-  for (const heroId of expedition.heroIds) {
-    const hero = findHero(save, heroId)
-
-    // Update hero status based on expedition state
-    const state = expedition.partyState.find(s => s.heroId === heroId)
-    if (!state) throw createGameError('Expedition hero state not found')
-    if (state?.dead) {
-      hero.status = state.permanentDeath ? 'dead' : 'injured'
-    } else if (state.temporaryHp < state.maxTemporaryHp * 0.5) {
-      hero.xp += xpPerHero
-      levelUpHero(hero)
-      hero.status = 'injured'
-    } else {
-      hero.xp += xpPerHero
-      levelUpHero(hero)
-      hero.status = 'available'
-    }
-    hero.derivedStats = calculateDerivedStats(hero)
-  }
-
-  // Create summary
-  const summary: ExpeditionSummary = {
-    id: expedition.id,
-    questId: expedition.questId,
-    heroIds: expedition.heroIds,
-    result,
-    depth: expedition.depth,
-    durationMs: now.getTime() - new Date(expedition.startedAt).getTime(),
-    loot: [...expedition.carriedLoot],
-    gold: expedition.carriedGold,
-    xp: expedition.carriedXp,
-    heroesStatus: [...expedition.partyState],
-    events: [...expedition.events]
-  }
-
-  // Clear expedition and save summary
-  save.activeExpeditions = save.activeExpeditions.filter((activeExpedition) => activeExpedition.id !== expedition.id)
-  save.expeditionHistory = [summary, ...save.expeditionHistory].slice(0, EXPEDITION_HISTORY_LIMIT)
-
-  return touchSave(save)
-}
-
-function generateExpeditionEvent(expedition: ActiveExpedition, quest: Quest, now: Date): ExpeditionEvent {
-  const typeRoll = pickExpeditionEventType(expedition)
-  let type: ExpeditionEvent['type']
-  let title = ''
-  let description = ''
-  let damageTaken: number | undefined
-  let xpGained: number | undefined
-  let goldFound: number | undefined
-  let lootFound: Item[] | undefined
-  let depthGained: number | undefined
-
-  if (typeRoll === 'enemy') {
-    type = 'enemy'
-    title = 'Enemy Encounter'
-    description = 'The party encountered hostile forces.'
-    damageTaken = Math.floor(Math.random() * 10) + 5
-    xpGained = Math.floor(Math.random() * 15) + 5
-    if (Math.random() < 0.3) goldFound = Math.floor(Math.random() * 10) + 5
-  } else if (typeRoll === 'treasure') {
-    type = 'treasure'
-    title = 'Treasure Found'
-    description = 'The party discovered a hidden cache.'
-    goldFound = Math.floor(Math.random() * 20) + 10
-    if (Math.random() < 0.4) {
-      lootFound = [generateItem(quest.lootTableId, 0)]
-    }
-  } else if (typeRoll === 'trap') {
-    type = 'trap'
-    title = 'Trap Triggered'
-    description = 'The party triggered a dangerous trap.'
-    damageTaken = Math.floor(Math.random() * 15) + 10
-  } else if (typeRoll === 'rest') {
-    type = 'rest'
-    title = 'Safe Haven'
-    description = 'The party found a place to rest and recover.'
-    // Healing is applied in applyExpeditionEvent
-  } else if (typeRoll === 'champion') {
-    type = 'champion'
-    title = 'Champion Encounter'
-    description = 'A powerful champion blocked the party\'s path.'
-    damageTaken = Math.floor(Math.random() * 20) + 15
-    xpGained = Math.floor(Math.random() * 25) + 15
-    if (Math.random() < 0.5) goldFound = Math.floor(Math.random() * 15) + 10
-    if (Math.random() < 0.3) {
-      lootFound = [generateItem(quest.lootTableId, 5)]
-    }
-  } else if (typeRoll === 'evilHero') {
-    type = 'evilHero'
-    title = 'Evil Hero Encounter'
-    description = 'A fallen hero corrupted by darkness ambushed the party.'
-    damageTaken = Math.floor(Math.random() * 25) + 20
-    xpGained = Math.floor(Math.random() * 30) + 20
-    if (Math.random() < 0.4) goldFound = Math.floor(Math.random() * 20) + 15
-    if (Math.random() < 0.4) {
-      lootFound = [generateItem(quest.lootTableId, 10)]
-    }
-  } else if (typeRoll === 'bossClue') {
-    type = 'bossClue'
-    title = 'Boss Clue Found'
-    description = 'The party discovered evidence of the boss\'s presence.'
-    depthGained = Math.floor(Math.random() * 10) + 5
-  } else {
-    type = 'boss'
-    title = 'Boss Encounter'
-    description = 'The party has reached the boss chamber!'
-    damageTaken = Math.floor(Math.random() * 30) + 20
-    xpGained = Math.floor(Math.random() * 50) + 30
-    if (Math.random() < 0.6) goldFound = Math.floor(Math.random() * 50) + 25
-    if (Math.random() < 0.5) {
-      lootFound = [generateItem(quest.lootTableId, 15)]
-    }
-    expedition.bossDefeated = true
-  }
-
-  return {
-    id: randomId(),
-    type,
-    createdAt: now.toISOString(),
-    title,
-    description,
-    damageTaken,
-    xpGained,
-    goldFound,
-    lootFound,
-    depthGained
-  }
-}
-
-function applyExpeditionEvent(expedition: ActiveExpedition, event: ExpeditionEvent): void {
-  // Apply damage to heroes
-  if (event.damageTaken !== undefined) {
-    const livingStates = expedition.partyState.filter((state) => !state.dead)
-    const damagePerHero = livingStates.length ? Math.max(1, Math.floor(event.damageTaken / livingStates.length)) : 0
-    for (const state of livingStates) {
-      state.temporaryHp = Math.max(0, state.temporaryHp - damagePerHero)
-      if (state.temporaryHp <= 0) {
-        state.dead = true
-        if (Math.random() < 0.08) {
-          state.permanentDeath = true
-          expedition.events.push({
-            id: randomId(),
-            type: 'death',
-            createdAt: event.createdAt,
-            title: 'Hero Fallen',
-            description: `A hero has succumbed to their wounds.`,
-            damageTaken: 0
-          })
-        }
-      }
-    }
-  }
-
-  // Apply healing from rest events
-  if (event.type === 'rest') {
-    const healAmount = Math.floor(20 + Math.random() * 20) // Heal 20-40 HP
-    for (const state of expedition.partyState) {
-      if (!state.dead) {
-        state.temporaryHp = Math.min(state.maxTemporaryHp, state.temporaryHp + healAmount)
-      }
-    }
-  }
-
-  // Apply rewards
-  if (event.xpGained !== undefined) {
-    expedition.carriedXp += event.xpGained
-  }
-  if (event.goldFound !== undefined) {
-    expedition.carriedGold += event.goldFound
-  }
-  if (event.lootFound?.length) {
-    expedition.carriedLoot.push(...event.lootFound)
-  }
-  if (event.depthGained !== undefined) {
-    expedition.depth += event.depthGained
-  }
-}
-
-function pickExpeditionEventType(expedition: ActiveExpedition): Exclude<ExpeditionEvent['type'], 'death' | 'return'> {
-  const danger = Math.min(1, expedition.depth / 100)
-  const weights: Array<[Exclude<ExpeditionEvent['type'], 'death' | 'return'>, number]> = [
-    ['enemy', 36 + danger * 10],
-    ['treasure', 20],
-    ['trap', 10 + danger * 8],
-    ['rest', Math.max(4, 10 - danger * 5)],
-    ['champion', 8 + danger * 5],
-    ['evilHero', 5 + danger * 4],
-    ['bossClue', expedition.bossReady ? 0 : 5],
-    ['boss', expedition.bossReady && !expedition.bossDefeated ? 12 : 0]
-  ]
-  const totalWeight = weights.reduce((sum, [, weight]) => sum + weight, 0)
-  let roll = Math.random() * totalWeight
-  for (const [type, weight] of weights) {
-    roll -= weight
-    if (roll <= 0) return type
-  }
-  return 'enemy'
 }

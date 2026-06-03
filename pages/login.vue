@@ -16,6 +16,11 @@
         <input v-model="password" type="password" autocomplete="current-password" required minlength="6">
       </label>
 
+      <label v-if="mode === 'register'" class="field">
+        <span>Invite Code</span>
+        <input v-model="inviteCode" type="text" required>
+      </label>
+
       <p v-if="auth.error" class="error">{{ auth.error }}</p>
 
       <div class="row">
@@ -33,12 +38,13 @@ const auth = useAuthStore()
 const mode = ref<'login' | 'register'>('login')
 const email = ref('')
 const password = ref('')
+const inviteCode = ref('')
 
 async function submit() {
   auth.error = ''
   try {
     if (mode.value === 'login') await auth.login(email.value, password.value)
-    else await auth.register(email.value, password.value)
+    else await auth.register(email.value, password.value, inviteCode.value)
     await navigateTo('/tavern')
   } catch (error) {
     auth.error = message(error)

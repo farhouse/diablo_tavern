@@ -292,6 +292,20 @@ a {
   padding-right: 0.15rem;
 }
 
+.topbar-stats {
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tag.material {
+  color: #7eb8da;
+  border-color: #5a8aaa;
+}
+
+.effect-warning {
+  color: var(--accent-2);
+}
+
 @media (max-width: 720px) {
   .topbar {
     align-items: flex-start;

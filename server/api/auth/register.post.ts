@@ -10,6 +10,15 @@ export default defineEventHandler(async (event) => {
   const password = requireString(body.password, 'password')
   if (password.length < 6) throw createError({ statusCode: 400, statusMessage: 'Password must be at least 6 characters' })
 
+  const config = useRuntimeConfig()
+  const inviteCode = config.inviteCode as string | undefined
+  if (inviteCode) {
+    const providedCode = requireString(body.inviteCode, 'inviteCode')
+    if (providedCode !== inviteCode) {
+      throw createError({ statusCode: 403, statusMessage: 'Invalid invite code' })
+    }
+  }
+
   const users = await usersCollection()
   const existing = await users.findOne({ email })
   if (existing) throw createError({ statusCode: 409, statusMessage: 'Email is already registered' })

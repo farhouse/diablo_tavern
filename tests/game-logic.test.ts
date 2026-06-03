@@ -9,7 +9,16 @@ import {
   startExpedition,
   advanceExpedition,
   recallExpedition,
-  normalizeSaveGame
+  normalizeSaveGame,
+  upgradeCaravan,
+  startAppraisal,
+  completeAppraisalQueue,
+  getHeroCapacity,
+  getExpeditionCapacity,
+  getStashCapacity,
+  getActiveHeroCount,
+  getHireCost,
+  equipItem
 } from '../utils/game-logic'
 
 describe('game logic', () => {
@@ -62,6 +71,9 @@ describe('game logic', () => {
 
     it('allows multiple expeditions with different available heroes', () => {
       const save = createSaveGame('user-1')
+      save.gold = 9999
+      save.materials = 999
+      upgradeCaravan(save, 'scoutTable')
       const barbarian = createHero('barbarian')
       const sorceress = createHero('sorceress')
       save.heroes.push(barbarian, sorceress)
@@ -75,6 +87,9 @@ describe('game logic', () => {
 
     it('prevents reusing a hero already assigned to another expedition', () => {
       const save = createSaveGame('user-1')
+      save.gold = 9999
+      save.materials = 999
+      upgradeCaravan(save, 'scoutTable')
       const barbarian = createHero('barbarian')
       save.heroes.push(barbarian)
       
@@ -114,6 +129,9 @@ describe('game logic', () => {
     it('can advance only the selected expedition by id', () => {
       const now = new Date('2026-01-01T00:00:00.000Z')
       const save = createSaveGame('user-1')
+      save.gold = 9999
+      save.materials = 999
+      upgradeCaravan(save, 'scoutTable')
       const barbarian = createHero('barbarian')
       const sorceress = createHero('sorceress')
       save.heroes.push(barbarian, sorceress)
@@ -157,6 +175,9 @@ describe('game logic', () => {
     it('recalls one expedition without clearing other active expeditions', () => {
       const now = new Date('2026-01-01T00:00:00.000Z')
       const save = createSaveGame('user-1')
+      save.gold = 9999
+      save.materials = 999
+      upgradeCaravan(save, 'scoutTable')
       const barbarian = createHero('barbarian')
       const sorceress = createHero('sorceress')
       save.heroes.push(barbarian, sorceress)
@@ -193,7 +214,7 @@ describe('game logic', () => {
 
       const recalled = recallExpedition(save, expedition!.id, now)
 
-      expect(recalled.expeditionHistory[0]?.result).toBe('death')
+      expect(recalled.expeditionHistory[0]?.result).toBe('defeated')
       expect(recalled.expeditionHistory[0]?.gold).toBe(50)
       expect(recalled.expeditionHistory[0]?.loot).toHaveLength(1)
       expect(recalled.heroes[0]?.status).toBe('dead')
@@ -231,6 +252,9 @@ describe('game logic', () => {
       startExpedition(save, 'blood-moor', [barbarian.id])
       const legacyExpedition = save.activeExpeditions[0]
       expect(legacyExpedition).toBeDefined()
+      delete (legacyExpedition as unknown as Record<string, unknown>).carriedMaterials
+      delete (legacyExpedition as unknown as Record<string, unknown>).bossReady
+      delete (legacyExpedition as unknown as Record<string, unknown>).bossDefeated
 
       const legacySave = {
         ...save,
@@ -247,7 +271,8 @@ describe('game logic', () => {
           loot: [],
           gold: 1,
           xp: 1,
-          heroesStatus: [],
+          heroStatuses: [],
+          materials: 0,
           events: []
         }
       }
@@ -256,10 +281,176 @@ describe('game logic', () => {
 
       expect(normalized.activeExpeditions).toHaveLength(1)
       expect(normalized.activeExpeditions[0]?.id).toBe(legacyExpedition?.id)
+      expect(normalized.activeExpeditions[0]?.carriedMaterials).toBe(0)
+      expect(normalized.activeExpeditions[0]?.bossReady).toBe(false)
+      expect(normalized.activeExpeditions[0]?.bossDefeated).toBe(false)
       expect(normalized.expeditionHistory).toHaveLength(1)
       expect(normalized.expeditionHistory[0]?.id).toBe('legacy-summary')
       expect('activeExpedition' in normalized).toBe(false)
       expect('lastExpeditionRun' in normalized).toBe(false)
+    })
+
+    it('uses infirmary upgrades to reduce injury risk on recall', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      save.gold = 99999
+      save.materials = 9999
+      upgradeCaravan(save, 'infirmary')
+      const barbarian = createHero('barbarian')
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+      expect(expedition).toBeDefined()
+      expedition!.partyState[0]!.temporaryHp = Math.floor(expedition!.partyState[0]!.maxTemporaryHp * 0.4)
+
+      const recalled = recallExpedition(save, expedition!.id, now)
+
+      expect(recalled.expeditionHistory[0]?.result).toBe('success')
+      expect(recalled.heroes[0]?.status).toBe('available')
+    })
+  })
+
+  describe('caravan logic', () => {
+    it('new save has caravan with 3 hero capacity, 1 expedition, 20 stash', () => {
+      const save = createSaveGame('user-1')
+      expect(getHeroCapacity(save)).toBe(3)
+      expect(getExpeditionCapacity(save)).toBe(1)
+      expect(getStashCapacity(save)).toBe(20)
+      expect(save.materials).toBe(0)
+    })
+
+    it('normalize adds caravan to legacy save', () => {
+      const save = createSaveGame('user-1')
+      const legacy = { ...save }
+      delete (legacy as Record<string, unknown>).materials
+      delete (legacy as Record<string, unknown>).caravan
+      const normalized = normalizeSaveGame(legacy as unknown as ReturnType<typeof createSaveGame>)
+      expect(normalized.materials).toBe(0)
+      expect(normalized.caravan).toBeDefined()
+      expect(normalized.caravan.level).toBe(0)
+      expect(getHeroCapacity(normalized)).toBe(3)
+    })
+
+    it('upgrade fails if not enough gold', () => {
+      const save = createSaveGame('user-1')
+      save.gold = 0
+      expect(() => upgradeCaravan(save, 'wagons')).toThrow('Not enough gold')
+    })
+
+    it('upgrade fails if not enough materials', () => {
+      const save = createSaveGame('user-1')
+      save.gold = 1000
+      save.materials = 0
+      expect(() => upgradeCaravan(save, 'wagons')).toThrow('Not enough materials')
+    })
+
+    it('upgrade deducts resources and increases capacity', () => {
+      const save = createSaveGame('user-1')
+      save.gold = 1000
+      save.materials = 50
+      upgradeCaravan(save, 'wagons')
+      expect(save.gold).toBe(400)
+      expect(save.materials).toBe(30)
+      expect(getHeroCapacity(save)).toBe(5)
+    })
+
+    it('stash capacity upgrades work', () => {
+      const save = createSaveGame('user-1')
+      save.gold = 10000
+      save.materials = 500
+      upgradeCaravan(save, 'stashWagon')
+      expect(getStashCapacity(save)).toBe(30)
+      expect(save.stashLimit).toBe(30)
+      upgradeCaravan(save, 'stashWagon')
+      expect(getStashCapacity(save)).toBe(45)
+    })
+
+    it('exceeding max upgrade level throws', () => {
+      const save = createSaveGame('user-1')
+      save.gold = 99999
+      save.materials = 9999
+      upgradeCaravan(save, 'scoutTable')
+      upgradeCaravan(save, 'scoutTable')
+      upgradeCaravan(save, 'scoutTable')
+      expect(getExpeditionCapacity(save)).toBe(4)
+      expect(() => upgradeCaravan(save, 'scoutTable')).toThrow('Upgrade is already at max level')
+    })
+
+    it('respects hero capacity when hiring', () => {
+      const save = createSaveGame('user-1')
+      expect(getHeroCapacity(save)).toBe(3)
+      save.heroes.push(createHero('barbarian'))
+      save.heroes.push(createHero('sorceress'))
+      save.heroes.push(createHero('paladin'))
+      expect(save.heroes.length).toBe(3)
+    })
+
+    it('does not count dead heroes against active roster capacity or hire cost', () => {
+      const save = createSaveGame('user-1')
+      const deadHero = createHero('barbarian')
+      deadHero.status = 'dead'
+      save.heroes.push(createHero('barbarian'), createHero('sorceress'), createHero('paladin'), deadHero)
+
+      expect(save.heroes.length).toBe(4)
+      expect(getActiveHeroCount(save)).toBe(3)
+      expect(getHireCost(save)).toBe(360)
+    })
+
+    it('does not allow equipping dead heroes', () => {
+      const save = createSaveGame('user-1')
+      const deadHero = createHero('barbarian')
+      deadHero.status = 'dead'
+      const item = generateItem('act1-low', 0)
+      item.identified = true
+      save.heroes.push(deadHero)
+      save.stash.push(item)
+
+      expect(() => equipItem(save, deadHero.id, item.id)).toThrow('Dead heroes cannot equip items')
+    })
+
+    it('appraiser start fails without upgrade', () => {
+      const save = createSaveGame('user-1')
+      const item = generateItem('act1-low', 0)
+      item.identified = false
+      save.stash.push(item)
+      expect(() => startAppraisal(save, item.id)).toThrow('Appraiser not available')
+    })
+
+    it('appraiser start rejects identified item', () => {
+      const save = createSaveGame('user-1')
+      save.gold = 99999
+      save.materials = 9999
+      upgradeCaravan(save, 'appraiser')
+      const item = generateItem('act1-low', 0)
+      item.identified = true
+      save.stash.push(item)
+      expect(() => startAppraisal(save, item.id)).toThrow('already identified')
+    })
+
+    it('appraiser queue accepts item and completes when time passes', () => {
+      const save = createSaveGame('user-1')
+      save.gold = 99999
+      save.materials = 9999
+      upgradeCaravan(save, 'appraiser')
+      const item = generateItem('act1-low', 0)
+      item.identified = false
+      item.rarity = 'magic'
+      save.stash.push(item)
+
+      startAppraisal(save, item.id)
+      expect(save.caravan.services.appraiserQueue).toHaveLength(1)
+
+      // Complete with a future date
+      const future = new Date(Date.now() + 10 * 60 * 1000)
+      vi.useFakeTimers()
+      vi.setSystemTime(future)
+      completeAppraisalQueue(save)
+      expect(save.caravan.services.appraiserQueue).toHaveLength(0)
+
+      const stashItem = save.stash.find(si => si.id === item.id)
+      expect(stashItem?.identified).toBe(true)
+      vi.useRealTimers()
     })
   })
 })

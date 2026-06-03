@@ -34,10 +34,12 @@ export const useAuthStore = defineStore('auth', {
       })
       this.setSession(response)
     },
-    async register(email: string, password: string) {
+    async register(email: string, password: string, inviteCode?: string) {
+      const body: Record<string, string> = { email, password }
+      if (inviteCode) body.inviteCode = inviteCode
       const response = await $fetch<AuthResponse>('/api/auth/register', {
         method: 'POST',
-        body: { email, password }
+        body
       })
       this.setSession(response)
     },
