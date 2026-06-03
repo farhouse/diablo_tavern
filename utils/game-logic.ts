@@ -570,7 +570,7 @@ export function advanceExpedition(save: SaveGame, now: Date = new Date(), expedi
   return touchSave(save)
 }
 
-function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, now: Date): void {
+function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, now: Date, skipPortal = false): void {
   const nowTime = now.getTime()
 
   // Clear expired portal
@@ -599,9 +599,15 @@ function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, n
 
   for (let i = 0; i < eventsToGenerate; i++) {
     const eventTime = new Date(lastEventTime + ((i + 1) * EXPEDITION_EVENT_INTERVAL_MS)).toISOString()
-    const event = generateExpeditionEvent(save, expedition, quest, new Date(eventTime))
+    const event = generateExpeditionEvent(save, expedition, quest, new Date(eventTime), skipPortal)
     expedition.events.push(event)
     applyExpeditionEvent(save, expedition, event)
+  }
+
+  // Clean portal if still expired after catch-up event generation
+  if (expedition.portalAvailableUntil && new Date(expedition.portalAvailableUntil).getTime() <= nowTime) {
+    delete expedition.portalAvailableUntil
+    delete expedition.portalEventId
   }
 
   expedition.lastEventAt = new Date(lastEventTime + (eventsToGenerate * EXPEDITION_EVENT_INTERVAL_MS)).toISOString()
@@ -636,8 +642,8 @@ export function recallExpedition(save: SaveGame, expeditionId: string, now: Date
   // If already returning, just touch
   if (expedition.status === 'returning') return touchSave(save)
 
-  // Advance up to now before starting return
-  advanceSingleExpedition(save, expedition, now)
+  // Advance up to now before starting return (skip portal generation)
+  advanceSingleExpedition(save, expedition, now, true)
 
   // Start timed return
   expedition.status = 'returning'
@@ -713,8 +719,8 @@ function completeExpeditionReturn(save: SaveGame, expedition: ActiveExpedition, 
   save.expeditionHistory = [summary, ...save.expeditionHistory].slice(0, EXPEDITION_HISTORY_LIMIT)
 }
 
-function generateExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, quest: Quest, now: Date): ExpeditionEvent {
-  const type = pickExpeditionEventType(expedition)
+function generateExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, quest: Quest, now: Date, skipPortal = false): ExpeditionEvent {
+  const type = skipPortal ? pickExpeditionEventType(expedition, true) : pickExpeditionEventType(expedition)
   let title = ''
   let description = ''
   let damageTaken: number | undefined
@@ -932,9 +938,10 @@ function rarityValueMultiplier(rarity: ItemRarity): number {
   return rarityOrder.indexOf(rarity) + 1
 }
 
-function pickExpeditionEventType(expedition: ActiveExpedition): Exclude<ExpeditionEvent['type'], 'death' | 'return'> {
+function pickExpeditionEventType(expedition: ActiveExpedition, forceNoPortal = false): Exclude<ExpeditionEvent['type'], 'death' | 'return'> {
   const danger = Math.min(1, expedition.depth / 100)
   const portalActive = expedition.portalAvailableUntil !== undefined && expedition.portalAvailableUntil !== null
+  const portalWeight = (forceNoPortal || expedition.status !== 'exploring' || portalActive) ? 0 : 4
   const weights: Array<[Exclude<ExpeditionEvent['type'], 'death' | 'return'>, number]> = [
     ['enemy', 36 + danger * 10],
     ['treasure', 20],
@@ -944,7 +951,7 @@ function pickExpeditionEventType(expedition: ActiveExpedition): Exclude<Expediti
     ['evilHero', 5 + danger * 4],
     ['bossClue', expedition.bossReady ? 0 : 5],
     ['boss', expedition.bossReady && !expedition.bossDefeated ? 12 : 0],
-    ['portal', (expedition.status !== 'exploring' || portalActive) ? 0 : 4]
+    ['portal', portalWeight]
   ]
   const totalWeight = weights.reduce((sum, [, weight]) => sum + weight, 0)
   let roll = Math.random() * totalWeight

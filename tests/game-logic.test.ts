@@ -317,32 +317,29 @@ describe('game logic', () => {
     })
   })
 
-    it('portal event sets portalAvailableUntil and portalEventId on expedition', () => {
+    it('portal event is generated and sets portalAvailableUntil and portalEventId', () => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      const now = new Date('2026-01-01T00:00:00.000Z')
       const save = createSaveGame('user-1')
       const barbarian = createHero('barbarian')
       barbarian.derivedStats.life = 200
       save.heroes.push(barbarian)
 
-      const now = new Date('2026-01-01T00:00:00.000Z')
       startExpedition(save, 'blood-moor', [barbarian.id], now)
       const expedition = save.activeExpeditions[0]
 
-      // Manually generate a portal event and apply it
-      const portalEvent = {
-        id: 'portal-1',
-        type: 'portal' as const,
-        createdAt: now.toISOString(),
-        title: 'Portal to Camp',
-        description: 'discovered a temporary portal'
-      }
-      // Import internal function via expedition manipulation
-      // Instead, directly set the expedition portal fields
-      expedition!.portalAvailableUntil = new Date(now.getTime() + 30000).toISOString()
-      expedition!.portalEventId = 'portal-1'
+      // Advance to generate events (portal has weight 4, 0.99 of total picks portal)
+      const future = new Date(now.getTime() + 10000)
+      advanceExpedition(save, future)
 
+      // Verify the portal event went through the real pipeline
+      const portalEvent = expedition!.events.find(e => e.type === 'portal')
+      expect(portalEvent).toBeDefined()
+      expect(expedition!.portalEventId).toBe(portalEvent!.id)
       expect(expedition!.portalAvailableUntil).toBeDefined()
-      expect(expedition!.portalEventId).toBe('portal-1')
-      expect(new Date(expedition!.portalAvailableUntil!).getTime()).toBe(now.getTime() + 30000)
+      const portalCreatedAt = new Date(portalEvent!.createdAt).getTime()
+      expect(new Date(expedition!.portalAvailableUntil!).getTime()).toBe(portalCreatedAt + 30000)
+      random.mockRestore()
     })
 
     it('portal expires after 30 seconds during advanceExpedition', () => {
