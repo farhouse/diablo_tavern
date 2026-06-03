@@ -80,6 +80,9 @@ export function normalizeSaveGame(save: SaveGame): SaveGame {
     if (typeof record.carriedMaterials !== 'number') record.carriedMaterials = 0
     if (typeof record.bossReady !== 'boolean') record.bossReady = record.status === 'bossReady'
     if (typeof record.bossDefeated !== 'boolean') record.bossDefeated = false
+    if (record.status === 'returning' && !record.returnsAt) {
+      record.status = 'exploring'
+    }
   }
 
   if (legacy.lastExpeditionRun && !save.expeditionHistory.some((summary) => summary.id === legacy.lastExpeditionRun?.id)) {
@@ -569,6 +572,22 @@ export function advanceExpedition(save: SaveGame, now: Date = new Date(), expedi
 
 function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, now: Date): void {
   const nowTime = now.getTime()
+
+  // Clear expired portal
+  if (expedition.portalAvailableUntil && new Date(expedition.portalAvailableUntil).getTime() <= nowTime) {
+    delete expedition.portalAvailableUntil
+    delete expedition.portalEventId
+  }
+
+  // Returning expedition: check if return is complete, otherwise skip
+  if (expedition.status === 'returning') {
+    if (expedition.returnsAt && new Date(expedition.returnsAt).getTime() <= nowTime) {
+      completeExpeditionReturn(save, expedition, now)
+    }
+    return
+  }
+
+  // Normal event generation for exploring/bossReady expeditions
   const lastEventTime = new Date(expedition.lastEventAt).getTime()
   const quest = quests.find(q => q.id === expedition.questId)
   if (!quest) throw createGameError('Quest not found')
@@ -600,12 +619,38 @@ function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, n
   }
 }
 
-export function recallExpedition(save: SaveGame, expeditionId: string, now: Date = new Date()): SaveGame {
+export function recallExpedition(save: SaveGame, expeditionId: string, now: Date = new Date(), options?: { usePortal?: boolean }): SaveGame {
   normalizeSaveGame(save)
   const expedition = findActiveExpedition(save, expeditionId)
 
+  // Portal recall: complete immediately
+  if (options?.usePortal) {
+    const portalExpired = !expedition.portalAvailableUntil || new Date(expedition.portalAvailableUntil).getTime() <= now.getTime()
+    if (portalExpired) throw createGameError('Portal is no longer available')
+    delete expedition.portalAvailableUntil
+    delete expedition.portalEventId
+    completeExpeditionReturn(save, expedition, now)
+    return touchSave(save)
+  }
+
+  // If already returning, just touch
+  if (expedition.status === 'returning') return touchSave(save)
+
+  // Advance up to now before starting return
   advanceSingleExpedition(save, expedition, now)
 
+  // Start timed return
+  expedition.status = 'returning'
+  expedition.returnStartedAt = now.toISOString()
+  const elapsed = now.getTime() - new Date(expedition.startedAt).getTime()
+  expedition.returnsAt = new Date(now.getTime() + Math.floor(elapsed / 2)).toISOString()
+  delete expedition.portalAvailableUntil
+  delete expedition.portalEventId
+
+  return touchSave(save)
+}
+
+function completeExpeditionReturn(save: SaveGame, expedition: ActiveExpedition, now: Date): void {
   const allDead = expedition.partyState.every(state => state.dead)
   const anyDowned = expedition.partyState.some(state => state.dead)
   const injuryThreshold = getInfirmaryReduction(save)
@@ -666,8 +711,6 @@ export function recallExpedition(save: SaveGame, expeditionId: string, now: Date
 
   save.activeExpeditions = save.activeExpeditions.filter((activeExpedition) => activeExpedition.id !== expedition.id)
   save.expeditionHistory = [summary, ...save.expeditionHistory].slice(0, EXPEDITION_HISTORY_LIMIT)
-
-  return touchSave(save)
 }
 
 function generateExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, quest: Quest, now: Date): ExpeditionEvent {
@@ -730,6 +773,9 @@ function generateExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, q
     if (Math.random() < 0.6) goldFound = Math.floor(Math.random() * 50) + 25
     if (Math.random() < 0.5) lootFound = [generateItem(quest.lootTableId, 15)]
     expedition.bossDefeated = true
+  } else if (type === 'portal') {
+    title = 'Portal to Camp'
+    description = 'The party discovered a temporary portal back to camp. It will last 30 seconds.'
   } else {
     title = 'Wandering Merchant'
     description = 'The party met a wandering trader with rare goods.'
@@ -777,6 +823,12 @@ function applyExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, even
         }
       }
     }
+  }
+
+  if (event.type === 'portal') {
+    expedition.portalAvailableUntil = new Date(new Date(event.createdAt).getTime() + 30000).toISOString()
+    expedition.portalEventId = event.id
+    return
   }
 
   if (event.type === 'rest') {
@@ -882,6 +934,7 @@ function rarityValueMultiplier(rarity: ItemRarity): number {
 
 function pickExpeditionEventType(expedition: ActiveExpedition): Exclude<ExpeditionEvent['type'], 'death' | 'return'> {
   const danger = Math.min(1, expedition.depth / 100)
+  const portalActive = expedition.portalAvailableUntil !== undefined && expedition.portalAvailableUntil !== null
   const weights: Array<[Exclude<ExpeditionEvent['type'], 'death' | 'return'>, number]> = [
     ['enemy', 36 + danger * 10],
     ['treasure', 20],
@@ -890,7 +943,8 @@ function pickExpeditionEventType(expedition: ActiveExpedition): Exclude<Expediti
     ['champion', 8 + danger * 5],
     ['evilHero', 5 + danger * 4],
     ['bossClue', expedition.bossReady ? 0 : 5],
-    ['boss', expedition.bossReady && !expedition.bossDefeated ? 12 : 0]
+    ['boss', expedition.bossReady && !expedition.bossDefeated ? 12 : 0],
+    ['portal', (expedition.status !== 'exploring' || portalActive) ? 0 : 4]
   ]
   const totalWeight = weights.reduce((sum, [, weight]) => sum + weight, 0)
   let roll = Math.random() * totalWeight

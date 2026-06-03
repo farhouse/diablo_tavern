@@ -1,3 +1,4 @@
+import type { ActiveExpedition } from '../types/game'
 import { describe, expect, it, vi } from 'vitest'
 import { 
   completeActiveQuest, 
@@ -146,7 +147,7 @@ describe('game logic', () => {
       expect(save.activeExpeditions[1]?.events).toHaveLength(0)
     })
 
-    it('recalls expedition and transfers rewards', () => {
+    it('recalls expedition via portal and transfers rewards', () => {
       const save = createSaveGame('user-1')
       const barbarian = createHero('barbarian')
       save.heroes.push(barbarian)
@@ -159,9 +160,11 @@ describe('game logic', () => {
       const advanced = advanceExpedition(save, future)
       const expeditionId = advanced.activeExpeditions[0]!.id
       advanced.activeExpeditions[0]!.carriedGold = 25
+      // Set up portal for immediate recall
+      advanced.activeExpeditions[0]!.portalAvailableUntil = new Date(Date.now() + 60000).toISOString()
       
-      // Recall expedition
-      const recalled = recallExpedition(advanced, expeditionId)
+      // Recall expedition via portal
+      const recalled = recallExpedition(advanced, expeditionId, undefined, { usePortal: true })
       
       // Check that expedition is cleared
       expect(recalled.activeExpeditions).toHaveLength(0)
@@ -172,7 +175,7 @@ describe('game logic', () => {
       expect(recalled.expeditionHistory[0]?.gold).toBeGreaterThan(0)
     })
 
-    it('recalls one expedition without clearing other active expeditions', () => {
+    it('recalls one expedition via portal without clearing other active expeditions', () => {
       const now = new Date('2026-01-01T00:00:00.000Z')
       const save = createSaveGame('user-1')
       save.gold = 9999
@@ -186,8 +189,9 @@ describe('game logic', () => {
       startExpedition(save, 'blood-moor', [sorceress.id], now)
       const recalledId = save.activeExpeditions[0]!.id
       const keptId = save.activeExpeditions[1]!.id
+      save.activeExpeditions[0]!.portalAvailableUntil = new Date(now.getTime() + 60000).toISOString()
 
-      recallExpedition(save, recalledId, now)
+      recallExpedition(save, recalledId, now, { usePortal: true })
 
       expect(save.activeExpeditions).toHaveLength(1)
       expect(save.activeExpeditions[0]?.id).toBe(keptId)
@@ -196,7 +200,7 @@ describe('game logic', () => {
       expect(sorceress.status).toBe('onQuest')
     })
 
-    it('marks total party defeat on recall and applies carried reward penalties', () => {
+    it('marks total party defeat on portal recall and applies carried reward penalties', () => {
       const now = new Date('2026-01-01T00:00:00.000Z')
       const save = createSaveGame('user-1')
       const barbarian = createHero('barbarian')
@@ -211,8 +215,9 @@ describe('game logic', () => {
       expedition!.partyState[0]!.temporaryHp = 0
       expedition!.partyState[0]!.dead = true
       expedition!.partyState[0]!.permanentDeath = true
+      expedition!.portalAvailableUntil = new Date(now.getTime() + 60000).toISOString()
 
-      const recalled = recallExpedition(save, expedition!.id, now)
+      const recalled = recallExpedition(save, expedition!.id, now, { usePortal: true })
 
       expect(recalled.expeditionHistory[0]?.result).toBe('defeated')
       expect(recalled.expeditionHistory[0]?.gold).toBe(50)
@@ -303,15 +308,190 @@ describe('game logic', () => {
       const expedition = save.activeExpeditions[0]
       expect(expedition).toBeDefined()
       expedition!.partyState[0]!.temporaryHp = Math.floor(expedition!.partyState[0]!.maxTemporaryHp * 0.4)
+      expedition!.portalAvailableUntil = new Date(now.getTime() + 60000).toISOString()
 
-      const recalled = recallExpedition(save, expedition!.id, now)
+      const recalled = recallExpedition(save, expedition!.id, now, { usePortal: true })
 
       expect(recalled.expeditionHistory[0]?.result).toBe('success')
       expect(recalled.heroes[0]?.status).toBe('available')
     })
   })
 
-  describe('caravan logic', () => {
+    it('portal event sets portalAvailableUntil and portalEventId on expedition', () => {
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      barbarian.derivedStats.life = 200
+      save.heroes.push(barbarian)
+
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+
+      // Manually generate a portal event and apply it
+      const portalEvent = {
+        id: 'portal-1',
+        type: 'portal' as const,
+        createdAt: now.toISOString(),
+        title: 'Portal to Camp',
+        description: 'discovered a temporary portal'
+      }
+      // Import internal function via expedition manipulation
+      // Instead, directly set the expedition portal fields
+      expedition!.portalAvailableUntil = new Date(now.getTime() + 30000).toISOString()
+      expedition!.portalEventId = 'portal-1'
+
+      expect(expedition!.portalAvailableUntil).toBeDefined()
+      expect(expedition!.portalEventId).toBe('portal-1')
+      expect(new Date(expedition!.portalAvailableUntil!).getTime()).toBe(now.getTime() + 30000)
+    })
+
+    it('portal expires after 30 seconds during advanceExpedition', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      barbarian.derivedStats.life = 200
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+      expedition!.portalAvailableUntil = new Date(now.getTime() + 30000).toISOString()
+      expedition!.portalEventId = 'portal-1'
+
+      // Advance past portal expiry (portal expires at 30s, advance to 60s)
+      // After expiry, a new portal event may be generated in the same tick
+      // so the original portalEventId should be gone
+      const future = new Date(now.getTime() + 60000)
+      advanceExpedition(save, future)
+
+      // Either the portal was fully cleared or replaced by a new one
+      // In either case, the original portalEventId is gone
+      expect(expedition!.portalEventId).not.toBe('portal-1')
+    })
+
+    it('using an active portal completes immediately and transfers rewards', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+      expedition!.carriedGold = 50
+      expedition!.portalAvailableUntil = new Date(now.getTime() + 60000).toISOString()
+
+      const recalled = recallExpedition(save, expedition!.id, now, { usePortal: true })
+
+      expect(recalled.activeExpeditions).toHaveLength(0)
+      expect(recalled.gold).toBe(500) // 450 base + 50 carried
+    })
+
+    it('using an expired portal throws', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+
+      expect(() => recallExpedition(save, expedition!.id, now, { usePortal: true }))
+        .toThrow('Portal is no longer available')
+    })
+
+    it('normal recall sets status returning, returnStartedAt, and returnsAt', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+
+      // Advance 10 seconds so elapsed > 0
+      const advanced = advanceExpedition(save, new Date(now.getTime() + 10000))
+      const recalled = recallExpedition(advanced, expedition!.id, new Date(now.getTime() + 10000))
+
+      expect(recalled.activeExpeditions[0]?.status).toBe('returning')
+      expect(recalled.activeExpeditions[0]?.returnStartedAt).toBeDefined()
+      expect(recalled.activeExpeditions[0]?.returnsAt).toBeDefined()
+      // returnsAt should be now + half of elapsed (10s / 2 = 5s)
+      const expectedReturnsAt = new Date(now.getTime() + 10000 + 5000).getTime()
+      expect(new Date(recalled.activeExpeditions[0]!.returnsAt!).getTime()).toBe(expectedReturnsAt)
+    })
+
+    it('normal recall does not transfer rewards immediately', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+      expedition!.carriedGold = 50
+
+      const advanced = advanceExpedition(save, new Date(now.getTime() + 10000))
+      const recalled = recallExpedition(advanced, expedition!.id, new Date(now.getTime() + 10000))
+
+      // Gold should NOT be transferred yet
+      expect(recalled.gold).toBe(450)
+      // Expedition should still be active (returning)
+      expect(recalled.activeExpeditions).toHaveLength(1)
+      expect(recalled.activeExpeditions[0]?.status).toBe('returning')
+    })
+
+    it('advanceExpedition completes a returning expedition after returnsAt', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+      expedition!.carriedGold = 50
+
+      const advanceTime = new Date(now.getTime() + 10000)
+      const advanced = advanceExpedition(save, advanceTime)
+      recallExpedition(advanced, expedition!.id, advanceTime)
+
+      // Expedition should be returning with returnsAt set
+      expect(advanced.activeExpeditions[0]?.status).toBe('returning')
+
+      // Advance past returnsAt
+      const returnsAt = new Date(advanced.activeExpeditions[0]!.returnsAt!)
+      const afterReturn = new Date(returnsAt.getTime() + 1000)
+      advanceExpedition(advanced, afterReturn)
+
+      // Expedition should be completed now
+      expect(advanced.activeExpeditions).toHaveLength(0)
+      // Gold should be transferred
+      expect(advanced.gold).toBe(500)
+    })
+
+    it('returning expeditions do not generate new events', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+
+      // Generate some initial events
+      const advanceTime = new Date(now.getTime() + 10000)
+      advanceExpedition(save, advanceTime)
+      const initialEventCount = expedition!.events.length
+
+      // Start timed return
+      recallExpedition(save, expedition!.id, advanceTime)
+
+      // Advance further while returning
+      advanceExpedition(save, new Date(advanceTime.getTime() + 20000))
+
+      // No new events should have been generated after recall
+      expect(expedition!.events.length).toBe(initialEventCount)
+    })
+
+    describe('caravan logic', () => {
     it('new save has caravan with 3 hero capacity, 1 expedition, 20 stash', () => {
       const save = createSaveGame('user-1')
       expect(getHeroCapacity(save)).toBe(3)

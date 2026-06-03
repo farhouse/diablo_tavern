@@ -95,11 +95,11 @@ export const useGameStore = defineStore('game', {
         body: { expeditionId }
       })
     },
-    async recallExpedition(expeditionId: string) {
+    async recallExpedition(expeditionId: string, usePortal = false) {
       this.error = ''
       this.save = await this.api<SaveGame>('/api/expeditions/recall', {
         method: 'POST',
-        body: { expeditionId }
+        body: { expeditionId, usePortal }
       })
     },
     async upgradeCaravan(upgradeId: CaravanUpgradeId) {

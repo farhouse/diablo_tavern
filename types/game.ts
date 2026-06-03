@@ -142,6 +142,7 @@ export interface ExpeditionEvent {
     | "traveler"
     | "cursedShrine"
     | "miniBoss"
+    | "portal"
   createdAt: string
   title: string
   description: string
@@ -171,6 +172,10 @@ export interface ActiveExpedition {
   carriedMaterials: number
   bossReady: boolean
   bossDefeated: boolean
+  portalAvailableUntil?: string
+  portalEventId?: string
+  returnStartedAt?: string
+  returnsAt?: string
 }
 
 export interface ExpeditionSummary {

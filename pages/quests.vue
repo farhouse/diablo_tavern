@@ -56,7 +56,9 @@
                 <p class="muted">{{ timeLabel(expedition) }}</p>
               </div>
               <div class="row">
-                <UBadge color="neutral" variant="soft">Depth {{ expedition.depth }}</UBadge>
+                 <UBadge color="neutral" variant="soft">Depth {{ expedition.depth }}</UBadge>
+                <UBadge v-if="expedition.status === 'returning'" color="info" variant="soft">Returning</UBadge>
+                <UBadge v-else-if="portalActive(expedition)" color="primary" variant="soft">Portal Active</UBadge>
                 <UBadge v-if="expedition.bossReady && !expedition.bossDefeated" color="warning" variant="soft">Boss Ready</UBadge>
                 <UBadge v-else-if="expedition.bossDefeated" color="success" variant="soft">Boss Defeated</UBadge>
               </div>
@@ -119,7 +121,16 @@
           </div>
 
           <template #footer>
-            <UButton color="error" variant="soft" type="button" block @click="recall(expedition.id)">
+            <div v-if="expedition.status === 'returning' && expedition.returnsAt" class="row" style="justify-content:center;margin-bottom:0.5rem">
+              <span class="muted">ETA: {{ etaLabel(expedition.returnsAt) }}</span>
+            </div>
+            <UButton v-if="expedition.status === 'returning'" color="neutral" variant="soft" type="button" block disabled>
+              Returning...
+            </UButton>
+            <UButton v-else-if="portalActive(expedition)" color="primary" variant="solid" type="button" block @click="recallWithPortal(expedition.id)">
+              Use Portal ({{ etaLabel(expedition.portalAvailableUntil!) }})
+            </UButton>
+            <UButton v-else color="error" variant="soft" type="button" block @click="recall(expedition.id)">
               Recall Party
             </UButton>
           </template>
@@ -215,9 +226,27 @@ async function start(questId: string) {
   } catch { /* handled */ }
 }
 
+function portalActive(expedition: ActiveExpedition): boolean {
+  return expedition.status !== 'returning' && !!expedition.portalAvailableUntil && new Date(expedition.portalAvailableUntil).getTime() > Date.now()
+}
+
+function etaLabel(timeStr: string): string {
+  const diff = new Date(timeStr).getTime() - Date.now()
+  if (diff <= 0) return 'now'
+  const seconds = Math.floor(diff / 1000)
+  const minutes = Math.floor(seconds / 60)
+  return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`
+}
+
 async function recall(expeditionId: string) {
   try {
     await game.recallExpedition(expeditionId)
+  } catch { /* handled */ }
+}
+
+async function recallWithPortal(expeditionId: string) {
+  try {
+    await game.recallExpedition(expeditionId, true)
   } catch { /* handled */ }
 }
 
