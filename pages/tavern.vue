@@ -32,7 +32,7 @@
       </article>
     </section>
 
-    <section v-else-if="visitors.length" class="visitor-grid" aria-label="Visitor posts">
+    <section v-else-if="visitors.length" id="commissions" class="visitor-grid" aria-label="Visitor posts">
       <VisitorPost
         v-for="visitor in visitors"
         :key="visitor.id"

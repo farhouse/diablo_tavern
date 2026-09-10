@@ -6,6 +6,7 @@
         <NuxtLink to="/tavern">Tavern</NuxtLink>
         <NuxtLink to="/stash">Stash</NuxtLink>
         <NuxtLink to="/caravan">Caravan</NuxtLink>
+        <NuxtLink v-if="game.save?.activeExpeditions.length" to="/quests">Recover expeditions ({{ game.save.activeExpeditions.length }})</NuxtLink>
       </nav>
       <div class="row topbar-stats">
         <span class="tag">{{ game.save?.gold ?? 0 }}g</span>

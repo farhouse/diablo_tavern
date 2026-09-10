@@ -34,7 +34,7 @@ describe('VisitorPost', () => {
 
     expect(wrapper.text()).toContain('Mira')
     expect(wrapper.text()).toContain('Barbarian · level 3')
-    expect(wrapper.text()).toContain('Arrived from Blood Moor')
+    expect(wrapper.text()).toContain('Routes: Blood Moor')
     expect(wrapper.get('[aria-label="Visitor resources"]').text()).toContain('140g')
     expect(wrapper.get('[aria-label="Visitor resources"]').text()).toContain('budget')
     expect(wrapper.text()).toContain('Looking for weapon')
@@ -92,5 +92,40 @@ describe('VisitorPost', () => {
     })
     expect(returned.text()).toContain('Returned: partial result')
     expect(returned.get('[data-testid="claim-visitor-1"]').text()).toContain('Claim 23g')
+  })
+
+  it('describes complete and failed returns, including a full-stash reward', () => {
+    const commission = {
+      id: 'commission-1', status: 'ready' as const, regionId: 'blood-moor', durationMs: 62_000, successChance: 0.67,
+      fullRewardGold: 68, partialRewardGold: 23, startedAt: '2026-09-10T20:00:00.000Z',
+      finishesAt: '2026-09-10T20:01:02.000Z', outcomeRoll: 0.2
+    }
+    const complete = mount(VisitorPost, {
+      props: {
+        visitor: visitor({ state: 'returned', commission: { ...commission, outcome: 'complete', rewardGold: 68 } }),
+        stash: [sword], gold: 450, stashLimit: 1, quests: [quest], now: Date.now()
+      }
+    })
+    expect(complete.text()).toContain('Full reward: 68g; reward item cannot fit in the full stash')
+
+    const failed = mount(VisitorPost, {
+      props: {
+        visitor: visitor({ state: 'returned', commission: { ...commission, outcome: 'failed', rewardGold: 0 } }),
+        stash: [], gold: 450, stashLimit: 1, quests: [quest], now: Date.now()
+      }
+    })
+    expect(failed.text()).toContain('The expedition failed. There is no reward to collect')
+    expect(failed.get('[data-testid="claim-visitor-1"]').text()).toContain('Acknowledge return')
+  })
+
+  it('labels pending trade and departure controls with their disabled reason', () => {
+    const wrapper = mount(VisitorPost, {
+      props: { visitor: visitor(), stash: [sword], gold: 450, stashLimit: 20, quests: [quest], now: Date.now(), pending: true }
+    })
+    const sell = wrapper.get('[data-testid="sell-sword"]')
+    expect(sell.attributes('disabled')).toBeDefined()
+    expect(sell.attributes('aria-describedby')).toBe('sell-reason-sword')
+    expect(wrapper.text()).toContain('Processing…')
+    expect(wrapper.text()).toContain('Another action is being processed')
   })
 })

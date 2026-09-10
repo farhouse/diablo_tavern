@@ -9,7 +9,7 @@
             <span class="state-chip">{{ stateLabel }}</span>
           </div>
           <p>{{ classLabel }} · level {{ visitor.level }}</p>
-          <p class="muted">Arrived from {{ originName }}</p>
+          <p class="muted">Routes: {{ routeLabel }}</p>
         </div>
       </div>
       <div class="visitor-ledger" aria-label="Visitor resources">
@@ -63,12 +63,13 @@
                 :data-testid="`sell-${entry.item.id}`"
                 class="btn"
                 type="button"
-                :disabled="pending || visitor.budget < entry.quote"
+                :disabled="Boolean(sellDisabledReason(entry.quote))"
+                :aria-describedby="sellDisabledReason(entry.quote) ? `sell-reason-${entry.item.id}` : undefined"
                 @click="$emit('sell', visitor.id, entry.item.id)"
               >
                 Sell for {{ entry.quote }}g
               </button>
-              <p v-if="visitor.budget < entry.quote" class="action-reason">Visitor cannot afford this quote.</p>
+              <p v-if="sellDisabledReason(entry.quote)" :id="`sell-reason-${entry.item.id}`" class="action-reason">{{ sellDisabledReason(entry.quote) }}</p>
             </article>
             <p v-if="!quotedItems.length" class="empty-copy">This visitor has no quote for your current stash.</p>
           </div>
@@ -85,7 +86,7 @@
         </span>
       </div>
 
-      <section id="commissions" class="visitor-section mission-board" aria-labelledby="`missions-${visitor.id}`">
+      <section :id="`commissions-${visitor.id}`" class="visitor-section mission-board" aria-labelledby="`missions-${visitor.id}`">
         <div>
           <h3 :id="`missions-${visitor.id}`">Choose a commission</h3>
           <p class="muted">The server has fixed the duration, odds and rewards shown here.</p>
@@ -110,16 +111,18 @@
               class="btn primary"
               type="button"
               :disabled="pending"
+              :aria-describedby="pending ? `commission-reason-${visitor.id}` : undefined"
               @click="$emit('commission', visitor.id, option.regionId)"
             >
               {{ pending ? 'Sending…' : `Send ${visitor.name}` }}
             </button>
+            <p v-if="pending" :id="`commission-reason-${visitor.id}`" class="action-reason">Another action is being processed.</p>
           </div>
         </article>
       </section>
     </template>
 
-    <section v-else-if="visitor.state === 'commissioned' && visitor.commission" class="away-state" aria-live="polite">
+    <section v-else-if="visitor.state === 'commissioned' && visitor.commission" class="away-state">
       <span class="state-icon" aria-hidden="true">⌛</span>
       <div>
         <h3>Away on commission</h3>
@@ -151,9 +154,10 @@
 
     <footer v-if="visitor.state === 'open' || visitor.state === 'traded'" class="visitor-footer">
       <p class="muted">{{ visitor.state === 'open' ? 'No deal is required.' : 'Trade complete. Send a commission or finish the visit.' }}</p>
-      <button class="btn ghost" type="button" :disabled="pending" @click="$emit('dismiss', visitor.id)">
-        {{ visitor.state === 'open' ? 'Let depart' : 'Finish visit' }}
+      <button class="btn ghost" type="button" :disabled="pending" :aria-describedby="pending ? `dismiss-reason-${visitor.id}` : undefined" @click="$emit('dismiss', visitor.id)">
+        {{ pending ? 'Processing…' : visitor.state === 'open' ? 'Let depart' : 'Finish visit' }}
       </button>
+      <p v-if="pending" :id="`dismiss-reason-${visitor.id}`" class="action-reason">Another action is being processed.</p>
     </footer>
   </article>
 </template>
@@ -191,10 +195,10 @@ const reviewingRegionId = ref('')
 const availableOffers = computed(() => props.visitor.offers.filter((offer) => !offer.purchasedAt))
 const quotedItems = computed(() => props.stash.flatMap((item) => {
   const quote = props.visitor.buyQuotes[item.id]
-  return typeof quote === 'number' && props.visitor.acceptedItemTypes.includes(item.type) ? [{ item, quote }] : []
+  return item.identified && typeof quote === 'number' && props.visitor.acceptedItemTypes.includes(item.type) ? [{ item, quote }] : []
 }))
 const classLabel = computed(() => capitalize(props.visitor.class))
-const originName = computed(() => questName(props.visitor.commissionOptions[0]?.regionId || 'unknown road'))
+const routeLabel = computed(() => props.visitor.commissionOptions.map((option) => questName(option.regionId)).join(', ') || 'no unlocked routes')
 const interestLabel = computed(() => naturalList(props.visitor.interestedItemTypes))
 const acceptedLabel = computed(() => naturalList(props.visitor.acceptedItemTypes))
 const stateLabel = computed(() => ({
@@ -225,6 +229,12 @@ function buyDisabledReason(offer: VisitorOffer): string {
   if (props.pending) return 'Another action is being processed.'
   if (props.stash.length >= props.stashLimit) return 'Stash is full.'
   if (props.gold < offer.price) return `Need ${offer.price - props.gold}g more.`
+  return ''
+}
+
+function sellDisabledReason(quote: number): string {
+  if (props.pending) return 'Another action is being processed.'
+  if (props.visitor.budget < quote) return 'Visitor cannot afford this quote.'
   return ''
 }
 

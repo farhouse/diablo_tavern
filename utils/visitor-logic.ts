@@ -80,6 +80,7 @@ export function sellToVisitor(save: SaveGame, visitorId: string, itemId: string,
   const itemIndex = save.stash.findIndex((item) => item.id === itemId)
   if (itemIndex < 0) throw domainError('Item not found in stash')
   const item = save.stash[itemIndex]!
+  if (!item.identified) throw domainError('Item must be identified before a visitor can buy it')
   if (!visitor.acceptedItemTypes.includes(item.type)) throw domainError('Visitor is not interested in this item type')
   const price = visitor.buyQuotes[itemId]
   if (typeof price !== 'number' || !Number.isInteger(price) || price <= 0) throw domainError('No persisted quote for this item')
@@ -172,7 +173,8 @@ export function hasCommercialAction(save: Pick<SaveGame, 'gold' | 'stash' | 'sta
     const canBuy = save.stash.length < save.stashLimit && visitor.offers.some((offer) => !offer.purchasedAt && offer.price <= save.gold)
     const canSell = save.stash.some((item) => {
       const quote = visitor.buyQuotes[item.id]
-      return visitor.acceptedItemTypes.includes(item.type)
+      return item.identified
+        && visitor.acceptedItemTypes.includes(item.type)
         && typeof quote === 'number'
         && Number.isInteger(quote)
         && quote > 0
@@ -208,7 +210,7 @@ function createVisitor(save: Pick<SaveGame, 'stash' | 'questsProgress'>, now: Da
   }
   visitor.initialBudget = visitor.budget
   for (const item of save.stash) {
-    if (!acceptedItemTypes.includes(item.type)) continue
+    if (!item.identified || !acceptedItemTypes.includes(item.type)) continue
     visitor.buyQuotes[item.id] = interestedItemTypes.includes(item.type)
       ? percentage(item.value, 0.80, 1.10, random)
       : percentage(item.value, 0.40, 0.60, random)
@@ -219,7 +221,7 @@ function createVisitor(save: Pick<SaveGame, 'stash' | 'questsProgress'>, now: Da
 
 function ensureViableRound(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit'>, visitors: Visitor[], random: RandomSource): void {
   const first = visitors[0]!
-  const sellable = save.stash[0]
+  const sellable = save.stash.find((item) => item.identified)
   if (sellable) {
     if (!first.acceptedItemTypes.includes(sellable.type)) first.acceptedItemTypes[0] = sellable.type
     if (!first.interestedItemTypes.includes(sellable.type)) first.interestedItemTypes[0] = sellable.type

@@ -88,6 +88,20 @@ describe('visitor trade and commission loop', () => {
     expect(() => sellToVisitor(save, other.id, remaining.id, 'bad-interest')).toThrow('not interested')
   })
 
+  it('never quotes or buys unidentified stash items', () => {
+    const save = createSaveGame('unidentified-sale')
+    const item = save.stash[0]!
+    item.identified = false
+    const round = createVisitRound(save, 2, new Date('2026-01-01T00:00:00Z'), seeded(12))
+    expect(round.visitors.every((entry) => entry.buyQuotes[item.id] === undefined)).toBe(true)
+
+    const visitor = save.visitRound.visitors[0]!
+    visitor.acceptedItemTypes = [item.type]
+    visitor.buyQuotes[item.id] = item.value
+    visitor.budget = item.value
+    expect(() => sellToVisitor(save, visitor.id, item.id, 'hidden-sale')).toThrow('must be identified')
+  })
+
   it('seals commission outcome, enforces readiness, and prevents duplicate claims', () => {
     const save = createSaveGame('commission')
     const visitor = save.visitRound.visitors[0]!

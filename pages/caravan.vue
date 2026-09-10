@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useGameStore } from '~/stores/game'
 import type { CaravanUpgradeId } from '~/types/game'
 import { getMaxUpgradeLevel, getUpgradeCost } from '~/utils/game-logic'
@@ -84,6 +84,8 @@ const game = useGameStore()
 const upgrading = ref<ActiveService | ''>('')
 const processing = ref(false)
 const notice = ref('')
+const now = ref(Date.now())
+let timer: ReturnType<typeof setInterval> | undefined
 const services: Array<{ id: ActiveService; label: string; description: string }> = [
   { id: 'stashWagon', label: 'Stash wagon', description: 'Hold more merchandise between visitor rounds.' },
   { id: 'appraiser', label: 'Appraiser', description: 'Identify goods over time without paying an instant fee.' }
@@ -92,7 +94,11 @@ const appraiserLevel = computed(() => game.save?.caravan.upgrades.appraiser ?? 0
 const appraiserQueue = computed(() => game.save?.caravan.services.appraiserQueue ?? [])
 const stashCap = computed(() => game.save?.stashLimit ?? 0)
 
-onMounted(() => { void game.load() })
+onMounted(() => {
+  void game.load()
+  timer = setInterval(() => { now.value = Date.now() }, 30_000)
+})
+onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
 function currentLevel(id: ActiveService) { return game.save?.caravan.upgrades[id] ?? 0 }
 function upgradeCost(id: ActiveService) { return getUpgradeCost(id, currentLevel(id)) }
@@ -111,7 +117,7 @@ function itemNameById(itemId: string): string {
   return item?.displayName || 'Unknown item'
 }
 function timeRemaining(finishesAt: string): string {
-  const remaining = new Date(finishesAt).getTime() - Date.now()
+  const remaining = new Date(finishesAt).getTime() - now.value
   return remaining <= 0 ? 'Ready' : `${Math.ceil(remaining / 60000)} min`
 }
 async function upgrade(id: ActiveService) {

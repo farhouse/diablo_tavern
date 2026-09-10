@@ -37,14 +37,15 @@
         <div v-else class="stack">
           <p class="muted">Visitors will not quote unidentified goods.</p>
           <div class="item-actions">
-            <button class="btn" type="button" :disabled="busyItem === item.id" @click="identify(item.id)">
+            <button class="btn" type="button" :disabled="Boolean(busyItem) || !canIdentify(item)" @click="identify(item.id)">
               {{ busyItem === item.id ? 'Identifying…' : `Identify${identifyCost(item.rarity) ? ` for ${identifyCost(item.rarity)}g` : ''}` }}
             </button>
+            <p v-if="!canIdentify(item)" class="action-reason">Need {{ identifyCost(item.rarity) - (game.save?.gold ?? 0) }}g more.</p>
             <button
               v-if="hasAppraiser"
               class="btn ghost"
               type="button"
-              :disabled="busyItem === item.id || isInQueue(item.id) || isQueueFull"
+              :disabled="Boolean(busyItem) || isInQueue(item.id) || isQueueFull"
               @click="queueAppraise(item.id)"
             >
               {{ isInQueue(item.id) ? 'In Appraiser queue' : 'Send to Appraiser' }}
@@ -54,7 +55,7 @@
         <details class="salvage-details">
           <summary>Emergency salvage</summary>
           <p class="muted">Destroys this item for {{ salvageValue(item) }}g — only 25% of reference value. A visitor may offer more.</p>
-          <button class="btn ghost" type="button" :disabled="busyItem === item.id" @click="salvage(item)">
+          <button class="btn ghost" type="button" :disabled="Boolean(busyItem) || isInQueue(item.id)" @click="salvage(item)">
             {{ busyItem === item.id ? 'Salvaging…' : `Salvage for ${salvageValue(item)}g` }}
           </button>
         </details>
@@ -104,6 +105,10 @@ function identifyCost(rarity: ItemRarity): number {
   if (rarity === 'rare') return 150
   if (rarity === 'unique') return 500
   return 0
+}
+
+function canIdentify(item: Item): boolean {
+  return (game.save?.gold ?? 0) >= identifyCost(item.rarity)
 }
 
 function salvageValue(item: Item): number {
