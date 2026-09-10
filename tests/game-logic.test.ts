@@ -622,10 +622,11 @@ describe('game logic', () => {
     it('stash capacity upgrades work', () => {
       const save = createSaveGame('user-1')
       save.gold = 10000
-      save.materials = 500
+      save.materials = 0
       upgradeCaravan(save, 'stashWagon')
       expect(getStashCapacity(save)).toBe(30)
       expect(save.stashLimit).toBe(30)
+      expect(save.materials).toBe(0)
       upgradeCaravan(save, 'stashWagon')
       expect(getStashCapacity(save)).toBe(45)
     })

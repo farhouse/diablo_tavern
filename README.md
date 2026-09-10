@@ -1,8 +1,8 @@
 # Guild Manager ARPG
 
-Web-first ARPG guild-management loop:
+Web-first ARPG tavern-management loop:
 
-Hire hero → send expeditions → get loot/materials/gold → identify/sell/equip → upgrade caravan → unlock harder zones → prepare for Act boss.
+Meet two visitors → compare offers and needs → trade → commission a journey → claim the return → improve storage and appraisal.
 
 ## Stack
 
@@ -76,22 +76,21 @@ pnpm test        # Unit tests
 ## Gameplay
 
 1. **Login / Register** — create an account. If `INVITE_CODE` is set, you need it to register.
-2. **Tavern** — hire heroes. Roster capacity starts at 3; upgrade **Wagons** in Caravan for more.
-3. **Caravan** — spend gold + materials to upgrade capacity for heroes, expeditions, stash, and services.
-4. **Expeditions** — send heroes to explore. Events generate loot, gold, XP, and materials over time. **Recall** your party to bring rewards home.
-5. **Stash** — identify items (pay gold or use the **Appraiser** for free over time), equip heroes, sell unwanted gear.
-6. **Act Boss** — push depth to 100+ with a level 10+ hero to unlock the boss encounter.
+2. **Tavern** — compare two persisted visitors, their budgets, offers, interests, and commission odds.
+3. **Trade** — buy one offer or sell one quoted stash item; useful equipment can improve a visitor's commission odds.
+4. **Commission** — review region, duration, success chance, and all outcomes before sending the visitor.
+5. **Return** — wait in real time, then claim a complete, partial, or failed result exactly once.
+6. **Stash and Caravan** — identify stock, expand storage, or use emergency salvage for 25% of reference value.
 
 ## Features
 
-- **Caravan progression** — 5 upgradeable services (Wagons, Scout Table, Stash Wagon, Infirmary, Appraiser)
-- **Real-time expeditions** — heroes explore autonomously, events unfold every 5 seconds
-- **Materials** — new resource earned from expeditions, used for caravan upgrades
+- **Persistent visitor rounds** — refreshes preserve visitors, quotes, offers, and commissions
+- **Server-authoritative trade** — persisted pricing and idempotent mutations prevent duplicate operations
+- **Real-time commissions** — visitors return with complete, partial, or failed outcomes
 - **Appraiser** — identify items for free over time (5min magic, 15min rare, 30min unique)
-- **Infirmary** — reduces injury chance and death risk during expeditions
-- **Multiple expeditions** — upgrade Scout Table to run 2–4 expeditions simultaneously
+- **Visitor-centered progression** — storage and appraisal support the trade loop
 - **Invite-code beta** — restrict registration to testers only
-- **Item variety** — 20+ base items, 18 affixes, 5 unique items, 4 hero classes
+- **Item variety** — 20+ base items, 18 affixes, 5 unique items, and 4 visitor classes
 
 ## Backup
 

@@ -7,7 +7,9 @@ export const useGameStore = defineStore('game', {
     save: null as SaveGame | null,
     quests: [] as Quest[],
     loading: false,
-    error: ''
+    error: '',
+    visitorMutations: {} as Record<string, boolean>,
+    visitorRequestIds: {} as Record<string, string>
   }),
   getters: {
     unlockedQuests: (state) =>
@@ -58,6 +60,47 @@ export const useGameStore = defineStore('game', {
     async sell(itemId: string) {
       this.error = ''
       this.save = await this.api<SaveGame>(`/api/items/${itemId}/sell`, { method: 'POST' })
+    },
+    async buyFromVisitor(visitorId: string, offerId: string) {
+      await this.runVisitorMutation('buy', visitorId, offerId, { offerId })
+    },
+    async sellToVisitor(visitorId: string, itemId: string) {
+      await this.runVisitorMutation('sell', visitorId, itemId, { itemId })
+    },
+    async commissionVisitor(visitorId: string, regionId: string) {
+      await this.runVisitorMutation('commission', visitorId, regionId, { regionId })
+    },
+    async claimVisitor(visitorId: string) {
+      await this.runVisitorMutation('claim', visitorId)
+    },
+    async dismissVisitor(visitorId: string) {
+      await this.runVisitorMutation('dismiss', visitorId)
+    },
+    isVisitorMutationPending(visitorId: string): boolean {
+      return Object.keys(this.visitorMutations).some((key) => key.includes(`:${visitorId}:`) && this.visitorMutations[key])
+    },
+    async runVisitorMutation(
+      operation: 'buy' | 'sell' | 'commission' | 'claim' | 'dismiss',
+      visitorId: string,
+      target = '',
+      body: Record<string, string> = {}
+    ) {
+      const key = `${operation}:${visitorId}:${target}`
+      if (this.visitorMutations[key]) return
+      const requestId = this.visitorRequestIds[key] || createRequestId()
+      this.visitorRequestIds[key] = requestId
+      this.visitorMutations[key] = true
+      this.error = ''
+      try {
+        const save = await this.api<SaveGame>(`/api/visitors/${visitorId}/${operation}`, {
+          method: 'POST',
+          body: { requestId, ...body }
+        })
+        this.save = save
+        delete this.visitorRequestIds[key]
+      } finally {
+        delete this.visitorMutations[key]
+      }
     },
     async equip(heroId: string, itemId: string, slot?: EquipmentSlot) {
       this.error = ''
@@ -157,4 +200,9 @@ function errorMessage(error: unknown): string {
 
 function isFetchStatus(error: unknown, statusCode: number): boolean {
   return Boolean(typeof error === 'object' && error && 'statusCode' in error && (error as { statusCode: number }).statusCode === statusCode)
+}
+
+function createRequestId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }

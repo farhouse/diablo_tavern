@@ -1,0 +1,352 @@
+<template>
+  <article class="visitor-post" :class="`visitor-post--${visitor.state}`" :aria-labelledby="`visitor-${visitor.id}`">
+    <header class="visitor-header">
+      <div class="visitor-identity">
+        <span class="visitor-sigil" aria-hidden="true">{{ visitor.name.slice(0, 1) }}</span>
+        <div>
+          <div class="visitor-title-row">
+            <h2 :id="`visitor-${visitor.id}`">{{ visitor.name }}</h2>
+            <span class="state-chip">{{ stateLabel }}</span>
+          </div>
+          <p>{{ classLabel }} · level {{ visitor.level }}</p>
+          <p class="muted">Arrived from {{ originName }}</p>
+        </div>
+      </div>
+      <div class="visitor-ledger" aria-label="Visitor resources">
+        <strong>{{ visitor.budget }}g</strong>
+        <span>budget</span>
+        <strong>{{ visitor.power }}</strong>
+        <span>gear power</span>
+      </div>
+    </header>
+
+    <template v-if="visitor.state === 'open'">
+      <section class="visitor-section" aria-labelledby="`interests-${visitor.id}`">
+        <h3 :id="`interests-${visitor.id}`">Looking for {{ interestLabel }}</h3>
+        <p class="muted">Also accepts {{ acceptedLabel }} when a quote is shown.</p>
+      </section>
+
+      <div class="trade-columns">
+        <section class="visitor-section" aria-labelledby="`offers-${visitor.id}`">
+          <h3 :id="`offers-${visitor.id}`">On their blanket</h3>
+          <div class="item-list">
+            <article v-for="offer in availableOffers" :key="offer.id" class="trade-item">
+              <div>
+                <strong>{{ itemName(offer.item) }}</strong>
+                <p>{{ itemMeta(offer.item) }}</p>
+              </div>
+              <button
+                :data-testid="`buy-${offer.id}`"
+                class="btn primary"
+                type="button"
+                :disabled="Boolean(buyDisabledReason(offer))"
+                :aria-describedby="buyDisabledReason(offer) ? `buy-reason-${offer.id}` : undefined"
+                @click="$emit('buy', visitor.id, offer.id)"
+              >
+                Buy for {{ offer.price }}g
+              </button>
+              <p v-if="buyDisabledReason(offer)" :id="`buy-reason-${offer.id}`" class="action-reason">{{ buyDisabledReason(offer) }}</p>
+            </article>
+            <p v-if="!availableOffers.length" class="empty-copy">Nothing else is for sale.</p>
+          </div>
+        </section>
+
+        <section class="visitor-section" aria-labelledby="`quotes-${visitor.id}`">
+          <h3 :id="`quotes-${visitor.id}`">Your quoted goods</h3>
+          <div class="item-list">
+            <article v-for="entry in quotedItems" :key="entry.item.id" class="trade-item">
+              <div>
+                <strong>{{ itemName(entry.item) }}</strong>
+                <p>{{ visitor.interestedItemTypes.includes(entry.item.type) ? 'Wanted item' : 'Accepted item' }} · {{ itemMeta(entry.item) }}</p>
+              </div>
+              <button
+                :data-testid="`sell-${entry.item.id}`"
+                class="btn"
+                type="button"
+                :disabled="pending || visitor.budget < entry.quote"
+                @click="$emit('sell', visitor.id, entry.item.id)"
+              >
+                Sell for {{ entry.quote }}g
+              </button>
+              <p v-if="visitor.budget < entry.quote" class="action-reason">Visitor cannot afford this quote.</p>
+            </article>
+            <p v-if="!quotedItems.length" class="empty-copy">This visitor has no quote for your current stash.</p>
+          </div>
+        </section>
+      </div>
+    </template>
+
+    <template v-else-if="visitor.state === 'traded'">
+      <div v-if="tradeImpact" class="impact-note" role="status">
+        <strong>Equipment changed the odds.</strong>
+        Power {{ tradeImpact.powerBefore }} → {{ tradeImpact.powerAfter }}.
+        <span v-for="change in tradeImpact.chances" :key="change.regionId">
+          {{ questName(change.regionId) }} {{ percent(change.before) }} → {{ percent(change.after) }}.
+        </span>
+      </div>
+
+      <section id="commissions" class="visitor-section mission-board" aria-labelledby="`missions-${visitor.id}`">
+        <div>
+          <h3 :id="`missions-${visitor.id}`">Choose a commission</h3>
+          <p class="muted">The server has fixed the duration, odds and rewards shown here.</p>
+        </div>
+        <article v-for="option in visitor.commissionOptions" :key="option.regionId" class="mission-option">
+          <div>
+            <strong>{{ questName(option.regionId) }}</strong>
+            <p>{{ duration(option.durationMs) }} · {{ percent(option.successChance) }} success</p>
+          </div>
+          <button :data-testid="`review-${option.regionId}`" class="btn" type="button" @click="toggleReview(option.regionId)">
+            {{ reviewingRegionId === option.regionId ? 'Hide review' : 'Review commission' }}
+          </button>
+          <div v-if="reviewingRegionId === option.regionId" class="mission-review">
+            <p><strong>{{ duration(option.durationMs) }}</strong> away · <strong>{{ percent(option.successChance) }} success</strong></p>
+            <ul>
+              <li>Complete: {{ option.fullRewardGold }}g and one item if stash has room.</li>
+              <li>Partial: {{ option.partialRewardGold }}g.</li>
+              <li>Failed: no reward.</li>
+            </ul>
+            <button
+              :data-testid="`confirm-${option.regionId}`"
+              class="btn primary"
+              type="button"
+              :disabled="pending"
+              @click="$emit('commission', visitor.id, option.regionId)"
+            >
+              {{ pending ? 'Sending…' : `Send ${visitor.name}` }}
+            </button>
+          </div>
+        </article>
+      </section>
+    </template>
+
+    <section v-else-if="visitor.state === 'commissioned' && visitor.commission" class="away-state" aria-live="polite">
+      <span class="state-icon" aria-hidden="true">⌛</span>
+      <div>
+        <h3>Away on commission</h3>
+        <p>{{ questName(visitor.commission.regionId) }} · {{ remainingLabel }} remaining</p>
+        <p class="muted">Return time: {{ returnTime(visitor.commission.finishesAt) }}. Refresh is safe; the server keeps this state.</p>
+      </div>
+    </section>
+
+    <section v-else-if="visitor.state === 'returned' && visitor.commission" class="return-state" aria-live="polite">
+      <div>
+        <h3>Returned: {{ outcomeLabel }} result</h3>
+        <p>{{ resultDescription }}</p>
+      </div>
+      <button
+        :data-testid="`claim-${visitor.id}`"
+        class="btn primary"
+        type="button"
+        :disabled="pending"
+        @click="$emit('claim', visitor.id)"
+      >
+        {{ pending ? 'Claiming…' : claimLabel }}
+      </button>
+    </section>
+
+    <section v-else class="departed-state">
+      <h3>The post is empty</h3>
+      <p class="muted">A new pair arrives when both visitors have left.</p>
+    </section>
+
+    <footer v-if="visitor.state === 'open' || visitor.state === 'traded'" class="visitor-footer">
+      <p class="muted">{{ visitor.state === 'open' ? 'No deal is required.' : 'Trade complete. Send a commission or finish the visit.' }}</p>
+      <button class="btn ghost" type="button" :disabled="pending" @click="$emit('dismiss', visitor.id)">
+        {{ visitor.state === 'open' ? 'Let depart' : 'Finish visit' }}
+      </button>
+    </footer>
+  </article>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import type { Item, Quest, Visitor, VisitorOffer } from '~/types/game'
+
+interface TradeImpact {
+  powerBefore: number
+  powerAfter: number
+  chances: Array<{ regionId: string; before: number; after: number }>
+}
+
+const props = withDefaults(defineProps<{
+  visitor: Visitor
+  stash: Item[]
+  gold: number
+  stashLimit: number
+  quests: Quest[]
+  now: number
+  pending?: boolean
+  tradeImpact?: TradeImpact
+}>(), { pending: false, tradeImpact: undefined })
+
+defineEmits<{
+  buy: [visitorId: string, offerId: string]
+  sell: [visitorId: string, itemId: string]
+  commission: [visitorId: string, regionId: string]
+  claim: [visitorId: string]
+  dismiss: [visitorId: string]
+}>()
+
+const reviewingRegionId = ref('')
+const availableOffers = computed(() => props.visitor.offers.filter((offer) => !offer.purchasedAt))
+const quotedItems = computed(() => props.stash.flatMap((item) => {
+  const quote = props.visitor.buyQuotes[item.id]
+  return typeof quote === 'number' && props.visitor.acceptedItemTypes.includes(item.type) ? [{ item, quote }] : []
+}))
+const classLabel = computed(() => capitalize(props.visitor.class))
+const originName = computed(() => questName(props.visitor.commissionOptions[0]?.regionId || 'unknown road'))
+const interestLabel = computed(() => naturalList(props.visitor.interestedItemTypes))
+const acceptedLabel = computed(() => naturalList(props.visitor.acceptedItemTypes))
+const stateLabel = computed(() => ({
+  open: 'Ready to trade', traded: 'Deal made', commissioned: 'Away', returned: 'Returned', departed: 'Departed'
+}[props.visitor.state]))
+const remainingLabel = computed(() => {
+  if (!props.visitor.commission) return '0s'
+  return duration(Math.max(0, new Date(props.visitor.commission.finishesAt).getTime() - props.now))
+})
+const outcomeLabel = computed(() => props.visitor.commission?.outcome || 'unknown')
+const resultDescription = computed(() => {
+  const commission = props.visitor.commission
+  if (!commission) return ''
+  if (commission.outcome === 'complete') return `Full reward: ${commission.rewardGold ?? commission.fullRewardGold}g${props.stash.length < props.stashLimit ? ' and one item' : '; reward item cannot fit in the full stash'}.`
+  if (commission.outcome === 'partial') return `Partial reward: ${commission.rewardGold ?? commission.partialRewardGold}g.`
+  return 'The expedition failed. There is no reward to collect.'
+})
+const claimLabel = computed(() => {
+  const reward = props.visitor.commission?.rewardGold ?? 0
+  return reward ? `Claim ${reward}g` : 'Acknowledge return'
+})
+
+function toggleReview(regionId: string) {
+  reviewingRegionId.value = reviewingRegionId.value === regionId ? '' : regionId
+}
+
+function buyDisabledReason(offer: VisitorOffer): string {
+  if (props.pending) return 'Another action is being processed.'
+  if (props.stash.length >= props.stashLimit) return 'Stash is full.'
+  if (props.gold < offer.price) return `Need ${offer.price - props.gold}g more.`
+  return ''
+}
+
+function questName(regionId: string): string {
+  return props.quests.find((quest) => quest.id === regionId)?.name || titleCase(regionId)
+}
+
+function itemName(item: Item): string {
+  return item.identified ? item.displayName : `Unidentified ${capitalize(item.rarity)} ${item.baseName}`
+}
+
+function itemMeta(item: Item): string {
+  return `${capitalize(item.type)} · level ${item.requiredLevel} · ${capitalize(item.rarity)}`
+}
+
+function duration(milliseconds: number): string {
+  const seconds = Math.ceil(milliseconds / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  return minutes ? `${minutes}m${remainder ? ` ${remainder}s` : ''}` : `${remainder}s`
+}
+
+function percent(chance: number): string {
+  return `${Math.round(chance * 100)}%`
+}
+
+function returnTime(timestamp: string): string {
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function naturalList(values: string[]): string {
+  return values.map(capitalize).join(', ').replace(/, ([^,]*)$/, ' and $1').toLowerCase()
+}
+
+function capitalize(value: string): string {
+  return value.slice(0, 1).toUpperCase() + value.slice(1)
+}
+
+function titleCase(value: string): string {
+  return value.split('-').map(capitalize).join(' ')
+}
+</script>
+
+<style scoped>
+.visitor-post {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  padding: 1.1rem;
+}
+
+.visitor-post--returned { border-color: var(--ok); }
+.visitor-post--departed { opacity: 0.72; }
+.visitor-header, .visitor-title-row, .visitor-footer, .return-state, .visitor-identity {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+}
+.visitor-header, .visitor-footer, .return-state { justify-content: space-between; }
+.visitor-title-row { flex-wrap: wrap; }
+.visitor-header h2, .visitor-header p, .visitor-section h3, .visitor-section p, .away-state h3, .away-state p,
+.return-state h3, .return-state p, .departed-state h3, .departed-state p, .trade-item p { margin: 0; }
+.visitor-sigil {
+  align-items: center;
+  background: var(--accent);
+  border-radius: 50%;
+  color: white;
+  display: inline-flex;
+  flex: 0 0 2.75rem;
+  font-weight: 800;
+  height: 2.75rem;
+  justify-content: center;
+}
+.visitor-ledger {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.1rem 0.45rem;
+  grid-template-columns: auto auto;
+  text-align: right;
+}
+.visitor-ledger span { color: var(--muted); font-size: 0.78rem; }
+.state-chip {
+  background: #14120f;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--accent-2);
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+}
+.visitor-section { display: grid; gap: 0.65rem; }
+.trade-columns { display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; }
+.item-list { display: grid; gap: 0.55rem; }
+.trade-item, .mission-option {
+  align-items: center;
+  background: #14120f;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0.75rem;
+}
+.trade-item p, .mission-option p { color: var(--muted); font-size: 0.85rem; }
+.action-reason { color: var(--bad) !important; grid-column: 1 / -1; }
+.empty-copy { color: var(--muted); padding: 0.65rem 0; }
+.mission-board { border-top: 1px solid var(--line); padding-top: 1rem; }
+.mission-review { border-top: 1px solid var(--line); display: grid; gap: 0.65rem; grid-column: 1 / -1; padding-top: 0.75rem; }
+.mission-review ul { color: var(--muted); display: grid; gap: 0.25rem; margin: 0; padding-left: 1.2rem; }
+.impact-note { background: #17231a; border: 1px solid #315b3b; border-radius: 8px; display: grid; gap: 0.25rem; padding: 0.8rem; }
+.away-state, .return-state, .departed-state { background: #14120f; border-radius: 8px; padding: 1rem; }
+.away-state { align-items: center; display: flex; gap: 0.8rem; }
+.state-icon { font-size: 1.5rem; }
+.visitor-footer { border-top: 1px solid var(--line); padding-top: 0.85rem; }
+
+@media (max-width: 720px) {
+  .visitor-header, .visitor-footer, .return-state { align-items: stretch; flex-direction: column; }
+  .visitor-ledger { align-self: start; text-align: left; }
+  .trade-columns { grid-template-columns: 1fr; }
+  .trade-item, .mission-option { grid-template-columns: 1fr; }
+  .trade-item .btn, .mission-option .btn, .return-state .btn, .visitor-footer .btn { justify-content: center; width: 100%; }
+}
+</style>
