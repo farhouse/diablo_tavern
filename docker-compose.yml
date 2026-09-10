@@ -2,6 +2,7 @@ services:
   app:
     build:
       context: .
+      target: deps
     command: pnpm dev --host 0.0.0.0
     depends_on:
       - mongo

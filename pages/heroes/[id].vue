@@ -140,7 +140,9 @@ import { itemTypeToSlots } from '~/utils/game-data'
 
 const route = useRoute()
 const game = useGameStore()
-await game.load()
+onMounted(() => {
+  void game.load()
+})
 
 const slots: EquipmentSlot[] = ['weapon', 'helmet', 'armor', 'gloves', 'boots', 'amulet', 'ring1', 'ring2']
 const hero = computed(() => game.save?.heroes.find((candidate) => candidate.id === route.params.id))

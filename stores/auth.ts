@@ -20,11 +20,21 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     hydrate() {
-      if (import.meta.server || this.ready) return
-      this.accessToken = localStorage.getItem('accessToken') || ''
-      this.refreshToken = localStorage.getItem('refreshToken') || ''
-      const storedUser = localStorage.getItem('user')
-      this.user = storedUser ? JSON.parse(storedUser) : null
+      if (this.ready) return
+      const accessTokenCookie = useCookie<string>('accessToken')
+      const refreshTokenCookie = useCookie<string>('refreshToken')
+      const userCookie = useCookie<PublicUser | null>('user')
+
+      this.accessToken = accessTokenCookie.value || ''
+      this.refreshToken = refreshTokenCookie.value || ''
+      this.user = userCookie.value || null
+
+      if (import.meta.client) {
+        this.accessToken ||= localStorage.getItem('accessToken') || ''
+        this.refreshToken ||= localStorage.getItem('refreshToken') || ''
+        const storedUser = localStorage.getItem('user')
+        this.user ||= storedUser ? JSON.parse(storedUser) : null
+      }
       this.ready = true
     },
     async login(email: string, password: string) {
@@ -61,6 +71,12 @@ export const useAuthStore = defineStore('auth', {
       this.user = null
       this.accessToken = ''
       this.refreshToken = ''
+      const accessTokenCookie = useCookie<string | null>('accessToken')
+      const refreshTokenCookie = useCookie<string | null>('refreshToken')
+      const userCookie = useCookie<PublicUser | null>('user')
+      accessTokenCookie.value = null
+      refreshTokenCookie.value = null
+      userCookie.value = null
       if (import.meta.client) {
         localStorage.removeItem('accessToken')
         localStorage.removeItem('refreshToken')
@@ -71,6 +87,13 @@ export const useAuthStore = defineStore('auth', {
       this.user = response.user
       this.accessToken = response.accessToken
       this.refreshToken = response.refreshToken
+      this.ready = true
+      const accessTokenCookie = useCookie<string>('accessToken', { sameSite: 'lax', maxAge: 60 * 20 })
+      const refreshTokenCookie = useCookie<string>('refreshToken', { sameSite: 'lax', maxAge: 60 * 60 * 24 * 14 })
+      const userCookie = useCookie<PublicUser>('user', { sameSite: 'lax', maxAge: 60 * 60 * 24 * 14 })
+      accessTokenCookie.value = response.accessToken
+      refreshTokenCookie.value = response.refreshToken
+      userCookie.value = response.user
       if (import.meta.client) {
         localStorage.setItem('accessToken', response.accessToken)
         localStorage.setItem('refreshToken', response.refreshToken)
