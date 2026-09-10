@@ -105,11 +105,9 @@ Restore:
 docker exec -i diablo-managment-mongo-1 mongorestore --archive < backup-20250101.archive
 ```
 
-## Reset / wipe
+## Database wipe
 
-In the UI, use the **Reset save** button on the Stash page. This recreates a fresh save game for your user.
-
-To wipe all data (all users):
+There is no save-reset control in the player UI. To wipe all local data for every user:
 ```bash
 docker compose down -v
 ```
