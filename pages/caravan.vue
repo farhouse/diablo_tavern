@@ -37,12 +37,13 @@
             <button
               class="btn primary"
               type="button"
-              :disabled="!canAfford(service.id) || upgrading !== ''"
+              :disabled="Boolean(upgradeDisabledReason(service.id))"
+              :aria-describedby="upgradeDisabledReason(service.id) ? `upgrade-reason-${service.id}` : undefined"
               @click="upgrade(service.id)"
             >
               {{ upgrading === service.id ? 'Upgrading…' : 'Upgrade' }}
             </button>
-            <small v-if="!canAfford(service.id)" class="error">Not enough gold.</small>
+            <small v-if="upgradeDisabledReason(service.id)" :id="`upgrade-reason-${service.id}`" class="error">{{ upgradeDisabledReason(service.id) }}</small>
           </template>
           <span v-else class="tag ok">Max level</span>
         </div>
@@ -61,9 +62,10 @@
         </div>
         <p v-if="!appraiserQueue.length" class="muted">The queue is empty. Send an unidentified item from Stash.</p>
       </div>
-      <button class="btn" type="button" :disabled="processing" @click="completeAppraisal">
+      <button class="btn" type="button" :disabled="processing" :aria-describedby="processing ? 'appraisal-process-reason' : undefined" @click="completeAppraisal">
         {{ processing ? 'Checking…' : 'Process ready items' }}
       </button>
+      <small v-if="processing" id="appraisal-process-reason" class="error">Ready appraisals are being processed.</small>
     </section>
 
     <aside class="paused-systems">
@@ -106,6 +108,10 @@ function canUpgrade(id: ActiveService) { return currentLevel(id) < getMaxUpgrade
 function canAfford(id: ActiveService) {
   const cost = upgradeCost(id)
   return Boolean(cost && game.save && game.save.gold >= cost.gold)
+}
+function upgradeDisabledReason(id: ActiveService): string {
+  if (upgrading.value) return upgrading.value === id ? 'This upgrade is being processed.' : 'Another caravan upgrade is being processed.'
+  return canAfford(id) ? '' : 'Not enough gold.'
 }
 function serviceStatus(id: ActiveService) {
   const level = currentLevel(id)

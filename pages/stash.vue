@@ -37,27 +37,30 @@
         <div v-else class="stack">
           <p class="muted">Visitors will not quote unidentified goods.</p>
           <div class="item-actions">
-            <button class="btn" type="button" :disabled="Boolean(busyItem) || !canIdentify(item)" @click="identify(item.id)">
+            <button class="btn" type="button" :disabled="Boolean(identifyDisabledReason(item))" :aria-describedby="identifyDisabledReason(item) ? `identify-reason-${item.id}` : undefined" @click="identify(item.id)">
               {{ busyItem === item.id ? 'Identifying…' : `Identify${identifyCost(item.rarity) ? ` for ${identifyCost(item.rarity)}g` : ''}` }}
             </button>
-            <p v-if="!canIdentify(item)" class="action-reason">Need {{ identifyCost(item.rarity) - (game.save?.gold ?? 0) }}g more.</p>
+            <p v-if="identifyDisabledReason(item)" :id="`identify-reason-${item.id}`" class="error">{{ identifyDisabledReason(item) }}</p>
             <button
               v-if="hasAppraiser"
               class="btn ghost"
               type="button"
-              :disabled="Boolean(busyItem) || isInQueue(item.id) || isQueueFull"
+              :disabled="Boolean(appraiseDisabledReason(item.id))"
+              :aria-describedby="appraiseDisabledReason(item.id) ? `appraise-reason-${item.id}` : undefined"
               @click="queueAppraise(item.id)"
             >
               {{ isInQueue(item.id) ? 'In Appraiser queue' : 'Send to Appraiser' }}
             </button>
+            <p v-if="appraiseDisabledReason(item.id)" :id="`appraise-reason-${item.id}`" class="error">{{ appraiseDisabledReason(item.id) }}</p>
           </div>
         </div>
         <details class="salvage-details">
           <summary>Emergency salvage</summary>
           <p class="muted">Destroys this item for {{ salvageValue(item) }}g — only 25% of reference value. A visitor may offer more.</p>
-          <button class="btn ghost" type="button" :disabled="Boolean(busyItem) || isInQueue(item.id)" @click="salvage(item)">
+          <button class="btn ghost" type="button" :disabled="Boolean(salvageDisabledReason(item.id))" :aria-describedby="salvageDisabledReason(item.id) ? `salvage-reason-${item.id}` : undefined" @click="salvage(item)">
             {{ busyItem === item.id ? 'Salvaging…' : `Salvage for ${salvageValue(item)}g` }}
           </button>
+          <p v-if="salvageDisabledReason(item.id)" :id="`salvage-reason-${item.id}`" class="error">{{ salvageDisabledReason(item.id) }}</p>
         </details>
       </article>
     </section>
@@ -107,8 +110,23 @@ function identifyCost(rarity: ItemRarity): number {
   return 0
 }
 
-function canIdentify(item: Item): boolean {
-  return (game.save?.gold ?? 0) >= identifyCost(item.rarity)
+function identifyDisabledReason(item: Item): string {
+  if (busyItem.value) return busyItem.value === item.id ? 'Identification is being processed.' : 'Another stash action is being processed.'
+  const shortfall = identifyCost(item.rarity) - (game.save?.gold ?? 0)
+  return shortfall > 0 ? `Need ${shortfall}g more.` : ''
+}
+
+function appraiseDisabledReason(itemId: string): string {
+  if (busyItem.value) return busyItem.value === itemId ? 'Appraiser request is being processed.' : 'Another stash action is being processed.'
+  if (isInQueue(itemId)) return 'This item is already in the Appraiser queue.'
+  if (isQueueFull.value) return 'The Appraiser queue is full.'
+  return ''
+}
+
+function salvageDisabledReason(itemId: string): string {
+  if (busyItem.value) return busyItem.value === itemId ? 'Salvage is being processed.' : 'Another stash action is being processed.'
+  if (isInQueue(itemId)) return 'Remove this item from the Appraiser queue before salvaging it.'
+  return ''
 }
 
 function salvageValue(item: Item): number {

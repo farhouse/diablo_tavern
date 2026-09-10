@@ -20,9 +20,10 @@
         </div>
         <p class="muted">Depth {{ expedition.depth }} · Danger {{ expedition.danger }}%</p>
         <p>{{ expedition.carriedGold }}g · {{ expedition.carriedLoot.length }} items · {{ expedition.heroIds.length }} heroes carried</p>
-        <button class="btn primary" type="button" :disabled="busyId !== ''" @click="recover(expedition.id, expedition.status, portalActive(expedition.portalAvailableUntil))">
+        <button class="btn primary" type="button" :disabled="busyId !== ''" :aria-describedby="busyId ? `recovery-reason-${expedition.id}` : undefined" @click="recover(expedition.id, expedition.status, portalActive(expedition.portalAvailableUntil))">
           {{ busyId === expedition.id ? 'Recovering…' : expedition.status === 'returning' ? 'Process return' : portalActive(expedition.portalAvailableUntil) ? 'Use active portal' : 'Recall party' }}
         </button>
+        <p v-if="busyId" :id="`recovery-reason-${expedition.id}`" class="error">{{ busyId === expedition.id ? 'This recovery is being processed.' : 'Another expedition recovery is being processed.' }}</p>
       </article>
     </section>
     <section v-else class="card stack">
