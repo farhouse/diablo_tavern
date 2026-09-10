@@ -1,6 +1,6 @@
 # Visitor, trade, and commission server contract
 
-The current save document remains the aggregate boundary. Existing `heroes`, expeditions, materials, and caravan data are preserved; legacy saves are normalized by adding `revision`, `processedRequestIds`, `visitHistory`, and one persisted two-visitor `visitRound`.
+The current save document remains the aggregate boundary. Existing `heroes`, expeditions, materials, and caravan data are preserved; legacy saves are normalized by adding `revision`, `processedRequestIds`, fingerprinted `processedRequests`, `visitHistory`, and one persisted two-visitor `visitRound`.
 
 New saves start with 450 gold and two identified normal items. A legacy save with neither a sellable item nor enough gold for a correctly priced offer receives one normal recovery item when a round is generated. This is the only anti-soft-lock subsidy.
 
@@ -14,7 +14,7 @@ New saves start with 450 gold and two identified normal items. A legacy save wit
 
 ## HTTP mutations
 
-All endpoints require authentication and a caller-generated `requestId` in the JSON body, unique within the save's rolling 100-mutation retry window. A repeated ID in that window returns the already-current save without applying the operation twice. Writes use an atomic revision compare-and-swap on the single MongoDB save document.
+All endpoints require authentication and a caller-generated `requestId` in the JSON body, unique within the save's rolling 100-mutation retry window. A repeated ID for the same operation returns the already-current save without applying the operation twice; reuse for a different operation or payload returns `409`. Both the keys and their operation fingerprints are persisted. Writes use an atomic revision compare-and-swap on the single MongoDB save document. Time-based commission transitions observed during reads are also persisted with the same revision guard.
 
 | Method and path | Additional body | Effect |
 |---|---|---|

@@ -35,6 +35,7 @@ export function createSaveGame(userId: string): SaveGame {
     visitRound: undefined as never,
     visitHistory: [],
     processedRequestIds: [],
+    processedRequests: [],
     revision: 0,
     createdAt: now,
     updatedAt: now
@@ -46,6 +47,9 @@ export function createSaveGame(userId: string): SaveGame {
 export function normalizeSaveGame(save: SaveGame): SaveGame {
   if (!Number.isInteger(save.revision) || save.revision < 0) save.revision = 0
   if (!Array.isArray(save.processedRequestIds)) save.processedRequestIds = []
+  if (!Array.isArray(save.processedRequests)) {
+    save.processedRequests = save.processedRequestIds.map((requestId) => ({ requestId, operationKey: '' }))
+  }
   if (!Array.isArray(save.visitHistory)) save.visitHistory = []
   if (!('materials' in save)) (save as Record<string, unknown>).materials = 0
   if (!('caravan' in save)) {

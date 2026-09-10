@@ -52,8 +52,8 @@ describe('atomic save mutation', () => {
       save.gold += 100
       return save
     })
-    const first = await mutateSaveGameAtomic('atomic-user', 'request-1', mutate)
-    const repeated = await mutateSaveGameAtomic('atomic-user', 'request-1', mutate)
+    const first = await mutateSaveGameAtomic('atomic-user', 'request-1', 'buy:visitor-1:offer-1', mutate)
+    const repeated = await mutateSaveGameAtomic('atomic-user', 'request-1', 'buy:visitor-1:offer-1', mutate)
 
     expect(first.gold).toBe(550)
     expect(repeated.gold).toBe(550)
@@ -62,10 +62,22 @@ describe('atomic save mutation', () => {
     expect(document!.revision).toBe(1)
   })
 
+  it('rejects reuse of a persisted request id for a different command', async () => {
+    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    await mutateSaveGameAtomic('atomic-user', 'request-reused', 'buy:visitor-1:offer-1', (save) => {
+      save.gold -= 10
+    })
+
+    await expect(mutateSaveGameAtomic('atomic-user', 'request-reused', 'sell:visitor-2:item-1', (save) => {
+      save.gold += 500
+    })).rejects.toThrow('requestId was already used for a different operation')
+    expect(document!.gold).toBe(440)
+  })
+
   it('retries a compare-and-swap conflict without applying a partial result', async () => {
     const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
     forcedConflict = true
-    const result = await mutateSaveGameAtomic('atomic-user', 'request-2', (save) => {
+    const result = await mutateSaveGameAtomic('atomic-user', 'request-2', 'test:request-2', (save) => {
       save.gold -= 50
       return save
     })
@@ -77,11 +89,11 @@ describe('atomic save mutation', () => {
   it('serializes concurrent mutations against the save revision', async () => {
     const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
     const [first, second] = await Promise.all([
-      mutateSaveGameAtomic('atomic-user', 'concurrent-1', (save) => {
+      mutateSaveGameAtomic('atomic-user', 'concurrent-1', 'test:concurrent-1', (save) => {
         save.gold -= 20
         return save
       }),
-      mutateSaveGameAtomic('atomic-user', 'concurrent-2', (save) => {
+      mutateSaveGameAtomic('atomic-user', 'concurrent-2', 'test:concurrent-2', (save) => {
         save.gold -= 30
         return save
       })
@@ -96,11 +108,11 @@ describe('atomic save mutation', () => {
     const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
     document = undefined
     await Promise.all([
-      mutateSaveGameAtomic('new-user', 'new-1', (save) => {
+      mutateSaveGameAtomic('new-user', 'new-1', 'test:new-1', (save) => {
         save.gold -= 20
         return save
       }),
-      mutateSaveGameAtomic('new-user', 'new-2', (save) => {
+      mutateSaveGameAtomic('new-user', 'new-2', 'test:new-2', (save) => {
         save.gold -= 30
         return save
       })
@@ -111,18 +123,58 @@ describe('atomic save mutation', () => {
   })
 
   it('persists a legacy visitor migration without removing historical data', async () => {
-    const { getSaveGame } = await import('../server/utils/savegame')
+    const { getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
     const legacyRecord = document as unknown as Record<string, unknown>
     legacyRecord.heroes = [{ id: 'historic-hero', status: 'dead' }]
+    legacyRecord.processedRequestIds = ['legacy-request']
     delete legacyRecord.visitRound
     delete legacyRecord.visitHistory
-    delete legacyRecord.processedRequestIds
+    delete legacyRecord.processedRequests
     delete legacyRecord.revision
 
     const migrated = await getSaveGame('atomic-user')
     expect(migrated.visitRound.visitors).toHaveLength(2)
     expect(migrated.heroes).toEqual([{ id: 'historic-hero', status: 'dead' }])
     expect(document!.visitRound.visitors).toHaveLength(2)
+    expect(document!.processedRequests).toEqual([{ requestId: 'legacy-request', operationKey: '' }])
     expect(collection.replaceOne).toHaveBeenCalledTimes(1)
+
+    const mutate = vi.fn()
+    await mutateSaveGameAtomic('atomic-user', 'legacy-request', 'new-fingerprint', mutate)
+    expect(mutate).not.toHaveBeenCalled()
+  })
+
+  it('persists a completed commission transition observed by a read', async () => {
+    const { getSaveGame } = await import('../server/utils/savegame')
+    const visitor = document!.visitRound.visitors[0]!
+    visitor.state = 'commissioned'
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!,
+      id: 'commission-1',
+      status: 'active',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      finishesAt: '2020-01-01T00:01:00.000Z',
+      outcomeRoll: 0
+    }
+    forcedConflict = true
+
+    const loaded = await getSaveGame('atomic-user')
+
+    expect(loaded.visitRound.visitors[0]!.state).toBe('returned')
+    expect(document!.visitRound.visitors[0]!.state).toBe('returned')
+    expect(document!.visitRound.visitors[0]!.commission!.status).toBe('ready')
+    expect(document!.revision).toBe(1)
+    expect(collection.replaceOne).toHaveBeenCalledTimes(2)
+  })
+
+  it('maps an idempotency fingerprint conflict to HTTP 409', async () => {
+    const createError = vi.fn((details: { statusCode: number; statusMessage: string }) => Object.assign(new Error(details.statusMessage), details))
+    vi.stubGlobal('createError', createError)
+    const { IdempotencyConflictError } = await import('../server/utils/savegame')
+    const { visitorMutationError } = await import('../server/utils/visitor-api')
+
+    expect(() => visitorMutationError(new IdempotencyConflictError('requestId conflict'), 'fallback'))
+      .toThrow(expect.objectContaining({ statusCode: 409, message: 'requestId conflict' }))
+    expect(createError).toHaveBeenCalledWith({ statusCode: 409, statusMessage: 'requestId conflict' })
   })
 })

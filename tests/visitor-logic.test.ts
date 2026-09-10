@@ -131,6 +131,7 @@ describe('visitor trade and commission loop', () => {
     delete legacy.visitRound
     delete legacy.visitHistory
     delete legacy.processedRequestIds
+    delete legacy.processedRequests
     delete legacy.revision
 
     const migrated = normalizeSaveGame(legacy as unknown as ReturnType<typeof createSaveGame>)

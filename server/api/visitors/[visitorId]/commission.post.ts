@@ -1,7 +1,7 @@
 import { requireUser } from '~/server/utils/auth'
 import { requireString } from '~/server/utils/body'
 import { mutateSaveGameAtomic } from '~/server/utils/savegame'
-import { readVisitorMutation, visitorMutationError } from '~/server/utils/visitor-api'
+import { readVisitorMutation, visitorMutationError, visitorOperationKey } from '~/server/utils/visitor-api'
 import { assignVisitorCommission } from '~/utils/visitor-logic'
 
 export default defineEventHandler(async (event) => {
@@ -10,7 +10,7 @@ export default defineEventHandler(async (event) => {
   const body = await readVisitorMutation(event)
   const regionId = requireString(body.regionId, 'regionId')
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, (save) => assignVisitorCommission(save, visitorId, regionId))
+    return await mutateSaveGameAtomic(user.id, body.requestId, visitorOperationKey('commission', visitorId, regionId), (save) => assignVisitorCommission(save, visitorId, regionId))
   } catch (error) {
     visitorMutationError(error, 'Cannot assign commission')
   }

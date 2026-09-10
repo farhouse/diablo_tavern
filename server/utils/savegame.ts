@@ -5,33 +5,35 @@ import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 export async function getSaveGame(userId: string): Promise<SaveGame> {
   const saves = await saveGamesCollection()
-  const existing = await saves.findOne({ userId } as Filter<DbSaveGame>)
-  if (existing) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const existing = await saves.findOne({ userId } as Filter<DbSaveGame>)
+    if (!existing) {
+      const save = createSaveGame(userId)
+      const { _id, ...document } = save
+      await saves.updateOne({ userId } as Filter<DbSaveGame>, { $setOnInsert: document }, { upsert: true })
+      continue
+    }
+    const persistedVisitRound = JSON.stringify(existing.visitRound)
     const serialized = serializeSave(existing)
     const needsMigration = !('visitRound' in existing)
       || !('revision' in existing)
       || !('processedRequestIds' in existing)
+      || !('processedRequests' in existing)
       || !('visitHistory' in existing)
-    if (needsMigration) {
+    const visitStateChanged = persistedVisitRound !== JSON.stringify(serialized.visitRound)
+    if (needsMigration || visitStateChanged) {
+      const currentRevision = typeof existing.revision === 'number' ? existing.revision : 0
+      serialized.revision = currentRevision + 1
       const { _id, ...document } = serialized
       const revisionFilter = typeof existing.revision === 'number'
-        ? { revision: existing.revision }
+        ? { revision: currentRevision }
         : { revision: { $exists: false } }
       const result = await saves.replaceOne({ _id: existing._id, ...revisionFilter } as Filter<DbSaveGame>, document)
-      if (result.modifiedCount !== 1) {
-        const latest = await saves.findOne({ userId } as Filter<DbSaveGame>)
-        if (latest) return serializeSave(latest)
-      }
+      if (result.modifiedCount !== 1) continue
     }
     return serialized
   }
-
-  const save = createSaveGame(userId)
-  const { _id, ...document } = save
-  await saves.updateOne({ userId } as Filter<DbSaveGame>, { $setOnInsert: document }, { upsert: true })
-  const inserted = await saves.findOne({ userId } as Filter<DbSaveGame>)
-  if (!inserted) throw new Error('Could not initialize save game')
-  return serializeSave(inserted)
+  throw new Error('Save changed concurrently; retry the operation')
 }
 
 export async function replaceSaveGame(save: SaveGame): Promise<SaveGame> {
@@ -51,9 +53,11 @@ export async function replaceSaveGame(save: SaveGame): Promise<SaveGame> {
 export async function mutateSaveGameAtomic(
   userId: string,
   requestId: string,
+  operationKey: string,
   mutate: (save: SaveGame) => SaveGame | void
 ): Promise<SaveGame> {
   if (!requestId || requestId.length > 128) throw new Error('A valid requestId is required')
+  if (!operationKey || operationKey.length > 512) throw new Error('A valid operationKey is required')
   const saves = await saveGamesCollection()
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -63,6 +67,11 @@ export async function mutateSaveGameAtomic(
       continue
     }
     const current = serializeSave(currentDocument)
+    const processed = current.processedRequests.find((entry) => entry.requestId === requestId)
+    if (processed) {
+      if (!processed.operationKey || processed.operationKey === operationKey) return current
+      throw new IdempotencyConflictError('requestId was already used for a different operation')
+    }
     if (current.processedRequestIds.includes(requestId)) return current
 
     const currentRevision = current.revision
@@ -71,6 +80,7 @@ export async function mutateSaveGameAtomic(
     normalizeSaveGame(changed)
     changed.revision = currentRevision + 1
     changed.processedRequestIds = [...current.processedRequestIds, requestId].slice(-100)
+    changed.processedRequests = [...current.processedRequests, { requestId, operationKey }].slice(-100)
     const { _id, ...replacement } = changed
     const revisionFilter = currentRevision === 0
       ? { $or: [{ revision: 0 }, { revision: { $exists: false } }] }
@@ -84,6 +94,10 @@ export async function mutateSaveGameAtomic(
   }
 
   throw new Error('Save changed concurrently; retry with the same requestId')
+}
+
+export class IdempotencyConflictError extends Error {
+  override name = 'IdempotencyConflictError'
 }
 
 export async function resetSaveGame(userId: string): Promise<SaveGame> {

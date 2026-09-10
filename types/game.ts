@@ -126,6 +126,11 @@ export interface VisitRound {
   createdAt: string
 }
 
+export interface ProcessedRequest {
+  requestId: string
+  operationKey: string
+}
+
 export type Equipment = Partial<Record<EquipmentSlot, Item>>
 
 export interface Hero {
@@ -306,6 +311,7 @@ export interface SaveGame {
   visitRound: VisitRound
   visitHistory: VisitRound[]
   processedRequestIds: string[]
+  processedRequests: ProcessedRequest[]
   revision: number
   createdAt: string
   updatedAt: string
