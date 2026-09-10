@@ -9,7 +9,7 @@
             <span class="state-chip">{{ stateLabel }}</span>
           </div>
           <p>{{ classLabel }} · level {{ visitor.level }}</p>
-          <p class="muted">Routes: {{ routeLabel }}</p>
+          <p class="muted">From {{ visitor.origin }}</p>
         </div>
       </div>
       <div class="visitor-ledger" aria-label="Visitor resources">
@@ -19,6 +19,19 @@
         <span>gear power</span>
       </div>
     </header>
+
+    <section class="visitor-equipment" :aria-labelledby="`equipment-${visitor.id}`">
+      <div>
+        <h3 :id="`equipment-${visitor.id}`">Travel gear</h3>
+        <p class="muted">Persisted equipment · routes: {{ routeLabel }}</p>
+      </div>
+      <ul>
+        <li v-for="item in visitor.equipmentSummary" :key="item.itemId ?? `${item.type}-${item.name}`">
+          <strong>{{ item.name }}</strong>
+          <span>{{ capitalize(item.type) }} · {{ item.powerBonus > 0 ? `+${item.powerBonus} power` : 'starting gear' }}</span>
+        </li>
+      </ul>
+    </section>
 
     <template v-if="visitor.state === 'open'">
       <section class="visitor-section" aria-labelledby="`interests-${visitor.id}`">
@@ -319,6 +332,11 @@ function titleCase(value: string): string {
   text-align: right;
 }
 .visitor-ledger span { color: var(--muted); font-size: 0.78rem; }
+.visitor-equipment { align-items: start; border-block: 1px solid var(--line); display: grid; gap: 0.75rem; grid-template-columns: minmax(8rem, 0.4fr) 1fr; padding-block: 0.8rem; }
+.visitor-equipment h3, .visitor-equipment p { margin: 0; }
+.visitor-equipment ul { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; margin: 0; padding: 0; }
+.visitor-equipment li { background: #14120f; border-radius: 6px; display: grid; gap: 0.1rem; min-width: min(100%, 10rem); padding: 0.5rem 0.65rem; }
+.visitor-equipment li span { color: var(--muted); font-size: 0.78rem; }
 .state-chip {
   background: #14120f;
   border: 1px solid var(--line);
@@ -355,6 +373,7 @@ function titleCase(value: string): string {
 @media (max-width: 720px) {
   .visitor-header, .visitor-footer, .return-state { align-items: stretch; flex-direction: column; }
   .visitor-ledger { align-self: start; text-align: left; }
+  .visitor-equipment { grid-template-columns: 1fr; }
   .trade-columns { grid-template-columns: 1fr; }
   .trade-item, .mission-option { grid-template-columns: 1fr; }
   .trade-item .btn, .mission-option .btn, .return-state .btn, .visitor-footer .btn { justify-content: center; width: 100%; }

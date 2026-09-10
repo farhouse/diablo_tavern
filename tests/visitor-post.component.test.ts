@@ -17,7 +17,9 @@ const quest: Quest = {
 
 function visitor(overrides: Partial<Visitor> = {}): Visitor {
   return {
-    id: 'visitor-1', name: 'Mira', class: 'barbarian', level: 3, state: 'open', budget: 140, initialBudget: 140,
+    id: 'visitor-1', name: 'Mira', class: 'barbarian', level: 3, origin: 'Ashen Foothills',
+    equipmentSummary: [{ name: 'Worn battle axe', type: 'weapon', powerBonus: 0 }],
+    state: 'open', budget: 140, initialBudget: 140,
     acceptedItemTypes: ['weapon', 'armor'], interestedItemTypes: ['weapon'],
     offers: [{ id: 'offer-1', item: { ...sword, id: 'offer-item' }, price: 40 }],
     buyQuotes: { sword: 31 }, trades: [], power: 69,
@@ -34,12 +36,33 @@ describe('VisitorPost', () => {
 
     expect(wrapper.text()).toContain('Mira')
     expect(wrapper.text()).toContain('Barbarian · level 3')
-    expect(wrapper.text()).toContain('Routes: Blood Moor')
+    expect(wrapper.text()).toContain('From Ashen Foothills')
+    expect(wrapper.text()).toContain('Persisted equipment · routes: Blood Moor')
+    expect(wrapper.text()).toContain('Worn battle axe')
+    expect(wrapper.text()).toContain('Weapon · starting gear')
     expect(wrapper.get('[aria-label="Visitor resources"]').text()).toContain('140g')
     expect(wrapper.get('[aria-label="Visitor resources"]').text()).toContain('budget')
     expect(wrapper.text()).toContain('Looking for weapon')
     expect(wrapper.get('[data-testid="buy-offer-1"]').text()).toContain('Buy for 40g')
     expect(wrapper.get('[data-testid="sell-sword"]').text()).toContain('Sell for 31g')
+  })
+
+  it('renders persisted tavern equipment impact after a reload', () => {
+    const persisted = visitor({
+      state: 'traded',
+      power: 77,
+      equipmentSummary: [
+        { name: 'Worn battle axe', type: 'weapon', powerBonus: 0 },
+        { itemId: 'sword', name: 'Short Sword', type: 'weapon', powerBonus: 8 }
+      ]
+    })
+    const wrapper = mount(VisitorPost, {
+      props: { visitor: structuredClone(persisted), stash: [], gold: 450, stashLimit: 20, quests: [quest], now: Date.now() }
+    })
+
+    expect(wrapper.text()).toContain('Short Sword')
+    expect(wrapper.text()).toContain('Weapon · +8 power')
+    expect(wrapper.get('[aria-label="Visitor resources"]').text()).toContain('77')
   })
 
   it('explains why commercial actions are unavailable', () => {
