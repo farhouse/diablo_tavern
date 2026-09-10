@@ -60,6 +60,72 @@ export interface Item {
   }
 }
 
+export type VisitorState = 'open' | 'traded' | 'commissioned' | 'returned' | 'departed'
+export type VisitorTradeKind = 'player_bought' | 'player_sold'
+export type CommissionOutcome = 'complete' | 'partial' | 'failed'
+
+export interface VisitorOffer {
+  id: string
+  item: Item
+  price: number
+  purchasedAt?: string
+}
+
+export interface VisitorTrade {
+  requestId: string
+  kind: VisitorTradeKind
+  itemId: string
+  price: number
+  createdAt: string
+}
+
+export interface CommissionOption {
+  regionId: string
+  durationMs: number
+  successChance: number
+  fullRewardGold: number
+  partialRewardGold: number
+}
+
+export interface VisitorCommission extends CommissionOption {
+  id: string
+  status: 'active' | 'ready' | 'claimed'
+  startedAt: string
+  finishesAt: string
+  outcomeRoll: number
+  outcome?: CommissionOutcome
+  rewardGold?: number
+  rewardItem?: Item
+  claimedAt?: string
+}
+
+export interface Visitor {
+  id: string
+  name: string
+  class: HeroClass
+  level: number
+  state: VisitorState
+  budget: number
+  initialBudget: number
+  acceptedItemTypes: ItemType[]
+  interestedItemTypes: ItemType[]
+  offers: VisitorOffer[]
+  buyQuotes: Record<string, number>
+  trades: VisitorTrade[]
+  power: number
+  commissionOptions: CommissionOption[]
+  commission?: VisitorCommission
+  arrivedAt: string
+  departedAt?: string
+}
+
+export interface VisitRound {
+  id: string
+  number: number
+  visitors: Visitor[]
+  createdAt: string
+}
+
 export type Equipment = Partial<Record<EquipmentSlot, Item>>
 
 export interface Hero {
@@ -237,6 +303,10 @@ export interface SaveGame {
   lastQuestRun?: QuestRun
   activeExpeditions: ActiveExpedition[]
   expeditionHistory: ExpeditionSummary[]
+  visitRound: VisitRound
+  visitHistory: VisitRound[]
+  processedRequestIds: string[]
+  revision: number
   createdAt: string
   updatedAt: string
 }
