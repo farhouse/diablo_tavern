@@ -10,7 +10,6 @@ export default defineConfig({
     }
   },
   test: {
-    environment: 'node',
-    environmentMatchGlobs: [['tests/**/*.component.test.ts', 'happy-dom']]
+    environment: 'node'
   }
 })
