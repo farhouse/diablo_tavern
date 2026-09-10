@@ -20,14 +20,12 @@
 </template>
 
 <script setup lang="ts">
-import { getStashCapacity } from '~/utils/game-logic'
-
 const auth = useAuthStore()
 const game = useGameStore()
 
 const visitorCount = computed(() => game.save?.visitRound.visitors.filter((visitor) => visitor.state !== 'departed').length ?? 0)
 const stashCount = computed(() => game.save?.stash.length ?? 0)
-const stashCap = computed(() => game.save ? getStashCapacity(game.save) : 0)
+const stashCap = computed(() => game.save?.stashLimit ?? 0)
 
 onMounted(() => {
   auth.hydrate()

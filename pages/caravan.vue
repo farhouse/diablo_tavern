@@ -77,7 +77,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useGameStore } from '~/stores/game'
 import type { CaravanUpgradeId } from '~/types/game'
-import { getMaxUpgradeLevel, getStashCapacity, getUpgradeCost } from '~/utils/game-logic'
+import { getMaxUpgradeLevel, getUpgradeCost } from '~/utils/game-logic'
 
 type ActiveService = Extract<CaravanUpgradeId, 'stashWagon' | 'appraiser'>
 const game = useGameStore()
@@ -90,7 +90,7 @@ const services: Array<{ id: ActiveService; label: string; description: string }>
 ]
 const appraiserLevel = computed(() => game.save?.caravan.upgrades.appraiser ?? 0)
 const appraiserQueue = computed(() => game.save?.caravan.services.appraiserQueue ?? [])
-const stashCap = computed(() => game.save ? getStashCapacity(game.save) : 0)
+const stashCap = computed(() => game.save?.stashLimit ?? 0)
 
 onMounted(() => { void game.load() })
 

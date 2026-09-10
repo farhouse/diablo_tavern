@@ -27,7 +27,7 @@ describe('visitor store mutations', () => {
 
     const before = JSON.parse(JSON.stringify(store.save))
     const first = store.sellToVisitor('visitor-1', 'sword')
-    const second = store.sellToVisitor('visitor-1', 'sword')
+    const second = store.buyFromVisitor('visitor-1', 'different-offer')
     expect(store.save).toStrictEqual(before)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     await expect(second).resolves.toBeUndefined()

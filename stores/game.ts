@@ -86,7 +86,7 @@ export const useGameStore = defineStore('game', {
       body: Record<string, string> = {}
     ) {
       const key = `${operation}:${visitorId}:${target}`
-      if (this.visitorMutations[key]) return
+      if (this.visitorMutations[key] || this.isVisitorMutationPending(visitorId)) return
       const requestId = this.visitorRequestIds[key] || createRequestId()
       this.visitorRequestIds[key] = requestId
       this.visitorMutations[key] = true

@@ -73,12 +73,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { useGameStore } from '~/stores/game'
 import type { Item, ItemRarity } from '~/types/game'
-import { getAppraiserQueueSize, getStashCapacity } from '~/utils/game-logic'
+import { getAppraiserQueueSize } from '~/utils/game-logic'
 
 const game = useGameStore()
 const busyItem = ref('')
 const notice = ref('')
-const stashCap = computed(() => game.save ? getStashCapacity(game.save) : 0)
+const stashCap = computed(() => game.save?.stashLimit ?? 0)
 const stashUsed = computed(() => game.save?.stash.length ?? 0)
 const hasAppraiser = computed(() => (game.save?.caravan.upgrades.appraiser ?? 0) >= 1)
 const appraiserQueue = computed(() => game.save?.caravan.services.appraiserQueue ?? [])
