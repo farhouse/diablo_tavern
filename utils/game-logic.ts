@@ -1,6 +1,6 @@
 import type { ActiveQuestRun, Affix, DerivedStats, EquipmentSlot, Hero, HeroClass, Item, ItemRarity, Quest, QuestRun, SaveGame, ActiveExpedition, ExpeditionHeroState, ExpeditionEvent, ExpeditionSummary, CaravanUpgradeId, CaravanState, AppraisalJob } from '~/types/game'
 import { affixPool, heroClassStats, itemBases, itemTypeToSlots, quests, uniqueItems, caravanUpgradeCosts, heroCapacities, expeditionCapacities, stashCapacities, infirmaryLevels, deathChanceReduction, appraiserQueueSizes } from '~/utils/game-data'
-import { createStarterItems, createVisitRound, refreshVisitRound, salvageItem } from '~/utils/visitor-logic'
+import { createStarterItems, createVisitRound, normalizeVisitorDetails, refreshVisitRound, salvageItem } from '~/utils/visitor-logic'
 
 const QUEST_DURATION_SCALE_MS = 1000
 const EXPEDITION_EVENT_INTERVAL_MS = 5000
@@ -114,6 +114,7 @@ export function normalizeSaveGame(save: SaveGame): SaveGame {
   if (!save.visitRound || !Array.isArray(save.visitRound.visitors) || save.visitRound.visitors.length !== 2) {
     save.visitRound = createVisitRound(save, 1)
   }
+  normalizeVisitorDetails(save)
   refreshVisitRound(save)
   delete legacy.activeExpedition
   delete legacy.lastExpeditionRun

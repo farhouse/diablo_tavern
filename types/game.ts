@@ -99,11 +99,20 @@ export interface VisitorCommission extends CommissionOption {
   claimedAt?: string
 }
 
+export interface VisitorEquipmentSummaryItem {
+  itemId?: string
+  name: string
+  type: ItemType
+  powerBonus: number
+}
+
 export interface Visitor {
   id: string
   name: string
   class: HeroClass
   level: number
+  origin: string
+  equipmentSummary: VisitorEquipmentSummaryItem[]
   state: VisitorState
   budget: number
   initialBudget: number

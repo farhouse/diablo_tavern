@@ -2,6 +2,8 @@
 
 The current save document remains the aggregate boundary. Existing `heroes`, expeditions, materials, and caravan data are preserved; legacy saves are normalized by adding `revision`, `processedRequestIds`, fingerprinted `processedRequests`, `visitHistory`, and one persisted two-visitor `visitRound`.
 
+Each `Visitor` persists an `origin` string and an `equipmentSummary` array. Summary entries expose `name`, `type`, and their `powerBonus` (plus `itemId` when the item came from a player trade), so clients can render identity and gear without reconstructing domain state. Selling useful equipment appends its summary entry in the same atomic mutation that updates `power` and commission probabilities. Legacy visitors receive a deterministic origin and starting-equipment summary; any power above the original level baseline is retained as a migrated tavern-equipment bonus.
+
 New saves start with 450 gold and two identified normal items. A legacy save with neither a sellable item nor enough gold for a correctly priced offer receives one normal recovery item when a round is generated. This is the only anti-soft-lock subsidy.
 
 ## State and pricing

@@ -6,7 +6,8 @@ import type {
   ItemType,
   SaveGame,
   VisitRound,
-  Visitor
+  Visitor,
+  VisitorEquipmentSummaryItem
 } from '~/types/game'
 import { itemBases, quests } from '~/utils/game-data'
 
@@ -22,6 +23,13 @@ const VISITOR_COUNT = 2
 const allItemTypes: ItemType[] = ['weapon', 'armor', 'helmet', 'gloves', 'boots', 'ring', 'amulet', 'charm']
 const visitorNames = ['Mira', 'Torvald', 'Ysra', 'Kael', 'Nahla', 'Bram', 'Vesper', 'Orin']
 const visitorClasses: HeroClass[] = ['barbarian', 'sorceress', 'paladin', 'necromancer']
+const visitorOrigins = ['Ashen Foothills', 'Black Marsh', 'Iron Highlands', 'Forgotten Coast', 'Dustbound Vale', 'Silverwood']
+const arrivalEquipment: Record<HeroClass, Omit<VisitorEquipmentSummaryItem, 'powerBonus'>> = {
+  barbarian: { name: 'Worn battle axe', type: 'weapon' },
+  sorceress: { name: 'Travel-stained focus', type: 'amulet' },
+  paladin: { name: 'Dented field plate', type: 'armor' },
+  necromancer: { name: 'Bone-carved wand', type: 'weapon' }
+}
 
 export function createStarterItems(random: RandomSource = Math.random): Item[] {
   return [starterItem(0, random), starterItem(6, random)]
@@ -58,6 +66,12 @@ export function refreshVisitRound(save: SaveGame, now = new Date()): SaveGame {
   return save
 }
 
+export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'visitHistory'>): void {
+  for (const round of [save.visitRound, ...save.visitHistory]) {
+    for (const visitor of round.visitors) normalizeVisitor(visitor)
+  }
+}
+
 export function buyFromVisitor(save: SaveGame, visitorId: string, offerId: string, requestId: string, now = new Date()): SaveGame {
   const visitor = requireTradeableVisitor(save, visitorId)
   const offer = visitor.offers.find((entry) => entry.id === offerId)
@@ -92,7 +106,14 @@ export function sellToVisitor(save: SaveGame, visitorId: string, itemId: string,
   visitor.trades.push({ requestId, kind: 'player_sold', itemId, price, createdAt: now.toISOString() })
   visitor.state = 'traded'
   if (isUsefulToVisitor(visitor, item)) {
-    visitor.power += itemPower(item)
+    const powerBonus = itemPower(item)
+    visitor.power += powerBonus
+    visitor.equipmentSummary.push({
+      itemId: item.id,
+      name: item.displayName,
+      type: item.type,
+      powerBonus
+    })
     visitor.commissionOptions = visitor.commissionOptions.map((option) => ({
       ...option,
       successChance: calculateCommissionChance(visitor.power, option.regionId)
@@ -188,11 +209,17 @@ function createVisitor(save: Pick<SaveGame, 'stash' | 'questsProgress'>, now: Da
   const acceptedItemTypes = sampleDistinct(allItemTypes, 4, random)
   const interestedItemTypes = acceptedItemTypes.slice(0, 2)
   const level = randomInt(1, 7, random)
+  const id = randomId(random)
+  const name = pick(visitorNames, random)
+  const visitorClass = pick(visitorClasses, random)
+  const startingEquipment = arrivalEquipment[visitorClass]
   const visitor: Visitor = {
-    id: randomId(random),
-    name: pick(visitorNames, random),
-    class: pick(visitorClasses, random),
+    id,
+    name,
+    class: visitorClass,
     level,
+    origin: visitorOrigins[stableIndex(id, visitorOrigins.length)]!,
+    equipmentSummary: [{ ...startingEquipment, powerBonus: 0 }],
     state: 'open',
     budget: randomInt(140, 420, random),
     initialBudget: 0,
@@ -217,6 +244,30 @@ function createVisitor(save: Pick<SaveGame, 'stash' | 'questsProgress'>, now: Da
   }
   visitor.commissionOptions = unlockedCommissionOptions(save.questsProgress, visitor.power)
   return visitor
+}
+
+function normalizeVisitor(visitor: Visitor): void {
+  if (typeof visitor.origin !== 'string' || visitor.origin.trim().length === 0) {
+    visitor.origin = visitorOrigins[stableIndex(visitor.id || visitor.name, visitorOrigins.length)]!
+  }
+  if (Array.isArray(visitor.equipmentSummary) && visitor.equipmentSummary.length > 0) return
+
+  const startingEquipment = arrivalEquipment[visitor.class] ?? arrivalEquipment.barbarian
+  visitor.equipmentSummary = [{ ...startingEquipment, powerBonus: 0 }]
+  const inferredPowerBonus = Math.max(0, visitor.power - (42 + visitor.level * 9))
+  if (inferredPowerBonus > 0) {
+    visitor.equipmentSummary.push({
+      name: 'Equipment acquired at the tavern',
+      type: visitor.interestedItemTypes[0] ?? startingEquipment.type,
+      powerBonus: inferredPowerBonus
+    })
+  }
+}
+
+function stableIndex(value: string, length: number): number {
+  let hash = 0
+  for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  return hash % length
 }
 
 function ensureViableRound(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit'>, visitors: Visitor[], random: RandomSource): void {

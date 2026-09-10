@@ -144,6 +144,23 @@ describe('atomic save mutation', () => {
     expect(mutate).not.toHaveBeenCalled()
   })
 
+  it('persists missing visitor origin and equipment summary during read migration', async () => {
+    const { getSaveGame } = await import('../server/utils/savegame')
+    const visitor = document!.visitRound.visitors[0]!
+    visitor.power += 11
+    delete (visitor as Partial<typeof visitor>).origin
+    delete (visitor as Partial<typeof visitor>).equipmentSummary
+
+    const migrated = await getSaveGame('atomic-user')
+    const persistedVisitor = document!.visitRound.visitors[0]!
+
+    expect(migrated.visitRound.visitors[0]!.origin).toBeTruthy()
+    expect(persistedVisitor.origin).toBe(migrated.visitRound.visitors[0]!.origin)
+    expect(persistedVisitor.equipmentSummary).toEqual(migrated.visitRound.visitors[0]!.equipmentSummary)
+    expect(persistedVisitor.equipmentSummary).toContainEqual(expect.objectContaining({ powerBonus: 11 }))
+    expect(collection.replaceOne).toHaveBeenCalledTimes(1)
+  })
+
   it('persists a completed commission transition observed by a read', async () => {
     const { getSaveGame } = await import('../server/utils/savegame')
     const visitor = document!.visitRound.visitors[0]!

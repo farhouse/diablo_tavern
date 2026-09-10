@@ -28,6 +28,12 @@ describe('visitor trade and commission loop', () => {
     expect(save.stash.every((item) => item.rarity === 'normal' && item.identified)).toBe(true)
     expect(save.visitRound.visitors).toHaveLength(2)
     expect(hasCommercialAction(save)).toBe(true)
+    for (const visitor of save.visitRound.visitors) {
+      expect(visitor.origin).toBeTruthy()
+      expect(visitor.equipmentSummary).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: expect.any(String), type: expect.any(String), powerBonus: expect.any(Number) })
+      ]))
+    }
 
     const snapshot = JSON.stringify(save.visitRound)
     const reloaded = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
@@ -77,10 +83,21 @@ describe('visitor trade and commission loop', () => {
     visitor.interestedItemTypes = [item.type]
     visitor.buyQuotes = { [item.id]: item.value }
     visitor.budget = item.value
+    const powerBefore = visitor.power
     const before = visitor.commissionOptions[0]!.successChance
     sellToVisitor(save, visitor.id, item.id, 'sell-1')
     expect(visitor.power).toBeGreaterThan(0)
     expect(visitor.commissionOptions[0]!.successChance).toBeGreaterThan(before)
+    expect(visitor.equipmentSummary).toContainEqual({
+      itemId: item.id,
+      name: item.displayName,
+      type: item.type,
+      powerBonus: visitor.power - powerBefore
+    })
+
+    const reloaded = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
+    expect(reloaded.visitRound.visitors[0]!.equipmentSummary).toEqual(visitor.equipmentSummary)
+    expect(reloaded.visitRound.visitors[0]!.power).toBe(visitor.power)
 
     const other = save.visitRound.visitors[1]!
     const remaining = save.stash[0]!
@@ -152,6 +169,24 @@ describe('visitor trade and commission loop', () => {
     expect(migrated.heroes).toEqual(historicalHeroes)
     expect(migrated.visitRound.visitors).toHaveLength(2)
     expect(hasCommercialAction(migrated)).toBe(true)
+  })
+
+  it('migrates missing visitor origin and equipment without losing an existing power increase', () => {
+    const save = createSaveGame('legacy-visitor-details')
+    const visitor = save.visitRound.visitors[0]!
+    visitor.power += 17
+    delete (visitor as Partial<typeof visitor>).origin
+    delete (visitor as Partial<typeof visitor>).equipmentSummary
+
+    const migrated = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
+    const migratedVisitor = migrated.visitRound.visitors[0]!
+
+    expect(migratedVisitor.origin).toBeTruthy()
+    expect(migratedVisitor.equipmentSummary).toContainEqual(expect.objectContaining({
+      name: 'Equipment acquired at the tavern',
+      powerBonus: 17
+    }))
+    expect(migratedVisitor.power).toBe(visitor.power)
   })
 
   it('replaces a round only after both visitors resolve', () => {

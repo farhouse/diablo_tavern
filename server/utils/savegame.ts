@@ -14,6 +14,7 @@ export async function getSaveGame(userId: string): Promise<SaveGame> {
       continue
     }
     const persistedVisitRound = JSON.stringify(existing.visitRound)
+    const persistedVisitHistory = JSON.stringify(existing.visitHistory)
     const serialized = serializeSave(existing)
     const needsMigration = !('visitRound' in existing)
       || !('revision' in existing)
@@ -21,6 +22,7 @@ export async function getSaveGame(userId: string): Promise<SaveGame> {
       || !('processedRequests' in existing)
       || !('visitHistory' in existing)
     const visitStateChanged = persistedVisitRound !== JSON.stringify(serialized.visitRound)
+      || persistedVisitHistory !== JSON.stringify(serialized.visitHistory)
     if (needsMigration || visitStateChanged) {
       const currentRevision = typeof existing.revision === 'number' ? existing.revision : 0
       serialized.revision = currentRevision + 1
