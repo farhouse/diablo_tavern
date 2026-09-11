@@ -2,7 +2,7 @@
 
 The current save document remains the aggregate boundary. Existing `heroes`, expeditions, materials, and caravan data are preserved; legacy saves are normalized by adding `revision`, `processedRequestIds`, fingerprinted `processedRequests`, `visitHistory`, and one persisted two-slot `visitRound`.
 
-`visitRound.slots` always has two stable slots. An occupied slot has `visitor`; an empty slot has `nextArrivalCheckAt`. Dismissal and claim remove the visitor immediately and schedule the first persisted arrival check. A commissioned or returned visitor remains in its slot. When an empty slot is due, the server rolls once under CAS: success installs a new persisted visitor, while failure advances the persisted clock to the next check. Legacy `visitRound.visitors` arrays (including departed visitors) migrate to this slot representation without touching historical heroes or economic state.
+`visitRound.slots` always has two stable slots. An occupied slot has `visitor`; an empty slot has `nextArrivalCheckAt`. Dismissal and claim first archive a bounded one-visitor snapshot in `visitHistory`, then remove the visitor immediately and schedule the first persisted arrival check. A commissioned or returned visitor remains in its slot. When an empty slot is due, the server rolls once under CAS: success installs a new persisted visitor, while failure advances the persisted clock to the next check. Legacy `visitRound.visitors` arrays (including departed visitors) migrate to this slot representation without touching historical heroes, visitor history, or economic state.
 
 Each `Visitor` persists an `origin` string and an `equipmentSummary` array. Summary entries expose `name`, `type`, and their `powerBonus` (plus `itemId` when the item came from a player trade), so clients can render identity and gear without reconstructing domain state. Selling useful equipment appends its summary entry in the same atomic mutation that updates `power` and commission probabilities. Legacy visitors receive a deterministic origin and starting-equipment summary; any power above the original level baseline is retained as a migrated tavern-equipment bonus.
 
@@ -24,7 +24,7 @@ All endpoints require authentication and a caller-generated `requestId` in the J
 |---|---|---|
 | `POST /api/visitors/:visitorId/buy` | `offerId` | Buy a persisted visitor offer. |
 | `POST /api/visitors/:visitorId/sell` | `itemId` | Accept a persisted visitor quote. |
-| `POST /api/visitors/:visitorId/commission` | `optionId` (`safe` or `risky`) | Assign one of the two persisted commission options after trade. |
+| `POST /api/visitors/:visitorId/commission` | `optionId` (`safe` or `risky`); legacy `regionId` accepted temporarily | Assign one of the two persisted commission options after trade. A legacy region selects `safe` and retains the old operation fingerprint for retry compatibility. |
 | `POST /api/visitors/:visitorId/claim` | none | Reveal/apply a completed commission exactly once. |
 | `POST /api/visitors/:visitorId/dismiss` | none | Resolve a visitor with no pending commission. |
 
@@ -40,7 +40,7 @@ All initial tuning lives in the exported `VISITOR_CONFIG` object in `utils/visit
 - `risky`: 1.75× base duration, -15 percentage points from base success, 1.35× full and 0.35× partial region gold.
 - Success is clamped to 5–95%. Failure yields no reward; the explicitly displayed risk is the occupied slot and elapsed duration.
 
-Changing these values does not change the persisted shape. Existing visitors retain their concrete schedules, options, prices, and sealed results; only newly generated or legacy-normalized options use the current configuration.
+Changing these values does not change the persisted shape. Existing visitors retain their concrete schedules, prices, and sealed results. Legacy previews are normalized to the hardest region currently unlocked by that save; active legacy commissions keep their concrete duration, chance, rewards, timestamps, and sealed roll while receiving the missing display metadata.
 
 ## Persistence, CAS, and retries
 

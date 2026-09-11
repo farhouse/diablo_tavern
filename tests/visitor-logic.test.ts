@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SaveGame, VisitRound } from '../types/game'
 import { createSaveGame, normalizeSaveGame, sellItem } from '../utils/game-logic'
+import { quests } from '../utils/game-data'
 import {
   assignVisitorCommission,
   buyFromVisitor,
@@ -171,6 +172,7 @@ describe('visitor trade and commission loop', () => {
     claimVisitorCommission(save, visitor.id, finished, seeded(5))
     expect(visitor.commission!.outcomeRoll).toBe(sealedRoll)
     expect(visitor.commission!.status).toBe('claimed')
+    expect(save.visitHistory[0]!.slots.flatMap((slot) => slot.visitor ? [slot.visitor.id] : [])).toContain(visitor.id)
     expect(() => claimVisitorCommission(save, visitor.id, finished)).toThrow('not found')
   })
 
@@ -237,6 +239,20 @@ describe('visitor trade and commission loop', () => {
     expect(summary.reduce((sum, item) => sum + item.powerBonus, 0)).toBe(13)
   })
 
+  it('migrates legacy options to the hardest currently unlocked region', () => {
+    const save = createSaveGame('legacy-options')
+    const visitor = visitors(save)[0]!
+    visitor.commissionOptions = visitor.commissionOptions.map(({ optionId: _optionId, ...option }) => option) as typeof visitor.commissionOptions
+    for (const progress of save.questsProgress) progress.unlocked = true
+
+    const migrated = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
+    const hardest = [...quests].sort((a, b) => b.difficulty - a.difficulty)[0]!
+    const migratedVisitor = visitors(migrated)[0]!
+
+    expect(migratedVisitor.commissionOptions).toHaveLength(2)
+    expect(migratedVisitor.commissionOptions.every((option) => option.regionId === hardest.id)).toBe(true)
+  })
+
   it('frees a dismissed slot and persists probabilistic arrival checks while commissions keep theirs occupied', () => {
     const save = createSaveGame('slots')
     const [dismissed, commissioned] = visitors(save)
@@ -248,6 +264,7 @@ describe('visitor trade and commission loop', () => {
 
     const emptySlot = save.visitRound.slots.find((slot) => !slot.visitor)!
     expect(emptySlot.nextArrivalCheckAt).toBe('2026-01-01T00:00:30.000Z')
+    expect(save.visitHistory[0]!.slots.some((slot) => slot.visitor?.id === dismissed!.id)).toBe(true)
     expect(save.visitRound.slots.some((slot) => slot.visitor?.id === commissioned!.id)).toBe(true)
 
     refreshVisitRound(save, new Date(emptySlot.nextArrivalCheckAt!), () => 0.9)
@@ -270,6 +287,11 @@ describe('visitor trade and commission loop', () => {
     expect(options[0]!.durationMs).toBeLessThan(options[1]!.durationMs)
     expect(options[0]!.fullRewardGold).toBeLessThan(options[1]!.fullRewardGold)
     expect(options[0]!.riskLevel).not.toBe(options[1]!.riskLevel)
+
+    const visitor = visitors(save)[0]!
+    visitor.state = 'traded'
+    assignVisitorCommission(save, visitor.id, options[0]!.regionId, seeded(4))
+    expect(visitor.commission!.optionId).toBe('safe')
   })
 
   it('salvages generic sales for 25% instead of full value', () => {
@@ -294,10 +316,8 @@ describe('visitor trade and commission loop', () => {
       const visitor = visitors(save)[0]!
       const sellable = save.stash.find((item) => visitor.buyQuotes[item.id] !== undefined)
       if (sellable) sellToVisitor(save, visitor.id, sellable.id, `sell-${round}`)
-      else {
-        const offer = visitor.offers.filter((entry) => entry.price <= save.gold).sort((a, b) => a.price - b.price)[0]
-        if (offer) buyFromVisitor(save, visitor.id, offer.id, `buy-${round}`)
-      }
+      const offer = visitor.offers.filter((entry) => !entry.purchasedAt && entry.price <= save.gold).sort((a, b) => a.price - b.price)[0]
+      if (offer && save.stash.length < save.stashLimit) buyFromVisitor(save, visitor.id, offer.id, `buy-${round}`)
       if (visitor.state !== 'departed') dismissVisitor(save, visitor.id, new Date(round * 60_000), random)
       refreshVisitRound(save, new Date(round * 60_000 + 30_000), () => 0)
       netGold += save.gold - before

@@ -8,9 +8,11 @@ export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
   const visitorId = getRouterParam(event, 'visitorId') || ''
   const body = await readVisitorMutation(event)
-  const optionId = requireString(body.optionId, 'optionId')
+  const selection = typeof body.optionId === 'string'
+    ? requireString(body.optionId, 'optionId')
+    : requireString(body.regionId, 'regionId')
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, visitorOperationKey('commission', visitorId, optionId), (save) => assignVisitorCommission(save, visitorId, optionId))
+    return await mutateSaveGameAtomic(user.id, body.requestId, visitorOperationKey('commission', visitorId, selection), (save) => assignVisitorCommission(save, visitorId, selection))
   } catch (error) {
     visitorMutationError(error, 'Cannot assign commission')
   }

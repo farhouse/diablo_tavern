@@ -18,6 +18,7 @@ export class VisitorDomainError extends Error {
 }
 
 export const MAX_ACTIVE_COMMISSIONS = 2
+export const VISIT_HISTORY_LIMIT = 20
 export const VISITOR_CONFIG = {
   slotCount: 2,
   arrivalCheckIntervalMs: 30_000,
@@ -88,7 +89,7 @@ export function refreshVisitRound(save: SaveGame, now = new Date(), random: Rand
   return save
 }
 
-export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'visitHistory'>): void {
+export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'visitHistory' | 'questsProgress'>): void {
   for (const round of [save.visitRound, ...save.visitHistory]) {
     const isCurrentRound = round === save.visitRound
     const legacyRound = round as VisitRound & { visitors?: Visitor[] }
@@ -111,10 +112,21 @@ export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'vis
     for (const [index, slot] of round.slots.entries()) {
       if (typeof slot.id !== 'string' || !slot.id) slot.id = `visitor-slot-${index + 1}`
       if (isCurrentRound && slot.visitor?.state === 'departed') {
-        slot.nextArrivalCheckAt = nextArrivalCheck(safeDate(slot.visitor.departedAt, round.createdAt)).toISOString()
+        const departedVisitor = slot.visitor
+        if (!save.visitHistory.some((history) => history.slots?.some((entry) => entry.visitor?.id === departedVisitor.id))) {
+          save.visitHistory.unshift({
+            id: `${round.id}:${departedVisitor.id}`,
+            number: round.number,
+            slots: round.slots.map((entry) => entry.id === slot.id
+              ? { id: entry.id, visitor: structuredClone(departedVisitor) }
+              : { id: entry.id }),
+            createdAt: departedVisitor.departedAt ?? round.createdAt
+          })
+        }
+        slot.nextArrivalCheckAt = nextArrivalCheck(safeDate(departedVisitor.departedAt, round.createdAt)).toISOString()
         delete slot.visitor
       } else if (slot.visitor) {
-        normalizeVisitor(slot.visitor)
+        normalizeVisitor(slot.visitor, isCurrentRound ? save.questsProgress : [])
         delete slot.nextArrivalCheckAt
       } else if (isCurrentRound && !isValidDate(slot.nextArrivalCheckAt)) {
         slot.nextArrivalCheckAt = nextArrivalCheck(safeDate(round.createdAt)).toISOString()
@@ -122,6 +134,7 @@ export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'vis
     }
     delete legacyRound.visitors
   }
+  save.visitHistory = save.visitHistory.slice(0, VISIT_HISTORY_LIMIT)
 }
 
 export function buyFromVisitor(save: SaveGame, visitorId: string, offerId: string, requestId: string, now = new Date()): SaveGame {
@@ -189,6 +202,7 @@ export function assignVisitorCommission(
   const activeCount = currentVisitors(save).filter((entry) => entry.commission && entry.commission.status !== 'claimed').length
   if (activeCount >= MAX_ACTIVE_COMMISSIONS) throw domainError('Active commission limit reached')
   const option = visitor.commissionOptions.find((entry) => entry.optionId === optionId)
+    ?? visitor.commissionOptions.find((entry) => entry.regionId === optionId && entry.optionId === 'safe')
   if (!option) throw domainError('Commission option is not available for this visitor')
 
   visitor.commission = {
@@ -219,6 +233,7 @@ export function claimVisitorCommission(save: SaveGame, visitorId: string, now = 
   commission.claimedAt = now.toISOString()
   visitor.state = 'departed'
   visitor.departedAt = now.toISOString()
+  archiveVisitor(save, visitor)
   releaseVisitorSlot(save, visitor.id, now)
   return touch(save, now)
 }
@@ -230,6 +245,7 @@ export function dismissVisitor(save: SaveGame, visitorId: string, now = new Date
   if (visitor.state === 'departed') throw domainError('Visitor has already departed')
   visitor.state = 'departed'
   visitor.departedAt = now.toISOString()
+  archiveVisitor(save, visitor)
   releaseVisitorSlot(save, visitor.id, now)
   return touch(save, now)
 }
@@ -305,7 +321,7 @@ function createVisitor(save: Pick<SaveGame, 'stash' | 'questsProgress'>, now: Da
   return visitor
 }
 
-function normalizeVisitor(visitor: Visitor): void {
+function normalizeVisitor(visitor: Visitor, progress: SaveGame['questsProgress']): void {
   if (typeof visitor.origin !== 'string' || visitor.origin.trim().length === 0) {
     visitor.origin = visitorOrigins[stableIndex(visitor.id || visitor.name, visitorOrigins.length)]!
   }
@@ -327,7 +343,7 @@ function normalizeVisitor(visitor: Visitor): void {
     })
   }
 
-  const regeneratedOptions = unlockedCommissionOptions([], visitor.power, visitor.commissionOptions?.[0]?.regionId)
+  const regeneratedOptions = unlockedCommissionOptions(progress, visitor.power, visitor.commissionOptions?.[0]?.regionId)
   if (!Array.isArray(visitor.commissionOptions)
     || visitor.commissionOptions.length !== 2
     || visitor.commissionOptions[0]?.optionId !== 'safe'
@@ -437,6 +453,20 @@ function releaseVisitorSlot(save: SaveGame, visitorId: string, now: Date): void 
   if (!slot) throw domainError('Visitor slot not found')
   delete slot.visitor
   slot.nextArrivalCheckAt = nextArrivalCheck(now).toISOString()
+}
+
+function archiveVisitor(save: SaveGame, visitor: Visitor): void {
+  const slot = save.visitRound.slots.find((entry) => entry.visitor?.id === visitor.id)
+  if (!slot) throw domainError('Visitor slot not found')
+  save.visitHistory.unshift({
+    id: `${save.visitRound.id}:${visitor.id}`,
+    number: save.visitRound.number,
+    slots: save.visitRound.slots.map((entry) => entry.id === slot.id
+      ? { id: entry.id, visitor: structuredClone(visitor) }
+      : { id: entry.id }),
+    createdAt: visitor.departedAt ?? save.updatedAt
+  })
+  save.visitHistory = save.visitHistory.slice(0, VISIT_HISTORY_LIMIT)
 }
 
 function requireTradeableVisitor(save: SaveGame, visitorId: string): Visitor {
