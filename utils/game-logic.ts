@@ -93,8 +93,11 @@ export function normalizeSaveGame(save: SaveGame): SaveGame {
     if (typeof record.carriedMaterials !== 'number') record.carriedMaterials = 0
     if (typeof record.bossReady !== 'boolean') record.bossReady = record.status === 'bossReady'
     if (typeof record.bossDefeated !== 'boolean') record.bossDefeated = false
-    if (record.status === 'returning' && !record.returnsAt) {
+    const returnTime = typeof record.returnsAt === 'string' ? new Date(record.returnsAt).getTime() : Number.NaN
+    if (record.status === 'returning' && !Number.isFinite(returnTime)) {
       record.status = 'exploring'
+      delete record.returnStartedAt
+      delete record.returnsAt
     }
     updateExpeditionHeroProgress(save, expedition)
   }
