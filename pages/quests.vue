@@ -120,7 +120,17 @@ async function recover(expedition: ActiveExpedition) {
       noticeTone.value = 'info'
       notice.value = 'The server has not completed this return yet. Retry is safe.'
     }
-  } catch { /* authoritative error is rendered by the store */ } finally { busyId.value = '' }
+  } catch {
+    const mutationError = game.error
+    await game.load()
+    const persisted = game.save?.activeExpeditions.find((entry) => entry.id === expedition.id)
+    if (!persisted) {
+      noticeTone.value = 'success'
+      notice.value = 'Legacy expedition returned and its recovered resources are persisted.'
+    } else if (!game.error) {
+      game.error = mutationError
+    }
+  } finally { busyId.value = '' }
 }
 </script>
 

@@ -76,4 +76,44 @@ describe('legacy expedition recovery', () => {
     expect(wrapper.text()).toContain('Legacy expedition returned and its recovered resources are persisted.')
     expect(wrapper.text()).toContain('No legacy expeditions remain')
   })
+
+  it.each([
+    { label: 'timed return', status: 'returning' as const, endpoint: '/api/expeditions/advance' },
+    { label: 'active portal', status: 'exploring' as const, endpoint: '/api/expeditions/recall' }
+  ])('reconciles an authoritative $label after its response is lost', async ({ status, endpoint }) => {
+    const save = createSaveGame(`lost-${status}`)
+    const expedition = returningExpedition('2026-09-10T20:00:09.000Z')
+    expedition.status = status
+    if (status === 'exploring') {
+      delete expedition.returnStartedAt
+      delete expedition.returnsAt
+      expedition.portalAvailableUntil = '2026-09-10T20:01:00.000Z'
+    }
+    save.activeExpeditions = [expedition]
+    let responseWasLost = false
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/savegame') return structuredClone(save)
+      if (url === '/api/quests') return quests
+      if (url === endpoint) {
+        save.activeExpeditions = []
+        save.revision += 1
+        responseWasLost = true
+        throw new Error('Connection closed after commit')
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    vi.stubGlobal('$fetch', fetchMock)
+
+    const wrapper = mount(QuestsPage, {
+      global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } }
+    })
+    await flushPromises()
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+
+    expect(responseWasLost).toBe(true)
+    expect(wrapper.text()).toContain('Legacy expedition returned and its recovered resources are persisted.')
+    expect(wrapper.text()).toContain('No legacy expeditions remain')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
 })
