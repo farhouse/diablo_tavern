@@ -381,8 +381,13 @@ function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | '
   let sellable = save.stash.find((item) => item.identified)
   if (!sellable && !itemBases.some((base) => Math.round(base.value * 0.90) <= save.gold)) {
     // Compatibility/soft-lock recovery for legacy saves with no usable assets.
-    sellable = starterItem(3, random)
-    save.stash.push(sellable)
+    if (save.stash.length >= save.stashLimit) {
+      sellable = save.stash[0]
+      if (sellable) sellable.identified = true
+    } else {
+      sellable = starterItem(3, random)
+      save.stash.push(sellable)
+    }
   }
 
   let guaranteedQuote = 0

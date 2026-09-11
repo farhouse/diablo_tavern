@@ -68,6 +68,31 @@ describe('visitor trade and commission loop', () => {
     expect(visitor.trades.map((trade) => trade.kind)).toEqual(['player_sold', 'player_bought'])
   })
 
+  it('recovers a full, cashless stash of unidentified items without exceeding its capacity', () => {
+    const save = createSaveGame('unidentified-commercial-recovery')
+    save.gold = 0
+    save.stashLimit = save.stash.length
+    for (const item of save.stash) item.identified = false
+    const originalItemIds = save.stash.map((item) => item.id)
+
+    save.visitRound = createVisitRound(save, 2, new Date('2026-01-01T00:00:00Z'), seeded(23))
+    const visitor = visitors(save)[0]!
+    const sellable = save.stash.find((item) => item.identified && visitor.buyQuotes[item.id] !== undefined)
+
+    expect(save.stash).toHaveLength(save.stashLimit)
+    expect(save.stash.map((item) => item.id)).toEqual(originalItemIds)
+    expect(sellable).toBeTruthy()
+    expect(hasSaleAction(save)).toBe(true)
+    expect(hasPurchaseAction(save)).toBe(false)
+
+    sellToVisitor(save, visitor.id, sellable!.id, 'recovery-sale')
+    expect(hasPurchaseAction(save)).toBe(true)
+    const offer = visitor.offers.find((entry) => !entry.purchasedAt && entry.price <= save.gold)
+    expect(offer).toBeTruthy()
+    buyFromVisitor(save, visitor.id, offer!.id, 'recovery-purchase')
+    expect(save.stash).toHaveLength(save.stashLimit)
+  })
+
   it('persists prices in the required bands', () => {
     const save = createSaveGame('prices')
     save.visitRound = createVisitRound(save, 2, new Date('2026-01-01T00:00:00Z'), seeded(42))
