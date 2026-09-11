@@ -5,6 +5,8 @@ import { createSaveGame } from '../utils/game-logic'
 let document: SaveGame | undefined
 let forcedConflict = false
 
+const visitors = (save: SaveGame) => save.visitRound.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])
+
 const collection = {
   findOne: vi.fn(async () => document ? structuredClone(document) : null),
   updateOne: vi.fn(async (_filter: unknown, update: { $setOnInsert: SaveGame }) => {
@@ -133,9 +135,9 @@ describe('atomic save mutation', () => {
     delete legacyRecord.revision
 
     const migrated = await getSaveGame('atomic-user')
-    expect(migrated.visitRound.visitors).toHaveLength(2)
+    expect(visitors(migrated)).toHaveLength(2)
     expect(migrated.heroes).toEqual([{ id: 'historic-hero', status: 'dead' }])
-    expect(document!.visitRound.visitors).toHaveLength(2)
+    expect(visitors(document!)).toHaveLength(2)
     expect(document!.processedRequests).toEqual([{ requestId: 'legacy-request', operationKey: '' }])
     expect(collection.replaceOne).toHaveBeenCalledTimes(1)
 
@@ -144,26 +146,102 @@ describe('atomic save mutation', () => {
     expect(mutate).not.toHaveBeenCalled()
   })
 
+  it('migrates the legacy visitor array into two persisted slots', async () => {
+    const { getSaveGame } = await import('../server/utils/savegame')
+    const legacyRound = document!.visitRound as unknown as { slots?: unknown; visitors?: unknown }
+    legacyRound.visitors = visitors(document!)
+    delete legacyRound.slots
+
+    const migrated = await getSaveGame('atomic-user')
+
+    expect(migrated.visitRound.slots).toHaveLength(2)
+    expect(visitors(migrated)).toHaveLength(2)
+    expect(document!.visitRound.slots).toHaveLength(2)
+    expect('visitors' in (document!.visitRound as unknown as Record<string, unknown>)).toBe(false)
+  })
+
+  it('persists a freed slot schedule once across an idempotent retry', async () => {
+    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { dismissVisitor } = await import('../utils/visitor-logic')
+    const visitorId = visitors(document!)[0]!.id
+    const operation = `dismiss:${visitorId}`
+
+    const first = await mutateSaveGameAtomic('atomic-user', 'dismiss-once', operation, (save) => {
+      dismissVisitor(save, visitorId, new Date('2030-01-01T00:00:00.000Z'))
+    })
+    const scheduledAt = first.visitRound.slots.find((slot) => !slot.visitor)!.nextArrivalCheckAt
+    const repeated = await mutateSaveGameAtomic('atomic-user', 'dismiss-once', operation, (save) => {
+      dismissVisitor(save, visitorId, new Date('2030-01-01T00:00:00.000Z'))
+    })
+
+    expect(scheduledAt).toBe('2030-01-01T00:00:30.000Z')
+    expect(repeated.visitRound.slots.find((slot) => !slot.visitor)!.nextArrivalCheckAt).toBe(scheduledAt)
+    expect(document!.revision).toBe(1)
+  })
+
+  it('persists a due probabilistic arrival with CAS retry', async () => {
+    const { getSaveGame } = await import('../server/utils/savegame')
+    const slot = document!.visitRound.slots[0]!
+    delete slot.visitor
+    slot.nextArrivalCheckAt = '2020-01-01T00:00:00.000Z'
+    forcedConflict = true
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+
+    const loaded = await getSaveGame('atomic-user')
+
+    expect(loaded.visitRound.slots[0]!.visitor).toBeDefined()
+    expect(document!.visitRound.slots[0]!.visitor).toBeDefined()
+    expect(document!.visitRound.slots[0]!.nextArrivalCheckAt).toBeUndefined()
+    expect(document!.revision).toBe(1)
+    expect(collection.replaceOne).toHaveBeenCalledTimes(2)
+    random.mockRestore()
+  })
+
   it('persists missing visitor origin and equipment summary during read migration', async () => {
     const { getSaveGame } = await import('../server/utils/savegame')
-    const visitor = document!.visitRound.visitors[0]!
+    const visitor = visitors(document!)[0]!
     visitor.power += 11
     delete (visitor as Partial<typeof visitor>).origin
     delete (visitor as Partial<typeof visitor>).equipmentSummary
 
     const migrated = await getSaveGame('atomic-user')
-    const persistedVisitor = document!.visitRound.visitors[0]!
+    const persistedVisitor = visitors(document!)[0]!
 
-    expect(migrated.visitRound.visitors[0]!.origin).toBeTruthy()
-    expect(persistedVisitor.origin).toBe(migrated.visitRound.visitors[0]!.origin)
-    expect(persistedVisitor.equipmentSummary).toEqual(migrated.visitRound.visitors[0]!.equipmentSummary)
+    expect(visitors(migrated)[0]!.origin).toBeTruthy()
+    expect(persistedVisitor.origin).toBe(visitors(migrated)[0]!.origin)
+    expect(persistedVisitor.equipmentSummary).toEqual(visitors(migrated)[0]!.equipmentSummary)
     expect(persistedVisitor.equipmentSummary).toContainEqual(expect.objectContaining({ powerBonus: 11 }))
     expect(collection.replaceOne).toHaveBeenCalledTimes(1)
   })
 
+  it('persists visitor detail migration in history after a compare-and-swap retry', async () => {
+    const { getSaveGame } = await import('../server/utils/savegame')
+    const historicalRound = structuredClone(document!.visitRound)
+    historicalRound.id = 'legacy-history-round'
+    const historicalVisitor = historicalRound.slots[0]!.visitor!
+    historicalVisitor.power += 9
+    historicalVisitor.state = 'departed'
+    historicalVisitor.departedAt = '2025-01-01T00:00:00.000Z'
+    delete (historicalVisitor as Partial<typeof historicalVisitor>).origin
+    delete (historicalVisitor as Partial<typeof historicalVisitor>).equipmentSummary
+    document!.visitHistory = [historicalRound]
+    forcedConflict = true
+
+    const migrated = await getSaveGame('atomic-user')
+    const migratedVisitor = migrated.visitHistory[0]!.slots[0]!.visitor!
+    const persistedVisitor = document!.visitHistory[0]!.slots[0]!.visitor!
+
+    expect(migratedVisitor.origin).toBeTruthy()
+    expect(persistedVisitor.origin).toBe(migratedVisitor.origin)
+    expect(persistedVisitor.state).toBe('departed')
+    expect(persistedVisitor.equipmentSummary).toContainEqual(expect.objectContaining({ powerBonus: 9 }))
+    expect(document!.revision).toBe(1)
+    expect(collection.replaceOne).toHaveBeenCalledTimes(2)
+  })
+
   it('persists a completed commission transition observed by a read', async () => {
     const { getSaveGame } = await import('../server/utils/savegame')
-    const visitor = document!.visitRound.visitors[0]!
+    const visitor = visitors(document!)[0]!
     visitor.state = 'commissioned'
     visitor.commission = {
       ...visitor.commissionOptions[0]!,
@@ -177,9 +255,9 @@ describe('atomic save mutation', () => {
 
     const loaded = await getSaveGame('atomic-user')
 
-    expect(loaded.visitRound.visitors[0]!.state).toBe('returned')
-    expect(document!.visitRound.visitors[0]!.state).toBe('returned')
-    expect(document!.visitRound.visitors[0]!.commission!.status).toBe('ready')
+    expect(visitors(loaded)[0]!.state).toBe('returned')
+    expect(visitors(document!)[0]!.state).toBe('returned')
+    expect(visitors(document!)[0]!.commission!.status).toBe('ready')
     expect(document!.revision).toBe(1)
     expect(collection.replaceOne).toHaveBeenCalledTimes(2)
   })

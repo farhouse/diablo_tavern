@@ -80,11 +80,15 @@ export interface VisitorTrade {
 }
 
 export interface CommissionOption {
+  optionId: 'safe' | 'risky'
+  title: string
   regionId: string
   durationMs: number
   successChance: number
   fullRewardGold: number
   partialRewardGold: number
+  riskLevel: 'low' | 'high'
+  failureConsequence: string
 }
 
 export interface VisitorCommission extends CommissionOption {
@@ -128,10 +132,16 @@ export interface Visitor {
   departedAt?: string
 }
 
+export interface VisitorSlot {
+  id: string
+  visitor?: Visitor
+  nextArrivalCheckAt?: string
+}
+
 export interface VisitRound {
   id: string
   number: number
-  visitors: Visitor[]
+  slots: VisitorSlot[]
   createdAt: string
 }
 

@@ -44,7 +44,7 @@ export function createSaveGame(userId: string): SaveGame {
   return save
 }
 
-export function normalizeSaveGame(save: SaveGame): SaveGame {
+export function normalizeSaveGame(save: SaveGame, options: { refreshVisitors?: boolean } = {}): SaveGame {
   if (!Number.isInteger(save.revision) || save.revision < 0) save.revision = 0
   if (!Array.isArray(save.processedRequestIds)) save.processedRequestIds = []
   if (!Array.isArray(save.processedRequests)) {
@@ -114,11 +114,12 @@ export function normalizeSaveGame(save: SaveGame): SaveGame {
   }
 
   save.expeditionHistory = save.expeditionHistory.slice(0, EXPEDITION_HISTORY_LIMIT)
-  if (!save.visitRound || !Array.isArray(save.visitRound.visitors) || save.visitRound.visitors.length !== 2) {
+  const legacyRound = save.visitRound as SaveGame['visitRound'] & { visitors?: unknown[] }
+  if (!save.visitRound || (!Array.isArray(save.visitRound.slots) && !Array.isArray(legacyRound.visitors))) {
     save.visitRound = createVisitRound(save, 1)
   }
   normalizeVisitorDetails(save)
-  refreshVisitRound(save)
+  if (options.refreshVisitors !== false) refreshVisitRound(save)
   delete legacy.activeExpedition
   delete legacy.lastExpeditionRun
   return save

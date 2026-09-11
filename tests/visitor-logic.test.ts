@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { SaveGame, VisitRound } from '../types/game'
 import { createSaveGame, normalizeSaveGame, sellItem } from '../utils/game-logic'
 import {
   assignVisitorCommission,
@@ -7,8 +8,14 @@ import {
   createVisitRound,
   dismissVisitor,
   hasCommercialAction,
+  hasPurchaseAction,
+  hasSaleAction,
+  refreshVisitRound,
   sellToVisitor
 } from '../utils/visitor-logic'
+
+const roundVisitors = (round: VisitRound) => round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])
+const visitors = (save: Pick<SaveGame, 'visitRound'>) => roundVisitors(save.visitRound)
 
 function seeded(seed = 1): () => number {
   return () => {
@@ -26,9 +33,12 @@ describe('visitor trade and commission loop', () => {
     expect(save.gold).toBe(450)
     expect(save.stash).toHaveLength(2)
     expect(save.stash.every((item) => item.rarity === 'normal' && item.identified)).toBe(true)
-    expect(save.visitRound.visitors).toHaveLength(2)
+    expect(save.visitRound.slots).toHaveLength(2)
+    expect(visitors(save)).toHaveLength(2)
     expect(hasCommercialAction(save)).toBe(true)
-    for (const visitor of save.visitRound.visitors) {
+    expect(hasPurchaseAction(save)).toBe(true)
+    expect(hasSaleAction(save)).toBe(true)
+    for (const visitor of visitors(save)) {
       expect(visitor.origin).toBeTruthy()
       expect(visitor.equipmentSummary).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: expect.any(String), type: expect.any(String), powerBonus: expect.any(Number) })
@@ -40,10 +50,27 @@ describe('visitor trade and commission loop', () => {
     expect(JSON.stringify(reloaded.visitRound)).toBe(snapshot)
   })
 
+  it('turns a guaranteed sale into a real purchase opportunity from a full, cashless stash', () => {
+    const save = createSaveGame('commercial-sequence')
+    save.gold = 0
+    save.stashLimit = save.stash.length
+    save.visitRound = createVisitRound(save, 2, new Date('2026-01-01T00:00:00Z'), seeded(19))
+    const visitor = visitors(save)[0]!
+    const sellable = save.stash.find((item) => visitor.buyQuotes[item.id] !== undefined)!
+
+    expect(hasSaleAction(save)).toBe(true)
+    expect(hasPurchaseAction(save)).toBe(false)
+    sellToVisitor(save, visitor.id, sellable.id, 'unlock-purchase')
+    expect(hasPurchaseAction(save)).toBe(true)
+    const offer = visitor.offers.find((entry) => !entry.purchasedAt && entry.price <= save.gold)!
+    buyFromVisitor(save, visitor.id, offer.id, 'purchase-after-sale')
+    expect(visitor.trades.map((trade) => trade.kind)).toEqual(['player_sold', 'player_bought'])
+  })
+
   it('persists prices in the required bands', () => {
     const save = createSaveGame('prices')
     save.visitRound = createVisitRound(save, 2, new Date('2026-01-01T00:00:00Z'), seeded(42))
-    for (const visitor of save.visitRound.visitors) {
+    for (const visitor of visitors(save)) {
       for (const offer of visitor.offers) {
         expect(offer.price).toBeGreaterThanOrEqual(Math.round(offer.item.value * 0.90))
         expect(offer.price).toBeLessThanOrEqual(Math.round(offer.item.value * 1.25))
@@ -58,9 +85,9 @@ describe('visitor trade and commission loop', () => {
     }
   })
 
-  it('buys once and rejects insufficient funds, full stash, and repeated trade', () => {
+  it('allows one purchase and one sale with the same visitor, but not duplicate trade kinds', () => {
     const save = createSaveGame('buyer')
-    const visitor = save.visitRound.visitors[0]!
+    const visitor = visitors(save)[0]!
     const offer = visitor.offers[0]!
     save.gold = offer.price - 1
     expect(() => buyFromVisitor(save, visitor.id, offer.id, 'poor')).toThrow('Not enough gold')
@@ -70,13 +97,18 @@ describe('visitor trade and commission loop', () => {
     save.stashLimit += 1
     buyFromVisitor(save, visitor.id, offer.id, 'buy-1')
     expect(save.gold).toBe(0)
-    expect(() => buyFromVisitor(save, visitor.id, offer.id, 'buy-2')).toThrow('no longer available')
+    expect(() => buyFromVisitor(save, visitor.id, offer.id, 'buy-2')).toThrow('already completed a sale')
+    const sellable = save.stash.find((item) => visitor.buyQuotes[item.id] !== undefined)
+    expect(sellable).toBeTruthy()
+    visitor.budget = Math.max(visitor.budget, visitor.buyQuotes[sellable!.id]!)
+    sellToVisitor(save, visitor.id, sellable!.id, 'sell-after-buy')
+    expect(visitor.trades.map((trade) => trade.kind)).toEqual(['player_bought', 'player_sold'])
   })
 
   it('rejects incompatible sales and improves commission odds for useful gear', () => {
     const save = createSaveGame('seller')
     const item = save.stash[0]!
-    const visitor = save.visitRound.visitors[0]!
+    const visitor = visitors(save)[0]!
     visitor.class = 'barbarian'
     visitor.level = 10
     visitor.acceptedItemTypes = [item.type]
@@ -96,10 +128,10 @@ describe('visitor trade and commission loop', () => {
     })
 
     const reloaded = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
-    expect(reloaded.visitRound.visitors[0]!.equipmentSummary).toEqual(visitor.equipmentSummary)
-    expect(reloaded.visitRound.visitors[0]!.power).toBe(visitor.power)
+    expect(visitors(reloaded)[0]!.equipmentSummary).toEqual(visitor.equipmentSummary)
+    expect(visitors(reloaded)[0]!.power).toBe(visitor.power)
 
-    const other = save.visitRound.visitors[1]!
+    const other = visitors(save)[1]!
     const remaining = save.stash[0]!
     other.acceptedItemTypes = other.acceptedItemTypes.filter((type) => type !== remaining.type)
     expect(() => sellToVisitor(save, other.id, remaining.id, 'bad-interest')).toThrow('not interested')
@@ -110,9 +142,9 @@ describe('visitor trade and commission loop', () => {
     const item = save.stash[0]!
     item.identified = false
     const round = createVisitRound(save, 2, new Date('2026-01-01T00:00:00Z'), seeded(12))
-    expect(round.visitors.every((entry) => entry.buyQuotes[item.id] === undefined)).toBe(true)
+    expect(roundVisitors(round).every((entry) => entry.buyQuotes[item.id] === undefined)).toBe(true)
 
-    const visitor = save.visitRound.visitors[0]!
+    const visitor = visitors(save)[0]!
     visitor.acceptedItemTypes = [item.type]
     visitor.buyQuotes[item.id] = item.value
     visitor.budget = item.value
@@ -121,7 +153,7 @@ describe('visitor trade and commission loop', () => {
 
   it('seals commission outcome, enforces readiness, and prevents duplicate claims', () => {
     const save = createSaveGame('commission')
-    const visitor = save.visitRound.visitors[0]!
+    const visitor = visitors(save)[0]!
     const item = save.stash[0]!
     visitor.acceptedItemTypes = [item.type]
     visitor.interestedItemTypes = [item.type]
@@ -129,29 +161,29 @@ describe('visitor trade and commission loop', () => {
     visitor.budget = item.value
     sellToVisitor(save, visitor.id, item.id, 'trade')
     const start = new Date('2026-01-01T00:00:00Z')
-    const region = visitor.commissionOptions[0]!.regionId
-    assignVisitorCommission(save, visitor.id, region, () => 0.1, start)
+    const optionId = visitor.commissionOptions[0]!.optionId
+    assignVisitorCommission(save, visitor.id, optionId, () => 0.1, start)
     const sealedRoll = visitor.commission!.outcomeRoll
     const reloaded = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
-    expect(reloaded.visitRound.visitors[0]!.commission!.outcomeRoll).toBe(sealedRoll)
+    expect(visitors(reloaded)[0]!.commission!.outcomeRoll).toBe(sealedRoll)
     expect(() => claimVisitorCommission(save, visitor.id, start)).toThrow('not ready')
     const finished = new Date(visitor.commission!.finishesAt)
     claimVisitorCommission(save, visitor.id, finished, seeded(5))
     expect(visitor.commission!.outcomeRoll).toBe(sealedRoll)
     expect(visitor.commission!.status).toBe('claimed')
-    expect(() => claimVisitorCommission(save, visitor.id, finished)).toThrow('not ready')
+    expect(() => claimVisitorCommission(save, visitor.id, finished)).toThrow('not found')
   })
 
   it('enforces at most two unclaimed commissions', () => {
     const save = createSaveGame('commission-limit')
-    const third = createVisitRound(save, 99, new Date(), seeded(88)).visitors[0]!
+    const third = roundVisitors(createVisitRound(save, 99, new Date(), seeded(88)))[0]!
     third.id = 'third-visitor'
-    save.visitRound.visitors.push(third)
-    for (const visitor of save.visitRound.visitors) visitor.state = 'traded'
-    for (const visitor of save.visitRound.visitors.slice(0, 2)) {
-      assignVisitorCommission(save, visitor.id, visitor.commissionOptions[0]!.regionId, seeded(3))
+    save.visitRound.slots.push({ id: 'visitor-slot-3', visitor: third })
+    for (const visitor of visitors(save)) visitor.state = 'traded'
+    for (const visitor of visitors(save).slice(0, 2)) {
+      assignVisitorCommission(save, visitor.id, visitor.commissionOptions[0]!.optionId, seeded(3))
     }
-    expect(() => assignVisitorCommission(save, third.id, third.commissionOptions[0]!.regionId, seeded(4)))
+    expect(() => assignVisitorCommission(save, third.id, third.commissionOptions[0]!.optionId, seeded(4)))
       .toThrow('limit reached')
   })
 
@@ -167,19 +199,19 @@ describe('visitor trade and commission loop', () => {
 
     const migrated = normalizeSaveGame(legacy as unknown as ReturnType<typeof createSaveGame>)
     expect(migrated.heroes).toEqual(historicalHeroes)
-    expect(migrated.visitRound.visitors).toHaveLength(2)
+    expect(visitors(migrated)).toHaveLength(2)
     expect(hasCommercialAction(migrated)).toBe(true)
   })
 
   it('migrates missing visitor origin and equipment without losing an existing power increase', () => {
     const save = createSaveGame('legacy-visitor-details')
-    const visitor = save.visitRound.visitors[0]!
+    const visitor = visitors(save)[0]!
     visitor.power += 17
     delete (visitor as Partial<typeof visitor>).origin
     delete (visitor as Partial<typeof visitor>).equipmentSummary
 
     const migrated = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
-    const migratedVisitor = migrated.visitRound.visitors[0]!
+    const migratedVisitor = visitors(migrated)[0]!
 
     expect(migratedVisitor.origin).toBeTruthy()
     expect(migratedVisitor.equipmentSummary).toContainEqual(expect.objectContaining({
@@ -191,7 +223,7 @@ describe('visitor trade and commission loop', () => {
 
   it('repairs malformed and partial equipment summaries without losing power', () => {
     const save = createSaveGame('partial-visitor-equipment')
-    const visitor = save.visitRound.visitors[0]!
+    const visitor = visitors(save)[0]!
     visitor.power += 13
     visitor.equipmentSummary = [
       visitor.equipmentSummary[0]!,
@@ -199,21 +231,45 @@ describe('visitor trade and commission loop', () => {
     ]
 
     const migrated = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
-    const summary = migrated.visitRound.visitors[0]!.equipmentSummary
+    const summary = visitors(migrated)[0]!.equipmentSummary
 
     expect(summary.every((item) => item.name && item.type && Number.isFinite(item.powerBonus))).toBe(true)
     expect(summary.reduce((sum, item) => sum + item.powerBonus, 0)).toBe(13)
   })
 
-  it('replaces a round only after both visitors resolve', () => {
-    const save = createSaveGame('rounds')
-    const firstRoundId = save.visitRound.id
-    dismissVisitor(save, save.visitRound.visitors[0]!.id, new Date(), seeded(2))
-    expect(save.visitRound.id).toBe(firstRoundId)
-    dismissVisitor(save, save.visitRound.visitors[1]!.id, new Date(), seeded(3))
-    expect(save.visitRound.id).not.toBe(firstRoundId)
-    expect(save.visitRound.number).toBe(2)
-    expect(hasCommercialAction(save)).toBe(true)
+  it('frees a dismissed slot and persists probabilistic arrival checks while commissions keep theirs occupied', () => {
+    const save = createSaveGame('slots')
+    const [dismissed, commissioned] = visitors(save)
+    dismissed!.state = 'traded'
+    commissioned!.state = 'traded'
+    const start = new Date('2026-01-01T00:00:00.000Z')
+    assignVisitorCommission(save, commissioned!.id, commissioned!.commissionOptions[0]!.optionId, seeded(8), start)
+    dismissVisitor(save, dismissed!.id, start)
+
+    const emptySlot = save.visitRound.slots.find((slot) => !slot.visitor)!
+    expect(emptySlot.nextArrivalCheckAt).toBe('2026-01-01T00:00:30.000Z')
+    expect(save.visitRound.slots.some((slot) => slot.visitor?.id === commissioned!.id)).toBe(true)
+
+    refreshVisitRound(save, new Date(emptySlot.nextArrivalCheckAt!), () => 0.9)
+    expect(emptySlot.visitor).toBeUndefined()
+    expect(emptySlot.nextArrivalCheckAt).toBe('2026-01-01T00:01:00.000Z')
+
+    refreshVisitRound(save, new Date(emptySlot.nextArrivalCheckAt!), () => 0)
+    expect(emptySlot.visitor).toBeDefined()
+    expect(emptySlot.nextArrivalCheckAt).toBeUndefined()
+    expect(hasPurchaseAction(save)).toBe(true)
+    expect(hasSaleAction(save)).toBe(true)
+  })
+
+  it('offers exactly two commissions with distinct probability, duration, reward, and risk', () => {
+    const save = createSaveGame('commission-options')
+    const options = visitors(save)[0]!.commissionOptions
+    expect(options.map((option) => option.optionId)).toEqual(['safe', 'risky'])
+    expect(options).toHaveLength(2)
+    expect(options[0]!.successChance).toBeGreaterThan(options[1]!.successChance)
+    expect(options[0]!.durationMs).toBeLessThan(options[1]!.durationMs)
+    expect(options[0]!.fullRewardGold).toBeLessThan(options[1]!.fullRewardGold)
+    expect(options[0]!.riskLevel).not.toBe(options[1]!.riskLevel)
   })
 
   it('salvages generic sales for 25% instead of full value', () => {
@@ -235,16 +291,15 @@ describe('visitor trade and commission loop', () => {
     for (let round = 0; round < 1000; round += 1) {
       if (!hasCommercialAction(save)) softLocks += 1
       const before = save.gold
-      const visitor = save.visitRound.visitors[0]!
+      const visitor = visitors(save)[0]!
       const sellable = save.stash.find((item) => visitor.buyQuotes[item.id] !== undefined)
       if (sellable) sellToVisitor(save, visitor.id, sellable.id, `sell-${round}`)
       else {
         const offer = visitor.offers.filter((entry) => entry.price <= save.gold).sort((a, b) => a.price - b.price)[0]
         if (offer) buyFromVisitor(save, visitor.id, offer.id, `buy-${round}`)
       }
-      for (const current of [...save.visitRound.visitors]) {
-        if (current.state !== 'departed') dismissVisitor(save, current.id, new Date(round + 1), random)
-      }
+      if (visitor.state !== 'departed') dismissVisitor(save, visitor.id, new Date(round * 60_000), random)
+      refreshVisitRound(save, new Date(round * 60_000 + 30_000), () => 0)
       netGold += save.gold - before
     }
 

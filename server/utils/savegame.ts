@@ -68,6 +68,16 @@ export async function mutateSaveGameAtomic(
       await getSaveGame(userId)
       continue
     }
+    const rawProcessed = Array.isArray(currentDocument.processedRequests)
+      ? currentDocument.processedRequests.find((entry) => entry.requestId === requestId)
+      : undefined
+    if (rawProcessed) {
+      if (!rawProcessed.operationKey || rawProcessed.operationKey === operationKey) return getSaveGame(userId)
+      throw new IdempotencyConflictError('requestId was already used for a different operation')
+    }
+    if (Array.isArray(currentDocument.processedRequestIds) && currentDocument.processedRequestIds.includes(requestId)) {
+      return getSaveGame(userId)
+    }
     const current = serializeSave(currentDocument)
     const processed = current.processedRequests.find((entry) => entry.requestId === requestId)
     if (processed) {
@@ -79,7 +89,7 @@ export async function mutateSaveGameAtomic(
     const currentRevision = current.revision
     const draft = structuredClone(current)
     const changed = mutate(draft) ?? draft
-    normalizeSaveGame(changed)
+    normalizeSaveGame(changed, { refreshVisitors: false })
     changed.revision = currentRevision + 1
     changed.processedRequestIds = [...current.processedRequestIds, requestId].slice(-100)
     changed.processedRequests = [...current.processedRequests, { requestId, operationKey }].slice(-100)

@@ -18,8 +18,15 @@ export class VisitorDomainError extends Error {
 }
 
 export const MAX_ACTIVE_COMMISSIONS = 2
-export const VISIT_HISTORY_LIMIT = 20
-const VISITOR_COUNT = 2
+export const VISITOR_CONFIG = {
+  slotCount: 2,
+  arrivalCheckIntervalMs: 30_000,
+  arrivalChancePerCheck: 0.4,
+  commissions: {
+    safe: { durationMultiplier: 0.75, chanceDelta: 0.15, fullRewardMultiplier: 0.6, partialRewardMultiplier: 0.2 },
+    risky: { durationMultiplier: 1.75, chanceDelta: -0.15, fullRewardMultiplier: 1.35, partialRewardMultiplier: 0.35 }
+  }
+} as const
 const allItemTypes: ItemType[] = ['weapon', 'armor', 'helmet', 'gloves', 'boots', 'ring', 'amulet', 'charm']
 const visitorNames = ['Mira', 'Torvald', 'Ysra', 'Kael', 'Nahla', 'Bram', 'Vesper', 'Orin']
 const visitorClasses: HeroClass[] = ['barbarian', 'sorceress', 'paladin', 'necromancer']
@@ -41,18 +48,33 @@ export function createVisitRound(
   now = new Date(),
   random: RandomSource = Math.random
 ): VisitRound {
-  const visitors = Array.from({ length: VISITOR_COUNT }, () => createVisitor(save, now, random))
-  ensureViableRound(save, visitors, random)
+  const visitors = Array.from({ length: VISITOR_CONFIG.slotCount }, () => createVisitor(save, now, random))
+  ensureCommercialOpportunities(save, visitors, random)
   return {
     id: randomId(random),
     number: roundNumber,
-    visitors,
+    slots: visitors.map((visitor, index) => ({ id: `visitor-slot-${index + 1}`, visitor })),
     createdAt: now.toISOString()
   }
 }
 
-export function refreshVisitRound(save: SaveGame, now = new Date()): SaveGame {
-  for (const visitor of save.visitRound.visitors) {
+export function refreshVisitRound(save: SaveGame, now = new Date(), random: RandomSource = Math.random): SaveGame {
+  for (const slot of save.visitRound.slots) {
+    const visitor = slot.visitor
+    if (!visitor && slot.nextArrivalCheckAt && new Date(slot.nextArrivalCheckAt).getTime() <= now.getTime()) {
+      if (clampRandom(random()) < VISITOR_CONFIG.arrivalChancePerCheck) {
+        const arrival = createVisitor(save, now, random)
+        ensureCommercialOpportunities(save, [arrival], random)
+        slot.visitor = arrival
+        delete slot.nextArrivalCheckAt
+        save.visitRound.number += 1
+        save.visitRound.id = randomId(random)
+        save.visitRound.createdAt = now.toISOString()
+      } else {
+        slot.nextArrivalCheckAt = nextArrivalCheck(now).toISOString()
+      }
+    }
+    if (!visitor) continue
     if (visitor.state === 'commissioned' && visitor.commission && new Date(visitor.commission.finishesAt).getTime() <= now.getTime()) {
       visitor.state = 'returned'
       visitor.commission.status = 'ready'
@@ -68,12 +90,43 @@ export function refreshVisitRound(save: SaveGame, now = new Date()): SaveGame {
 
 export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'visitHistory'>): void {
   for (const round of [save.visitRound, ...save.visitHistory]) {
-    for (const visitor of round.visitors) normalizeVisitor(visitor)
+    const isCurrentRound = round === save.visitRound
+    const legacyRound = round as VisitRound & { visitors?: Visitor[] }
+    if (!Array.isArray(round.slots)) {
+      round.slots = (legacyRound.visitors ?? []).slice(0, VISITOR_CONFIG.slotCount).map((visitor, index) => ({
+        id: `visitor-slot-${index + 1}`,
+        visitor: isCurrentRound && visitor.state === 'departed' ? undefined : visitor,
+        nextArrivalCheckAt: isCurrentRound && visitor.state === 'departed'
+          ? nextArrivalCheck(safeDate(visitor.departedAt, round.createdAt)).toISOString()
+          : undefined
+      }))
+    }
+    while (round.slots.length < VISITOR_CONFIG.slotCount) {
+      round.slots.push({
+        id: `visitor-slot-${round.slots.length + 1}`,
+        nextArrivalCheckAt: isCurrentRound ? nextArrivalCheck(safeDate(round.createdAt)).toISOString() : undefined
+      })
+    }
+    round.slots = round.slots.slice(0, VISITOR_CONFIG.slotCount)
+    for (const [index, slot] of round.slots.entries()) {
+      if (typeof slot.id !== 'string' || !slot.id) slot.id = `visitor-slot-${index + 1}`
+      if (isCurrentRound && slot.visitor?.state === 'departed') {
+        slot.nextArrivalCheckAt = nextArrivalCheck(safeDate(slot.visitor.departedAt, round.createdAt)).toISOString()
+        delete slot.visitor
+      } else if (slot.visitor) {
+        normalizeVisitor(slot.visitor)
+        delete slot.nextArrivalCheckAt
+      } else if (isCurrentRound && !isValidDate(slot.nextArrivalCheckAt)) {
+        slot.nextArrivalCheckAt = nextArrivalCheck(safeDate(round.createdAt)).toISOString()
+      }
+    }
+    delete legacyRound.visitors
   }
 }
 
 export function buyFromVisitor(save: SaveGame, visitorId: string, offerId: string, requestId: string, now = new Date()): SaveGame {
   const visitor = requireTradeableVisitor(save, visitorId)
+  if (visitor.trades.some((trade) => trade.kind === 'player_bought')) throw domainError('Visitor already completed a sale to the player')
   const offer = visitor.offers.find((entry) => entry.id === offerId)
   if (!offer) throw domainError('Offer not found')
   if (offer.purchasedAt) throw domainError('Offer was already purchased')
@@ -91,6 +144,7 @@ export function buyFromVisitor(save: SaveGame, visitorId: string, offerId: strin
 
 export function sellToVisitor(save: SaveGame, visitorId: string, itemId: string, requestId: string, now = new Date()): SaveGame {
   const visitor = requireTradeableVisitor(save, visitorId)
+  if (visitor.trades.some((trade) => trade.kind === 'player_sold')) throw domainError('Visitor already completed a purchase from the player')
   const itemIndex = save.stash.findIndex((item) => item.id === itemId)
   if (itemIndex < 0) throw domainError('Item not found in stash')
   const item = save.stash[itemIndex]!
@@ -116,7 +170,7 @@ export function sellToVisitor(save: SaveGame, visitorId: string, itemId: string,
     })
     visitor.commissionOptions = visitor.commissionOptions.map((option) => ({
       ...option,
-      successChance: calculateCommissionChance(visitor.power, option.regionId)
+      successChance: calculateOptionChance(visitor.power, option.regionId, option.optionId)
     }))
   }
   return touch(save, now)
@@ -125,17 +179,17 @@ export function sellToVisitor(save: SaveGame, visitorId: string, itemId: string,
 export function assignVisitorCommission(
   save: SaveGame,
   visitorId: string,
-  regionId: string,
+  optionId: string,
   random: RandomSource = Math.random,
   now = new Date()
 ): SaveGame {
   refreshVisitRound(save, now)
   const visitor = findVisitor(save, visitorId)
   if (visitor.state !== 'traded') throw domainError('Visitor must complete a trade before accepting a commission')
-  const activeCount = save.visitRound.visitors.filter((entry) => entry.commission && entry.commission.status !== 'claimed').length
+  const activeCount = currentVisitors(save).filter((entry) => entry.commission && entry.commission.status !== 'claimed').length
   if (activeCount >= MAX_ACTIVE_COMMISSIONS) throw domainError('Active commission limit reached')
-  const option = visitor.commissionOptions.find((entry) => entry.regionId === regionId)
-  if (!option) throw domainError('Region is not available for this visitor')
+  const option = visitor.commissionOptions.find((entry) => entry.optionId === optionId)
+  if (!option) throw domainError('Commission option is not available for this visitor')
 
   visitor.commission = {
     ...option,
@@ -165,7 +219,7 @@ export function claimVisitorCommission(save: SaveGame, visitorId: string, now = 
   commission.claimedAt = now.toISOString()
   visitor.state = 'departed'
   visitor.departedAt = now.toISOString()
-  maybeAdvanceRound(save, now, random)
+  releaseVisitorSlot(save, visitor.id, now)
   return touch(save, now)
 }
 
@@ -176,7 +230,7 @@ export function dismissVisitor(save: SaveGame, visitorId: string, now = new Date
   if (visitor.state === 'departed') throw domainError('Visitor has already departed')
   visitor.state = 'departed'
   visitor.departedAt = now.toISOString()
-  maybeAdvanceRound(save, now, random)
+  releaseVisitorSlot(save, visitor.id, now)
   return touch(save, now)
 }
 
@@ -189,20 +243,25 @@ export function salvageItem(save: SaveGame, itemId: string, now = new Date()): S
 }
 
 export function hasCommercialAction(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | 'visitRound'>): boolean {
-  return save.visitRound.visitors.some((visitor) => {
-    if (visitor.state !== 'open') return false
-    const canBuy = save.stash.length < save.stashLimit && visitor.offers.some((offer) => !offer.purchasedAt && offer.price <= save.gold)
-    const canSell = save.stash.some((item) => {
-      const quote = visitor.buyQuotes[item.id]
-      return item.identified
-        && visitor.acceptedItemTypes.includes(item.type)
-        && typeof quote === 'number'
-        && Number.isInteger(quote)
-        && quote > 0
-        && quote <= visitor.budget
-    })
-    return canBuy || canSell
-  })
+  return hasPurchaseAction(save) || hasSaleAction(save)
+}
+
+export function hasPurchaseAction(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | 'visitRound'>): boolean {
+  return currentVisitors(save).some((visitor) => (visitor.state === 'open' || visitor.state === 'traded')
+    && !visitor.trades.some((trade) => trade.kind === 'player_bought')
+    && save.stash.length < save.stashLimit
+    && visitor.offers.some((offer) => !offer.purchasedAt && offer.price <= save.gold))
+}
+
+export function hasSaleAction(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | 'visitRound'>): boolean {
+  return currentVisitors(save).some((visitor) => (visitor.state === 'open' || visitor.state === 'traded')
+    && !visitor.trades.some((trade) => trade.kind === 'player_sold')
+    && save.stash.some((item) => item.identified
+      && visitor.acceptedItemTypes.includes(item.type)
+      && typeof visitor.buyQuotes[item.id] === 'number'
+      && Number.isInteger(visitor.buyQuotes[item.id])
+      && visitor.buyQuotes[item.id]! > 0
+      && visitor.buyQuotes[item.id]! <= visitor.budget))
 }
 
 function createVisitor(save: Pick<SaveGame, 'stash' | 'questsProgress'>, now: Date, random: RandomSource): Visitor {
@@ -267,6 +326,22 @@ function normalizeVisitor(visitor: Visitor): void {
       powerBonus: inferredPowerBonus - summarizedPowerBonus
     })
   }
+
+  const regeneratedOptions = unlockedCommissionOptions([], visitor.power, visitor.commissionOptions?.[0]?.regionId)
+  if (!Array.isArray(visitor.commissionOptions)
+    || visitor.commissionOptions.length !== 2
+    || visitor.commissionOptions[0]?.optionId !== 'safe'
+    || visitor.commissionOptions[1]?.optionId !== 'risky') {
+    visitor.commissionOptions = regeneratedOptions
+  }
+  if (visitor.commission && (!visitor.commission.optionId || !visitor.commission.title || !visitor.commission.riskLevel || !visitor.commission.failureConsequence)) {
+    const legacyCommission = visitor.commission as Visitor['commission'] & { optionId?: string }
+    const replacement = regeneratedOptions[0]!
+    legacyCommission.optionId = replacement.optionId
+    legacyCommission.title = replacement.title
+    legacyCommission.riskLevel = replacement.riskLevel
+    legacyCommission.failureConsequence = replacement.failureConsequence
+  }
 }
 
 function isValidEquipmentSummaryItem(value: unknown): value is VisitorEquipmentSummaryItem {
@@ -287,45 +362,63 @@ function stableIndex(value: string, length: number): number {
   return hash % length
 }
 
-function ensureViableRound(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit'>, visitors: Visitor[], random: RandomSource): void {
+function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit'>, visitors: Visitor[], random: RandomSource): void {
   const first = visitors[0]!
-  const sellable = save.stash.find((item) => item.identified)
+  let sellable = save.stash.find((item) => item.identified)
+  if (!sellable && !itemBases.some((base) => Math.round(base.value * 0.90) <= save.gold)) {
+    // Compatibility/soft-lock recovery for legacy saves with no usable assets.
+    sellable = starterItem(3, random)
+    save.stash.push(sellable)
+  }
+
+  let guaranteedQuote = 0
   if (sellable) {
     if (!first.acceptedItemTypes.includes(sellable.type)) first.acceptedItemTypes[0] = sellable.type
     if (!first.interestedItemTypes.includes(sellable.type)) first.interestedItemTypes[0] = sellable.type
-    const quote = percentage(sellable.value, 0.80, 1.10, random)
-    first.buyQuotes[sellable.id] = quote
-    first.budget = Math.max(first.budget, quote)
+    guaranteedQuote = percentage(sellable.value, 0.80, 1.10, random)
+    first.buyQuotes[sellable.id] = guaranteedQuote
+    first.budget = Math.max(first.budget, guaranteedQuote)
     first.initialBudget = first.budget
-    return
   }
-  if (save.stash.length < save.stashLimit && save.gold > 0) {
-    const item = starterItem(0, random)
-    const price = percentage(item.value, 0.90, 1.25, random)
-    if (price <= save.gold) {
-      first.offers[0] = { id: randomId(random), item, price }
-      return
-    }
+
+  const purchasingPower = save.gold + guaranteedQuote
+  const cheapestAffordableBaseIndex = itemBases.findIndex((base) => Math.round(base.value * 0.90) <= purchasingPower)
+  if (cheapestAffordableBaseIndex >= 0) {
+    const item = starterItem(cheapestAffordableBaseIndex, random)
+    const price = Math.min(purchasingPower, Math.max(Math.round(item.value * 0.90), percentage(item.value, 0.90, 1.25, random)))
+    first.offers[0] = { id: randomId(random), item, price }
   }
-  // Compatibility/soft-lock recovery for legacy saves with no usable assets.
-  const reliefItem = starterItem(3, random)
-  save.stash.push(reliefItem)
-  if (!first.acceptedItemTypes.includes(reliefItem.type)) first.acceptedItemTypes[0] = reliefItem.type
-  if (!first.interestedItemTypes.includes(reliefItem.type)) first.interestedItemTypes[0] = reliefItem.type
-  const quote = percentage(reliefItem.value, 0.80, 1.10, random)
-  first.buyQuotes[reliefItem.id] = quote
-  first.budget = Math.max(first.budget, quote)
-  first.initialBudget = first.budget
 }
 
-function unlockedCommissionOptions(progress: SaveGame['questsProgress'], power: number): CommissionOption[] {
-  return quests.filter((quest) => progress.some((entry) => entry.questId === quest.id && entry.unlocked)).map((quest) => ({
-    regionId: quest.id,
-    durationMs: 60_000 + quest.difficulty * 2_000,
-    successChance: calculateCommissionChance(power, quest.id),
-    fullRewardGold: Math.round(quest.rewards.gold * 0.75),
-    partialRewardGold: Math.round(quest.rewards.gold * 0.25)
-  }))
+function unlockedCommissionOptions(progress: SaveGame['questsProgress'], power: number, fallbackRegionId?: string): CommissionOption[] {
+  const unlocked = quests.filter((quest) => progress.some((entry) => entry.questId === quest.id && entry.unlocked))
+  const quest = unlocked.sort((a, b) => b.difficulty - a.difficulty)[0]
+    ?? quests.find((candidate) => candidate.id === fallbackRegionId)
+    ?? quests[0]!
+  const baseDuration = 60_000 + quest.difficulty * 2_000
+  return [
+    {
+      optionId: 'safe', title: 'Careful patrol', regionId: quest.id,
+      durationMs: Math.round(baseDuration * VISITOR_CONFIG.commissions.safe.durationMultiplier),
+      successChance: calculateOptionChance(power, quest.id, 'safe'),
+      fullRewardGold: Math.round(quest.rewards.gold * VISITOR_CONFIG.commissions.safe.fullRewardMultiplier),
+      partialRewardGold: Math.round(quest.rewards.gold * VISITOR_CONFIG.commissions.safe.partialRewardMultiplier),
+      riskLevel: 'low', failureConsequence: 'The slot stays occupied for the full duration and yields no reward.'
+    },
+    {
+      optionId: 'risky', title: 'Perilous delve', regionId: quest.id,
+      durationMs: Math.round(baseDuration * VISITOR_CONFIG.commissions.risky.durationMultiplier),
+      successChance: calculateOptionChance(power, quest.id, 'risky'),
+      fullRewardGold: Math.round(quest.rewards.gold * VISITOR_CONFIG.commissions.risky.fullRewardMultiplier),
+      partialRewardGold: Math.round(quest.rewards.gold * VISITOR_CONFIG.commissions.risky.partialRewardMultiplier),
+      riskLevel: 'high', failureConsequence: 'The slot stays occupied longer and a failure yields no reward.'
+    }
+  ]
+}
+
+function calculateOptionChance(power: number, regionId: string, optionId: CommissionOption['optionId']): number {
+  const delta = VISITOR_CONFIG.commissions[optionId].chanceDelta
+  return roundTo(Math.max(0.05, Math.min(0.95, calculateCommissionChance(power, regionId) + delta)), 3)
 }
 
 function calculateCommissionChance(power: number, regionId: string): number {
@@ -339,23 +432,40 @@ function resolveOutcome(roll: number, chance: number): CommissionOutcome {
   return 'failed'
 }
 
-function maybeAdvanceRound(save: SaveGame, now: Date, random: RandomSource): void {
-  if (!save.visitRound.visitors.every((visitor) => visitor.state === 'departed')) return
-  save.visitHistory.unshift(save.visitRound)
-  save.visitHistory = save.visitHistory.slice(0, VISIT_HISTORY_LIMIT)
-  save.visitRound = createVisitRound(save, save.visitRound.number + 1, now, random)
+function releaseVisitorSlot(save: SaveGame, visitorId: string, now: Date): void {
+  const slot = save.visitRound.slots.find((entry) => entry.visitor?.id === visitorId)
+  if (!slot) throw domainError('Visitor slot not found')
+  delete slot.visitor
+  slot.nextArrivalCheckAt = nextArrivalCheck(now).toISOString()
 }
 
 function requireTradeableVisitor(save: SaveGame, visitorId: string): Visitor {
   const visitor = findVisitor(save, visitorId)
-  if (visitor.state !== 'open') throw domainError('Visitor is no longer available for trade')
+  if (visitor.state !== 'open' && visitor.state !== 'traded') throw domainError('Visitor is no longer available for trade')
   return visitor
 }
 
 function findVisitor(save: SaveGame, visitorId: string): Visitor {
-  const visitor = save.visitRound.visitors.find((entry) => entry.id === visitorId)
+  const visitor = currentVisitors(save).find((entry) => entry.id === visitorId)
   if (!visitor) throw domainError('Visitor not found in current round')
   return visitor
+}
+
+function currentVisitors(save: Pick<SaveGame, 'visitRound'>): Visitor[] {
+  return save.visitRound.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])
+}
+
+function nextArrivalCheck(now: Date): Date {
+  return new Date(now.getTime() + VISITOR_CONFIG.arrivalCheckIntervalMs)
+}
+
+function isValidDate(value?: string): boolean {
+  return typeof value === 'string' && Number.isFinite(new Date(value).getTime())
+}
+
+function safeDate(...values: Array<string | undefined>): Date {
+  for (const value of values) if (isValidDate(value)) return new Date(value!)
+  return new Date()
 }
 
 function isUsefulToVisitor(visitor: Visitor, item: Item): boolean {
