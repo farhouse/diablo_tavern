@@ -121,7 +121,7 @@
             <li>Partial: {{ option.partialRewardGold }}g.</li>
             <li>Failure: {{ option.failureConsequence }}</li>
           </ul>
-          <button :data-testid="`review-${option.optionId}`" class="btn" type="button" :aria-expanded="reviewingOptionId === option.optionId" :aria-controls="`review-${visitor.id}-${option.optionId}`" @click="toggleReview(option.optionId)">
+          <button :data-testid="`review-${option.optionId}`" class="btn" type="button" :aria-expanded="reviewingOptionId === option.optionId" :aria-controls="reviewingOptionId === option.optionId ? `review-${visitor.id}-${option.optionId}` : undefined" @click="toggleReview(option.optionId)">
             {{ reviewingOptionId === option.optionId ? 'Cancel selection' : `Select ${option.optionId}` }}
           </button>
           <div v-if="reviewingOptionId === option.optionId" :id="`review-${visitor.id}-${option.optionId}`" class="mission-review">

@@ -332,6 +332,7 @@ describe('visitor HTTP/store/UI journey', () => {
     expect(visitors(persistedSave)[0]!.trades.map((trade) => trade.kind)).toEqual(['player_bought', 'player_sold'])
 
     await expect(useGameStore().buyFromVisitor(currentVisitor.id, 'duplicate-buy')).rejects.toThrow('already completed a sale')
+    await expect(useGameStore().sellToVisitor(currentVisitor.id, 'duplicate-sale')).rejects.toThrow('already completed a purchase')
     await wrapper.get(`[data-testid="dismiss-${currentVisitor.id}"]`).trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Network disconnected after dismiss commit')
@@ -352,6 +353,11 @@ describe('visitor HTTP/store/UI journey', () => {
     await expect(commissionHandler({
       context: { params: { visitorId: visitors(persistedSave)[0]!.id } },
       body: { requestId: 'invalid-option-request', optionId: 'blood-moor' }
+    } as never)).rejects.toMatchObject({ statusCode: 400 })
+
+    await expect(commissionHandler({
+      context: { params: { visitorId: visitors(persistedSave)[0]!.id } },
+      body: { requestId: 'invalid-option-type', optionId: 42, regionId: 'blood-moor' }
     } as never)).rejects.toMatchObject({ statusCode: 400 })
   })
 })

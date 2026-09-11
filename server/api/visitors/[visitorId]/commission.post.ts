@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
   const visitorId = getRouterParam(event, 'visitorId') || ''
   const body = await readVisitorMutation(event)
-  const selection = typeof body.optionId === 'string'
+  const selection = Object.prototype.hasOwnProperty.call(body, 'optionId')
     ? requireCommissionOptionId(body.optionId)
     : requireString(body.regionId, 'regionId')
   try {
