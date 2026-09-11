@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SaveGame, VisitRound } from '../types/game'
 import { createSaveGame, normalizeSaveGame, sellItem } from '../utils/game-logic'
-import { quests } from '../utils/game-data'
+import { itemBases, quests } from '../utils/game-data'
 import {
   assignVisitorCommission,
   buyFromVisitor,
@@ -91,6 +91,37 @@ describe('visitor trade and commission loop', () => {
     expect(offer).toBeTruthy()
     buyFromVisitor(save, visitor.id, offer!.id, 'recovery-purchase')
     expect(save.stash).toHaveLength(save.stashLimit)
+  })
+
+  it('guarantees the post-recovery purchase for the cheapest item at the minimum quote roll', () => {
+    const save = createSaveGame('minimum-unidentified-commercial-recovery')
+    const cheapestBase = itemBases.reduce((cheapest, base) => base.value < cheapest.value ? base : cheapest)
+    save.gold = 0
+    save.stash = [{
+      ...save.stash[0]!,
+      ...cheapestBase,
+      displayName: cheapestBase.baseName,
+      affixes: cheapestBase.implicit ?? [],
+      identified: false
+    }]
+    save.stashLimit = 1
+
+    save.visitRound = createVisitRound(save, 2, new Date('2026-01-01T00:00:00Z'), () => 0)
+    const visitor = visitors(save)[0]!
+    const sellable = save.stash[0]!
+
+    expect(sellable.identified).toBe(true)
+    expect(visitor.buyQuotes[sellable.id]).toBeGreaterThanOrEqual(Math.round(cheapestBase.value * 0.90))
+    expect(save.stash).toHaveLength(save.stashLimit)
+
+    sellToVisitor(save, visitor.id, sellable.id, 'minimum-recovery-sale')
+    expect(hasPurchaseAction(save)).toBe(true)
+    const offer = visitor.offers.find((entry) => !entry.purchasedAt && entry.price <= save.gold)
+    expect(offer).toBeTruthy()
+    buyFromVisitor(save, visitor.id, offer!.id, 'minimum-recovery-purchase')
+    expect(save.stashLimit).toBe(1)
+    expect(save.stash).toHaveLength(1)
+    expect(visitor.trades.map((trade) => trade.kind)).toEqual(['player_sold', 'player_bought'])
   })
 
   it('persists prices in the required bands', () => {

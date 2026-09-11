@@ -378,6 +378,7 @@ function stableIndex(value: string, length: number): number {
 
 function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit'>, visitors: Visitor[], random: RandomSource): void {
   const first = visitors[0]!
+  const cheapestOfferPrice = Math.min(...itemBases.map((base) => Math.round(base.value * 0.90)))
   let sellable = save.stash.find((item) => item.identified)
   if (!sellable && !itemBases.some((base) => Math.round(base.value * 0.90) <= save.gold)) {
     // Compatibility/soft-lock recovery for legacy saves with no usable assets.
@@ -394,7 +395,9 @@ function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | '
   if (sellable) {
     if (!first.acceptedItemTypes.includes(sellable.type)) first.acceptedItemTypes[0] = sellable.type
     if (!first.interestedItemTypes.includes(sellable.type)) first.interestedItemTypes[0] = sellable.type
-    guaranteedQuote = percentage(sellable.value, 0.80, 1.10, random)
+    const quotedPrice = percentage(sellable.value, 0.80, 1.10, random)
+    const requiredForPurchase = Math.max(0, cheapestOfferPrice - save.gold)
+    guaranteedQuote = Math.max(quotedPrice, Math.min(requiredForPurchase, Math.round(sellable.value * 1.10)))
     first.buyQuotes[sellable.id] = guaranteedQuote
     first.budget = Math.max(first.budget, guaranteedQuote)
     first.initialBudget = first.budget
