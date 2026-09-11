@@ -143,12 +143,33 @@
     </template>
 
     <section v-else-if="visitor.state === 'commissioned' && visitor.commission" class="away-state">
-      <span class="state-icon" aria-hidden="true">⌛</span>
-      <div>
-        <h3>Away on commission</h3>
-        <p>{{ questName(visitor.commission.regionId) }} · {{ remainingLabel }} remaining</p>
-        <p class="muted">Return time: {{ returnTime(visitor.commission.finishesAt) }}. Refresh is safe; the server keeps this state.</p>
+      <div class="away-summary">
+        <span class="state-icon" aria-hidden="true">⌛</span>
+        <div>
+          <h3>Away on commission</h3>
+          <p>{{ questName(visitor.commission.regionId) }} · {{ remainingLabel }} remaining</p>
+          <p class="muted">Return time: {{ returnTime(visitor.commission.finishesAt) }}. Refresh is safe; the server keeps this state.</p>
+        </div>
       </div>
+      <div class="journey-progress" aria-hidden="true">
+        <span :style="{ width: `${journeyProgress}%` }" />
+      </div>
+      <section class="journey-log" :aria-labelledby="`journey-${visitor.id}`" data-testid="journey-log">
+        <div class="journey-heading">
+          <h4 :id="`journey-${visitor.id}`">Journey log</h4>
+          <span>{{ journeyMilestones.length }} of 4 reports</span>
+        </div>
+        <ol aria-label="Reports received from the road">
+          <li v-for="milestone in journeyMilestones" :key="milestone.id">
+            <time :datetime="milestone.reachedAt">{{ milestoneTime(milestone.reachedAt) }}</time>
+            <div>
+              <strong>{{ milestone.title }}</strong>
+              <p>{{ milestone.description }}</p>
+            </div>
+          </li>
+        </ol>
+        <p class="journey-note">Road reports describe the route only. The sealed commission result remains unknown until return.</p>
+      </section>
     </section>
 
     <section v-else-if="visitor.state === 'returned' && visitor.commission" class="return-state" aria-live="polite">
@@ -185,6 +206,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Item, Quest, Visitor, VisitorOffer } from '~/types/game'
+import { getVisitorJourneyMilestones, getVisitorJourneyProgress } from '~/utils/visitor-journey'
 
 interface TradeImpact {
   powerBefore: number
@@ -232,6 +254,12 @@ const remainingLabel = computed(() => {
   if (!props.visitor.commission) return '0s'
   return duration(Math.max(0, new Date(props.visitor.commission.finishesAt).getTime() - props.now))
 })
+const journeyMilestones = computed(() => props.visitor.commission
+  ? getVisitorJourneyMilestones(props.visitor.commission, props.now)
+  : [])
+const journeyProgress = computed(() => props.visitor.commission
+  ? Math.round(getVisitorJourneyProgress(props.visitor.commission, props.now) * 100)
+  : 0)
 const outcomeLabel = computed(() => props.visitor.commission?.outcome || 'unknown')
 const resultDescription = computed(() => {
   const commission = props.visitor.commission
@@ -286,6 +314,10 @@ function percent(chance: number): string {
 }
 
 function returnTime(timestamp: string): string {
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function milestoneTime(timestamp: string): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
@@ -386,8 +418,20 @@ function titleCase(value: string): string {
 .mission-consequences { color: var(--muted); display: grid; gap: 0.25rem; grid-column: 1 / -1; margin: 0; padding-left: 1.2rem; }
 .impact-note { background: #17231a; border: 1px solid #315b3b; border-radius: 8px; display: grid; gap: 0.25rem; padding: 0.8rem; }
 .away-state, .return-state, .departed-state { background: #14120f; border-radius: 8px; padding: 1rem; }
-.away-state { align-items: center; display: flex; gap: 0.8rem; }
+.away-state { display: grid; gap: 0.9rem; }
+.away-summary { align-items: center; display: flex; gap: 0.8rem; }
 .state-icon { font-size: 1.5rem; }
+.journey-progress { background: var(--panel-2); border-radius: 999px; height: 0.3rem; overflow: hidden; }
+.journey-progress span { background: var(--accent-2); display: block; height: 100%; transition: width 200ms ease-out; }
+.journey-log { border-top: 1px solid var(--line); display: grid; gap: 0.7rem; padding-top: 0.85rem; }
+.journey-heading { align-items: baseline; display: flex; gap: 0.75rem; justify-content: space-between; }
+.journey-heading h4 { font-size: 0.95rem; margin: 0; }
+.journey-heading span, .journey-log time { color: var(--muted); font-size: 0.76rem; }
+.journey-log ol { display: grid; gap: 0.65rem; list-style: none; margin: 0; padding: 0; }
+.journey-log li { align-items: start; display: grid; gap: 0.65rem; grid-template-columns: 4.6rem minmax(0, 1fr); }
+.journey-log li > div { display: grid; gap: 0.12rem; }
+.journey-log li p, .journey-note { color: var(--muted); font-size: 0.82rem; margin: 0; text-wrap: pretty; }
+.journey-note { border-top: 1px solid var(--line); padding-top: 0.7rem; }
 .visitor-footer { border-top: 1px solid var(--line); padding-top: 0.85rem; }
 
 @media (max-width: 720px) {
@@ -397,6 +441,10 @@ function titleCase(value: string): string {
   .trade-columns { grid-template-columns: 1fr; }
   .trade-item, .mission-option { grid-template-columns: 1fr; }
   .mission-facts { grid-template-columns: 1fr 1fr; }
+  .journey-heading { align-items: start; flex-direction: column; gap: 0.2rem; }
+  .journey-log li { grid-template-columns: 4rem minmax(0, 1fr); }
   .trade-item .btn, .mission-option .btn, .return-state .btn, .visitor-footer .btn { justify-content: center; width: 100%; }
 }
+
+@media (prefers-reduced-motion: reduce) { .journey-progress span { transition: none; } }
 </style>

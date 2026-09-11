@@ -145,6 +145,9 @@ describe('VisitorPost', () => {
     })
     expect(away.text()).toContain('Away on commission')
     expect(away.text()).toContain('1m remaining')
+    expect(away.get('[data-testid="journey-log"]').attributes('aria-live')).toBeUndefined()
+    expect(away.get('[data-testid="journey-log"]').text()).toContain('Set out')
+    expect(away.get('[data-testid="journey-log"]').text()).not.toContain('A measured advance')
 
     const returned = mount(VisitorPost, {
       props: {
@@ -157,6 +160,26 @@ describe('VisitorPost', () => {
     })
     expect(returned.text()).toContain('Returned: partial result')
     expect(returned.get('[data-testid="claim-visitor-1"]').text()).toContain('Claim 23g')
+  })
+
+  it('shows route and risk milestones as discrete progress is reached', () => {
+    const active = visitor({
+      state: 'commissioned',
+      commission: {
+        ...riskyOption, id: 'commission-1', status: 'active', durationMs: 100_000,
+        startedAt: '2026-09-10T20:00:00.000Z', finishesAt: '2026-09-10T20:01:40.000Z', outcomeRoll: 0.99
+      }
+    })
+    const wrapper = mount(VisitorPost, {
+      props: { visitor: active, stash: [], gold: 450, stashLimit: 20, quests: [quest], now: new Date('2026-09-10T20:01:25.000Z').getTime() }
+    })
+
+    const log = wrapper.get('[data-testid="journey-log"]')
+    expect(log.text()).toContain('Crossed into the Blood Moor')
+    expect(log.text()).toContain('Pressed into danger')
+    expect(log.text()).toContain('Turned for the tavern')
+    expect(log.text()).not.toContain('failed')
+    expect(log.findAll('li')).toHaveLength(4)
   })
 
   it('describes complete and failed returns, including a full-stash reward', () => {
