@@ -5,6 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSaveGame } from '../utils/game-logic'
 import { quests } from '../utils/game-data'
+import { visitorOperationKey } from '../server/utils/visitor-api'
 import type { SaveGame } from '../types/game'
 
 let persistedSave: SaveGame
@@ -87,8 +88,8 @@ describe('visitor HTTP/store/UI journey', () => {
       price: 1
     }]
 
-    const commissionRequestIds: string[] = []
-    let loseFirstCommissionResponse = true
+    const claimRequestIds: string[] = []
+    let loseFirstClaimResponse = true
 
     const [{ default: saveHandler }, { default: buyHandler }, { default: sellHandler }, { default: commissionHandler }, { default: claimHandler }] = await Promise.all([
       import('../server/api/savegame/index.get'),
@@ -106,7 +107,7 @@ describe('visitor HTTP/store/UI journey', () => {
       if (!match) throw new Error(`Unexpected request: ${url}`)
       const [, visitorId, operation] = match
       const requestId = options?.body?.requestId as string
-      if (operation === 'commission') commissionRequestIds.push(requestId)
+      if (operation === 'claim') claimRequestIds.push(requestId)
       const event = { context: { params: { visitorId: visitorId! } }, body: options?.body }
       const response = operation === 'commission'
         ? await commissionHandler(event as never)
@@ -116,8 +117,8 @@ describe('visitor HTTP/store/UI journey', () => {
             ? await buyHandler(event as never)
             : await claimHandler(event as never)
 
-      if (operation === 'commission' && loseFirstCommissionResponse) {
-        loseFirstCommissionResponse = false
+      if (operation === 'claim' && loseFirstClaimResponse) {
+        loseFirstClaimResponse = false
         throw new Error('Network disconnected after commit')
       }
       return response
@@ -128,6 +129,9 @@ describe('visitor HTTP/store/UI journey', () => {
       global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } }
     })
     await flushPromises()
+    expect(persistedSave.visitRound.visitors.every((visitor) => visitor.state === 'open')).toBe(true)
+    expect(wrapper.findAll('.visitor-post')).toHaveLength(2)
+    expect(wrapper.findAll('.state-chip').map((chip) => chip.text())).toEqual(['Ready to trade', 'Ready to trade'])
 
     await wrapper.get(`[data-testid="sell-${soldItem.id}"]`).trigger('click')
     await flushPromises()
@@ -137,25 +141,29 @@ describe('visitor HTTP/store/UI journey', () => {
     }))
     expect(wrapper.text()).toContain(soldItem.displayName)
 
+    const goldBeforePurchase = persistedSave.gold
     await wrapper.get('[data-testid="buy-integration-offer"]').trigger('click')
     await flushPromises()
     expect(persistedSave.stash).toHaveLength(persistedSave.stashLimit)
+    expect(persistedSave.stash.some((item) => item.id === 'integration-purchase')).toBe(true)
+    expect(persistedSave.gold).toBe(goldBeforePurchase - 1)
+    expect(persistedSave.visitRound.visitors[1]!.offers[0]!.purchasedAt).toBeTruthy()
 
+    const commissionRandom = vi.spyOn(Math, 'random')
+      .mockReturnValueOnce(0.01)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.02)
+      .mockReturnValueOnce(0)
     await wrapper.get('[data-testid="review-blood-moor"]').trigger('click')
     await wrapper.get('[data-testid="confirm-blood-moor"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('Network disconnected after commit')
-
-    await wrapper.get('[data-testid="confirm-blood-moor"]').trigger('click')
-    await flushPromises()
-    expect(commissionRequestIds[1]).toBe(commissionRequestIds[0])
-    expect(persistedSave.processedRequestIds.filter((id) => id === commissionRequestIds[0])).toHaveLength(1)
 
     const secondReview = wrapper.findAll('[data-testid="review-blood-moor"]')[0]
     expect(secondReview).toBeDefined()
     await secondReview!.trigger('click')
     await wrapper.get('[data-testid="confirm-blood-moor"]').trigger('click')
     await flushPromises()
+    commissionRandom.mockRestore()
     expect(persistedSave.visitRound.visitors.filter((visitor) => visitor.state === 'commissioned')).toHaveLength(2)
     expect(wrapper.findAll('h3').filter((heading) => heading.text() === 'Away on commission')).toHaveLength(2)
 
@@ -163,9 +171,26 @@ describe('visitor HTTP/store/UI journey', () => {
     await flushPromises()
     expect(wrapper.findAll('[data-testid^="claim-"]')).toHaveLength(2)
 
+    const goldBeforeClaim = persistedSave.gold
     await wrapper.get(`[data-testid="claim-${visitorIds[0]}"]`).trigger('click')
     await flushPromises()
+    expect(wrapper.text()).toContain('Network disconnected after commit')
+    expect(persistedSave.gold).toBe(goldBeforeClaim + 68)
+    expect(persistedSave.visitRound.visitors[0]!.state).toBe('departed')
+    expect(wrapper.find(`[data-testid="claim-${visitorIds[0]}"]`).exists()).toBe(true)
+
+    await wrapper.get(`[data-testid="claim-${visitorIds[0]}"]`).trigger('click')
+    await flushPromises()
+    expect(claimRequestIds).toHaveLength(2)
+    expect(claimRequestIds[1]).toBe(claimRequestIds[0])
+    expect(persistedSave.processedRequestIds.filter((id) => id === claimRequestIds[0])).toHaveLength(1)
+    expect(persistedSave.processedRequests.filter((entry) => entry.requestId === claimRequestIds[0])).toEqual([{
+      requestId: claimRequestIds[0],
+      operationKey: visitorOperationKey('claim', visitorIds[0]!)
+    }])
+    expect(persistedSave.gold).toBe(goldBeforeClaim + 68)
     expect(persistedSave.stash).toHaveLength(persistedSave.stashLimit)
+    expect(wrapper.text()).not.toContain('Network disconnected after commit')
 
     await wrapper.get(`[data-testid="claim-${visitorIds[1]}"]`).trigger('click')
     await flushPromises()
