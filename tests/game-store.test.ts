@@ -90,7 +90,7 @@ describe('visitor store mutations', () => {
     const fetchMock = vi.fn().mockResolvedValue(store.save)
     vi.stubGlobal('$fetch', fetchMock)
 
-    await store.commissionVisitor('visitor-a', 'blood-moor')
+    await store.commissionVisitor('visitor-a', 'risky')
     await store.claimVisitor('visitor-a')
     await store.dismissVisitor('visitor-b')
 
@@ -99,7 +99,8 @@ describe('visitor store mutations', () => {
       '/api/visitors/visitor-a/claim',
       '/api/visitors/visitor-b/dismiss'
     ])
-    expect(fetchMock.mock.calls[0]?.[1]?.body).toMatchObject({ regionId: 'blood-moor' })
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toMatchObject({ optionId: 'risky' })
+    expect(fetchMock.mock.calls[0]?.[1]?.body).not.toHaveProperty('regionId')
     expect(fetchMock.mock.calls.every(([, options]) => Boolean(options.body.requestId))).toBe(true)
   })
 })

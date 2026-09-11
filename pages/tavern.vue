@@ -4,7 +4,7 @@
       <div>
         <p class="round-mark">Visitor round {{ game.save?.visitRound.number ?? '—' }}</p>
         <h1>Tavern floor</h1>
-        <p class="muted">Read each traveler, trade once, then send a commission or let them continue down the road.</p>
+        <p class="muted">Read each traveler, buy and sell once each if useful, then send a commission or let them continue down the road.</p>
       </div>
       <div class="tavern-summary" aria-label="Current resources">
         <span><strong>{{ game.save?.gold ?? 0 }}g</strong> in coffer</span>
@@ -32,36 +32,46 @@
       </article>
     </section>
 
-    <section v-else-if="visitors.length" id="commissions" class="visitor-grid" aria-label="Visitor posts">
-      <VisitorPost
-        v-for="visitor in visitors"
-        :key="visitor.id"
-        :visitor="visitor"
-        :stash="game.save?.stash ?? []"
-        :gold="game.save?.gold ?? 0"
-        :stash-limit="stashLimit"
-        :quests="game.quests"
-        :now="now"
-        :pending="game.isVisitorMutationPending(visitor.id)"
-        :trade-impact="tradeImpacts[visitor.id]"
-        @buy="buy"
-        @sell="sell"
-        @commission="commission"
-        @claim="claim"
-        @dismiss="dismiss"
-      />
+    <section v-else-if="slots.length" id="commissions" class="visitor-grid" aria-label="Visitor posts">
+      <template v-for="(slot, index) in slots" :key="slot.id">
+        <VisitorPost
+          v-if="slot.visitor"
+          :visitor="slot.visitor"
+          :stash="game.save?.stash ?? []"
+          :gold="game.save?.gold ?? 0"
+          :stash-limit="stashLimit"
+          :quests="game.quests"
+          :now="now"
+          :pending="game.isVisitorMutationPending(slot.visitor.id)"
+          :trade-impact="tradeImpacts[slot.visitor.id]"
+          @buy="buy"
+          @sell="sell"
+          @commission="commission"
+          @claim="claim"
+          @dismiss="dismiss"
+        />
+        <article v-else class="visitor-slot visitor-slot--empty" role="status" :aria-labelledby="`empty-slot-${slot.id}`">
+          <span class="empty-sigil" aria-hidden="true">{{ index + 1 }}</span>
+          <div>
+            <h2 :id="`empty-slot-${slot.id}`">Visitor post {{ index + 1 }} is empty</h2>
+            <p>A traveler may arrive when the server evaluates this post.</p>
+            <p class="next-check"><strong>Next arrival check:</strong> {{ arrivalLabel(slot.nextArrivalCheckAt) }}</p>
+            <p class="muted">Arrival is not guaranteed. This post remains available while other visitors travel.</p>
+          </div>
+        </article>
+      </template>
     </section>
 
     <section v-else class="empty-tavern">
       <h2>No visitors are seated</h2>
-      <p class="muted">Refresh to restore the persisted round. A valid round always contains two visitors.</p>
+      <p class="muted">Refresh to restore the two persisted visitor posts and their arrival schedules.</p>
       <button class="btn primary" type="button" :disabled="game.loading" @click="reload()">Restore round</button>
     </section>
 
     <aside class="tavern-rules" aria-label="Trade rules">
       <h2>The house rules</h2>
       <div>
-        <p><strong>One trade per traveler.</strong> Prices and quotes come from the server and stay fixed for this visit.</p>
+        <p><strong>One purchase and one sale per traveler.</strong> Either can happen first; prices and quotes stay fixed for this visit.</p>
         <p><strong>No hidden sale.</strong> Unidentified goods must visit the Appraiser before a traveler will buy them.</p>
         <p><strong>Safe retries.</strong> Buttons lock while requests are in flight; a network retry reuses the same request identity.</p>
       </div>
@@ -78,14 +88,15 @@ import type { Visitor } from '~/types/game'
 interface TradeImpact {
   powerBefore: number
   powerAfter: number
-  chances: Array<{ regionId: string; before: number; after: number }>
+  chances: Array<{ optionId: 'safe' | 'risky'; before: number; after: number }>
 }
 
 const game = useGameStore()
 const now = ref(Date.now())
 const notice = ref('')
 const tradeImpacts = ref<Record<string, TradeImpact>>({})
-const visitors = computed(() => game.save?.visitRound.visitors ?? [])
+const slots = computed(() => game.save?.visitRound.slots ?? [])
+const visitors = computed(() => slots.value.flatMap((slot) => slot.visitor ? [slot.visitor] : []))
 const stashUsed = computed(() => game.save?.stash.length ?? 0)
 const stashLimit = computed(() => game.save?.stashLimit ?? 0)
 let timer: ReturnType<typeof setInterval> | undefined
@@ -98,7 +109,9 @@ onMounted(async () => {
     const returnIsDue = visitors.value.some((visitor) => visitor.state === 'commissioned'
       && visitor.commission
       && new Date(visitor.commission.finishesAt).getTime() <= now.value)
-    if (returnIsDue && !game.loading && now.value - lastReturnRefresh >= 5000) {
+    const arrivalCheckIsDue = slots.value.some((slot) => !slot.visitor && slot.nextArrivalCheckAt
+      && new Date(slot.nextArrivalCheckAt).getTime() <= now.value)
+    if ((returnIsDue || arrivalCheckIsDue) && !game.loading && now.value - lastReturnRefresh >= 5000) {
       lastReturnRefresh = now.value
       void reload(false)
     }
@@ -131,16 +144,16 @@ async function sell(visitorId: string, itemId: string) {
     powerBefore: before.power,
     powerAfter: after.power,
     chances: after.commissionOptions.map((option) => ({
-      regionId: option.regionId,
-      before: before.commissionOptions.find((entry) => entry.regionId === option.regionId)?.successChance ?? option.successChance,
+      optionId: option.optionId,
+      before: before.commissionOptions.find((entry) => entry.optionId === option.optionId)?.successChance ?? option.successChance,
       after: option.successChance
     }))
   }
   notice.value = `Sale confirmed. ${after.name}'s useful equipment raised their power and commission odds.`
 }
 
-async function commission(visitorId: string, regionId: string) {
-  await perform('Commission confirmed. The return time is now persisted.', () => game.commissionVisitor(visitorId, regionId))
+async function commission(visitorId: string, optionId: 'safe' | 'risky') {
+  await perform('Commission confirmed. The return time is now persisted.', () => game.commissionVisitor(visitorId, optionId))
 }
 
 async function claim(visitorId: string) {
@@ -163,8 +176,16 @@ async function perform(successMessage: string, action: () => Promise<void>): Pro
 }
 
 function visitorSnapshot(visitorId: string): Visitor | undefined {
-  const visitor = game.save?.visitRound.visitors.find((entry) => entry.id === visitorId)
+  const visitor = visitors.value.find((entry) => entry.id === visitorId)
   return visitor ? JSON.parse(JSON.stringify(visitor)) as Visitor : undefined
+}
+
+function arrivalLabel(timestamp?: string): string {
+  if (!timestamp) return 'waiting for the server schedule'
+  const remaining = Math.max(0, new Date(timestamp).getTime() - now.value)
+  if (remaining <= 0) return 'evaluating now…'
+  const seconds = Math.ceil(remaining / 1000)
+  return `in ${seconds}s · ${new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
 }
 </script>
 
@@ -177,6 +198,11 @@ function visitorSnapshot(visitorId: string): Visitor | undefined {
 .tavern-summary { align-items: center; display: flex; flex-wrap: wrap; gap: 0.65rem; justify-content: flex-end; }
 .tavern-summary > span { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0.55rem 0.7rem; }
 .visitor-grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.visitor-slot--empty { align-items: start; background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; display: flex; gap: 1rem; min-height: 15rem; padding: 1.1rem; }
+.visitor-slot--empty h2, .visitor-slot--empty p { margin: 0; }
+.visitor-slot--empty > div { display: grid; gap: 0.65rem; }
+.empty-sigil { align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 50%; color: var(--muted); display: inline-flex; flex: 0 0 2.75rem; font-weight: 800; height: 2.75rem; justify-content: center; }
+.next-check { color: var(--accent-2); }
 .page-alert { align-items: center; border-radius: 8px; display: flex; gap: 1rem; justify-content: space-between; padding: 0.8rem 1rem; }
 .page-alert p { margin: 0.15rem 0 0; }
 .page-alert--error { background: #2b1716; border: 1px solid #7e3732; }

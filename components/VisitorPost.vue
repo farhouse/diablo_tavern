@@ -33,17 +33,17 @@
       </ul>
     </section>
 
-    <template v-if="visitor.state === 'open'">
-      <section class="visitor-section" aria-labelledby="`interests-${visitor.id}`">
+    <template v-if="visitor.state === 'open' || visitor.state === 'traded'">
+      <section class="visitor-section" :aria-labelledby="`interests-${visitor.id}`">
         <h3 :id="`interests-${visitor.id}`">Looking for {{ interestLabel }}</h3>
         <p class="muted">Also accepts {{ acceptedLabel }} when a quote is shown.</p>
       </section>
 
       <div class="trade-columns">
-        <section class="visitor-section" aria-labelledby="`offers-${visitor.id}`">
+        <section class="visitor-section" :aria-labelledby="`offers-${visitor.id}`">
           <h3 :id="`offers-${visitor.id}`">On their blanket</h3>
           <div class="item-list">
-            <article v-for="offer in availableOffers" :key="offer.id" class="trade-item">
+            <article v-for="offer in purchasableOffers" :key="offer.id" class="trade-item">
               <div>
                 <strong>{{ itemName(offer.item) }}</strong>
                 <p>{{ itemMeta(offer.item) }}</p>
@@ -60,14 +60,15 @@
               </button>
               <p v-if="buyDisabledReason(offer)" :id="`buy-reason-${offer.id}`" class="action-reason">{{ buyDisabledReason(offer) }}</p>
             </article>
-            <p v-if="!availableOffers.length" class="empty-copy">Nothing else is for sale.</p>
+            <p v-if="hasBought" class="empty-copy trade-complete">Purchase used for this visit.</p>
+            <p v-else-if="!purchasableOffers.length" class="empty-copy">Nothing else is for sale.</p>
           </div>
         </section>
 
-        <section class="visitor-section" aria-labelledby="`quotes-${visitor.id}`">
+        <section class="visitor-section" :aria-labelledby="`quotes-${visitor.id}`">
           <h3 :id="`quotes-${visitor.id}`">Your quoted goods</h3>
           <div class="item-list">
-            <article v-for="entry in quotedItems" :key="entry.item.id" class="trade-item">
+            <article v-for="entry in sellableQuotes" :key="entry.item.id" class="trade-item">
               <div>
                 <strong>{{ itemName(entry.item) }}</strong>
                 <p>{{ visitor.interestedItemTypes.includes(entry.item.type) ? 'Wanted item' : 'Accepted item' }} · {{ itemMeta(entry.item) }}</p>
@@ -84,48 +85,53 @@
               </button>
               <p v-if="sellDisabledReason(entry.quote)" :id="`sell-reason-${entry.item.id}`" class="action-reason">{{ sellDisabledReason(entry.quote) }}</p>
             </article>
-            <p v-if="!quotedItems.length" class="empty-copy">This visitor has no quote for your current stash.</p>
+            <p v-if="hasSold" class="empty-copy trade-complete">Sale used for this visit.</p>
+            <p v-else-if="!sellableQuotes.length" class="empty-copy">This visitor has no quote for your current stash.</p>
           </div>
         </section>
       </div>
-    </template>
-
-    <template v-else-if="visitor.state === 'traded'">
       <div v-if="tradeImpact" class="impact-note" role="status">
         <strong>Equipment changed the odds.</strong>
         Power {{ tradeImpact.powerBefore }} → {{ tradeImpact.powerAfter }}.
-        <span v-for="change in tradeImpact.chances" :key="change.regionId">
-          {{ questName(change.regionId) }} {{ percent(change.before) }} → {{ percent(change.after) }}.
+        <span v-for="change in tradeImpact.chances" :key="change.optionId">
+          {{ titleCase(change.optionId) }} {{ percent(change.before) }} → {{ percent(change.after) }}.
         </span>
       </div>
 
-      <section :id="`commissions-${visitor.id}`" class="visitor-section mission-board" aria-labelledby="`missions-${visitor.id}`">
+      <section v-if="visitor.state === 'traded'" :id="`commissions-${visitor.id}`" class="visitor-section mission-board" :aria-labelledby="`missions-${visitor.id}`">
         <div>
           <h3 :id="`missions-${visitor.id}`">Choose a commission</h3>
           <p class="muted">The server has fixed the duration, odds and rewards shown here.</p>
         </div>
-        <article v-for="option in visitor.commissionOptions" :key="option.regionId" class="mission-option">
-          <div>
-            <strong>{{ questName(option.regionId) }}</strong>
-            <p>{{ duration(option.durationMs) }} · {{ percent(option.successChance) }} success</p>
+        <article v-for="option in visitor.commissionOptions" :key="option.optionId" :data-testid="`mission-${option.optionId}`" class="mission-option">
+          <div class="mission-heading">
+            <div>
+              <strong>{{ option.title }}</strong>
+              <p>{{ questName(option.regionId) }}</p>
+            </div>
+            <span class="risk-chip" :class="`risk-chip--${option.riskLevel}`">{{ capitalize(option.riskLevel) }} risk</span>
           </div>
-          <button :data-testid="`review-${option.regionId}`" class="btn" type="button" @click="toggleReview(option.regionId)">
-            {{ reviewingRegionId === option.regionId ? 'Hide review' : 'Review commission' }}
+          <dl class="mission-facts">
+            <div><dt>Success</dt><dd>{{ percent(option.successChance) }}</dd></div>
+            <div><dt>Duration</dt><dd>{{ duration(option.durationMs) }}</dd></div>
+            <div><dt>Full reward</dt><dd>{{ option.fullRewardGold }}g + item</dd></div>
+          </dl>
+          <button :data-testid="`review-${option.optionId}`" class="btn" type="button" :aria-expanded="reviewingOptionId === option.optionId" :aria-controls="`review-${visitor.id}-${option.optionId}`" @click="toggleReview(option.optionId)">
+            {{ reviewingOptionId === option.optionId ? 'Hide consequences' : 'Review consequences' }}
           </button>
-          <div v-if="reviewingRegionId === option.regionId" class="mission-review">
-            <p><strong>{{ duration(option.durationMs) }}</strong> away · <strong>{{ percent(option.successChance) }} success</strong></p>
+          <div v-if="reviewingOptionId === option.optionId" :id="`review-${visitor.id}-${option.optionId}`" class="mission-review">
             <ul>
               <li>Complete: {{ option.fullRewardGold }}g and one item if stash has room.</li>
               <li>Partial: {{ option.partialRewardGold }}g.</li>
-              <li>Failed: no reward.</li>
+              <li>Failure: {{ option.failureConsequence }}</li>
             </ul>
             <button
-              :data-testid="`confirm-${option.regionId}`"
+              :data-testid="`confirm-${option.optionId}`"
               class="btn primary"
               type="button"
               :disabled="pending"
               :aria-describedby="pending ? `commission-reason-${visitor.id}` : undefined"
-              @click="$emit('commission', visitor.id, option.regionId)"
+              @click="$emit('commission', visitor.id, option.optionId)"
             >
               {{ pending ? 'Sending…' : `Send ${visitor.name}` }}
             </button>
@@ -166,8 +172,8 @@
     </section>
 
     <footer v-if="visitor.state === 'open' || visitor.state === 'traded'" class="visitor-footer">
-      <p class="muted">{{ visitor.state === 'open' ? 'No deal is required.' : 'Trade complete. Send a commission or finish the visit.' }}</p>
-      <button class="btn ghost" type="button" :disabled="pending" :aria-describedby="pending ? `dismiss-reason-${visitor.id}` : undefined" @click="$emit('dismiss', visitor.id)">
+      <p class="muted">{{ visitor.state === 'open' ? 'No deal is required.' : 'At least one trade is complete. Use the remaining direction, send a commission or finish the visit.' }}</p>
+      <button :data-testid="`dismiss-${visitor.id}`" class="btn ghost" type="button" :disabled="pending" :aria-describedby="pending ? `dismiss-reason-${visitor.id}` : undefined" @click="$emit('dismiss', visitor.id)">
         {{ pending ? 'Processing…' : visitor.state === 'open' ? 'Let depart' : 'Finish visit' }}
       </button>
       <p v-if="pending" :id="`dismiss-reason-${visitor.id}`" class="action-reason">Another action is being processed.</p>
@@ -182,7 +188,7 @@ import type { Item, Quest, Visitor, VisitorOffer } from '~/types/game'
 interface TradeImpact {
   powerBefore: number
   powerAfter: number
-  chances: Array<{ regionId: string; before: number; after: number }>
+  chances: Array<{ optionId: 'safe' | 'risky'; before: number; after: number }>
 }
 
 const props = withDefaults(defineProps<{
@@ -199,19 +205,23 @@ const props = withDefaults(defineProps<{
 defineEmits<{
   buy: [visitorId: string, offerId: string]
   sell: [visitorId: string, itemId: string]
-  commission: [visitorId: string, regionId: string]
+  commission: [visitorId: string, optionId: 'safe' | 'risky']
   claim: [visitorId: string]
   dismiss: [visitorId: string]
 }>()
 
-const reviewingRegionId = ref('')
+const reviewingOptionId = ref('')
 const availableOffers = computed(() => props.visitor.offers.filter((offer) => !offer.purchasedAt))
 const quotedItems = computed(() => props.stash.flatMap((item) => {
   const quote = props.visitor.buyQuotes[item.id]
   return item.identified && typeof quote === 'number' && props.visitor.acceptedItemTypes.includes(item.type) ? [{ item, quote }] : []
 }))
+const hasBought = computed(() => props.visitor.trades.some((trade) => trade.kind === 'player_bought'))
+const hasSold = computed(() => props.visitor.trades.some((trade) => trade.kind === 'player_sold'))
+const purchasableOffers = computed(() => hasBought.value ? [] : availableOffers.value)
+const sellableQuotes = computed(() => hasSold.value ? [] : quotedItems.value)
 const classLabel = computed(() => capitalize(props.visitor.class))
-const routeLabel = computed(() => props.visitor.commissionOptions.map((option) => questName(option.regionId)).join(', ') || 'no unlocked routes')
+const routeLabel = computed(() => [...new Set(props.visitor.commissionOptions.map((option) => questName(option.regionId)))].join(', ') || 'no unlocked routes')
 const interestLabel = computed(() => naturalList(props.visitor.interestedItemTypes))
 const acceptedLabel = computed(() => naturalList(props.visitor.acceptedItemTypes))
 const stateLabel = computed(() => ({
@@ -234,8 +244,8 @@ const claimLabel = computed(() => {
   return reward ? `Claim ${reward}g` : 'Acknowledge return'
 })
 
-function toggleReview(regionId: string) {
-  reviewingRegionId.value = reviewingRegionId.value === regionId ? '' : regionId
+function toggleReview(optionId: string) {
+  reviewingOptionId.value = reviewingOptionId.value === optionId ? '' : optionId
 }
 
 function buyDisabledReason(offer: VisitorOffer): string {
@@ -362,6 +372,15 @@ function titleCase(value: string): string {
 .action-reason { color: var(--bad) !important; grid-column: 1 / -1; }
 .empty-copy { color: var(--muted); padding: 0.65rem 0; }
 .mission-board { border-top: 1px solid var(--line); padding-top: 1rem; }
+.mission-heading { align-items: start; display: flex; gap: 0.75rem; justify-content: space-between; }
+.mission-facts { display: grid; gap: 0.45rem; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+.mission-facts div { display: grid; gap: 0.1rem; }
+.mission-facts dt { color: var(--muted); font-size: 0.76rem; }
+.mission-facts dd { font-weight: 750; margin: 0; }
+.risk-chip { border: 1px solid var(--line); border-radius: 999px; flex: 0 0 auto; font-size: 0.75rem; padding: 0.2rem 0.5rem; }
+.risk-chip--low { color: var(--ok); }
+.risk-chip--high { color: var(--bad); }
+.trade-complete { color: var(--ok); }
 .mission-review { border-top: 1px solid var(--line); display: grid; gap: 0.65rem; grid-column: 1 / -1; padding-top: 0.75rem; }
 .mission-review ul { color: var(--muted); display: grid; gap: 0.25rem; margin: 0; padding-left: 1.2rem; }
 .impact-note { background: #17231a; border: 1px solid #315b3b; border-radius: 8px; display: grid; gap: 0.25rem; padding: 0.8rem; }
@@ -376,6 +395,7 @@ function titleCase(value: string): string {
   .visitor-equipment { grid-template-columns: 1fr; }
   .trade-columns { grid-template-columns: 1fr; }
   .trade-item, .mission-option { grid-template-columns: 1fr; }
+  .mission-facts { grid-template-columns: 1fr 1fr; }
   .trade-item .btn, .mission-option .btn, .return-state .btn, .visitor-footer .btn { justify-content: center; width: 100%; }
 }
 </style>

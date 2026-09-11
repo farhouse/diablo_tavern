@@ -56,8 +56,8 @@ export const useGameStore = defineStore('game', {
     async sellToVisitor(visitorId: string, itemId: string) {
       await this.runVisitorMutation('sell', visitorId, itemId, { itemId })
     },
-    async commissionVisitor(visitorId: string, regionId: string) {
-      await this.runVisitorMutation('commission', visitorId, regionId, { regionId })
+    async commissionVisitor(visitorId: string, optionId: 'safe' | 'risky') {
+      await this.runVisitorMutation('commission', visitorId, optionId, { optionId })
     },
     async claimVisitor(visitorId: string) {
       await this.runVisitorMutation('claim', visitorId)

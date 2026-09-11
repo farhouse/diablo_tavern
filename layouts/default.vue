@@ -24,7 +24,7 @@
 const auth = useAuthStore()
 const game = useGameStore()
 
-const visitorCount = computed(() => game.save?.visitRound.visitors.filter((visitor) => visitor.state !== 'departed').length ?? 0)
+const visitorCount = computed(() => game.save?.visitRound.slots.filter((slot) => Boolean(slot.visitor)).length ?? 0)
 const stashCount = computed(() => game.save?.stash.length ?? 0)
 const stashCap = computed(() => game.save?.stashLimit ?? 0)
 

@@ -15,6 +15,17 @@ const quest: Quest = {
   rewards: { xp: 70, gold: 90 }, lootTableId: 'act1-low'
 }
 
+const safeOption = {
+  optionId: 'safe' as const, title: 'Careful patrol', regionId: 'blood-moor', durationMs: 46_000,
+  successChance: 0.82, fullRewardGold: 54, partialRewardGold: 18, riskLevel: 'low' as const,
+  failureConsequence: 'The slot stays occupied for the full duration and yields no reward.'
+}
+const riskyOption = {
+  optionId: 'risky' as const, title: 'Perilous delve', regionId: 'blood-moor', durationMs: 108_000,
+  successChance: 0.52, fullRewardGold: 122, partialRewardGold: 32, riskLevel: 'high' as const,
+  failureConsequence: 'The slot stays occupied longer and a failure yields no reward.'
+}
+
 function visitor(overrides: Partial<Visitor> = {}): Visitor {
   return {
     id: 'visitor-1', name: 'Mira', class: 'barbarian', level: 3, origin: 'Ashen Foothills',
@@ -23,7 +34,7 @@ function visitor(overrides: Partial<Visitor> = {}): Visitor {
     acceptedItemTypes: ['weapon', 'armor'], interestedItemTypes: ['weapon'],
     offers: [{ id: 'offer-1', item: { ...sword, id: 'offer-item' }, price: 40 }],
     buyQuotes: { sword: 31 }, trades: [], power: 69,
-    commissionOptions: [{ regionId: 'blood-moor', durationMs: 62_000, successChance: 0.67, fullRewardGold: 68, partialRewardGold: 23 }],
+    commissionOptions: [safeOption, riskyOption],
     arrivedAt: '2026-09-10T20:00:00.000Z', ...overrides
   }
 }
@@ -79,21 +90,52 @@ describe('VisitorPost', () => {
       props: { visitor: visitor({ state: 'traded' }), stash: [], gold: 450, stashLimit: 20, quests: [quest], now: Date.now() }
     })
 
-    await wrapper.get('[data-testid="review-blood-moor"]').trigger('click')
-    expect(wrapper.text()).toContain('1m 2s')
-    expect(wrapper.text()).toContain('67% success')
-    expect(wrapper.text()).toContain('Complete: 68g and one item if stash has room')
-    expect(wrapper.text()).toContain('Partial: 23g')
-    expect(wrapper.text()).toContain('Failed: no reward')
-    await wrapper.get('[data-testid="confirm-blood-moor"]').trigger('click')
-    expect(wrapper.emitted('commission')).toEqual([['visitor-1', 'blood-moor']])
+    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('Careful patrol')
+    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('Low risk')
+    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('Success')
+    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('82%')
+    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('46s')
+    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('54g')
+    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('Perilous delve')
+    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('High risk')
+    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('Success')
+    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('52%')
+    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('1m 48s')
+    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('122g')
+
+    await wrapper.get('[data-testid="review-risky"]').trigger('click')
+    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain(riskyOption.failureConsequence)
+    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('Partial: 32g')
+    await wrapper.get('[data-testid="confirm-risky"]').trigger('click')
+    expect(wrapper.emitted('commission')).toEqual([['visitor-1', 'risky']])
+  })
+
+  it('keeps the remaining trade direction available after the first trade', () => {
+    const bought = mount(VisitorPost, {
+      props: {
+        visitor: visitor({ state: 'traded', trades: [{ requestId: 'buy', kind: 'player_bought', itemId: 'offer-item', price: 40, createdAt: '2026-09-10T20:00:01.000Z' }] }),
+        stash: [sword], gold: 410, stashLimit: 20, quests: [quest], now: Date.now()
+      }
+    })
+    expect(bought.find('[data-testid="buy-offer-1"]').exists()).toBe(false)
+    expect(bought.get('[data-testid="sell-sword"]').text()).toContain('Sell for 31g')
+    expect(bought.find('[data-testid="mission-safe"]').exists()).toBe(true)
+
+    const sold = mount(VisitorPost, {
+      props: {
+        visitor: visitor({ state: 'traded', trades: [{ requestId: 'sell', kind: 'player_sold', itemId: 'sword', price: 31, createdAt: '2026-09-10T20:00:01.000Z' }] }),
+        stash: [], gold: 481, stashLimit: 20, quests: [quest], now: Date.now()
+      }
+    })
+    expect(sold.get('[data-testid="buy-offer-1"]').text()).toContain('Buy for 40g')
+    expect(sold.find('[data-testid="sell-sword"]').exists()).toBe(false)
   })
 
   it('shows the away countdown and the returned result as mutually exclusive states', () => {
     const active = visitor({
       state: 'commissioned',
       commission: {
-        id: 'commission-1', status: 'active', regionId: 'blood-moor', durationMs: 62_000, successChance: 0.67,
+        ...safeOption, id: 'commission-1', status: 'active', durationMs: 62_000, successChance: 0.67,
         fullRewardGold: 68, partialRewardGold: 23, startedAt: '2026-09-10T20:00:00.000Z',
         finishesAt: '2026-09-10T20:01:02.000Z', outcomeRoll: 0.2
       }
@@ -119,7 +161,7 @@ describe('VisitorPost', () => {
 
   it('describes complete and failed returns, including a full-stash reward', () => {
     const commission = {
-      id: 'commission-1', status: 'ready' as const, regionId: 'blood-moor', durationMs: 62_000, successChance: 0.67,
+      ...safeOption, id: 'commission-1', status: 'ready' as const, durationMs: 62_000, successChance: 0.67,
       fullRewardGold: 68, partialRewardGold: 23, startedAt: '2026-09-10T20:00:00.000Z',
       finishesAt: '2026-09-10T20:01:02.000Z', outcomeRoll: 0.2
     }

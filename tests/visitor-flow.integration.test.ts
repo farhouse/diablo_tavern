@@ -8,6 +8,8 @@ import { quests } from '../utils/game-data'
 import { visitorOperationKey } from '../server/utils/visitor-api'
 import type { SaveGame } from '../types/game'
 
+const visitors = (save: SaveGame) => save.visitRound.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])
+
 let persistedSave: SaveGame
 const collection = {
   findOne: vi.fn(async () => structuredClone(persistedSave)),
@@ -61,27 +63,32 @@ describe('visitor HTTP/store/UI journey', () => {
     vi.unstubAllGlobals()
   })
 
-  it('retries idempotently, handles a full stash and two returns, then starts a new round', async () => {
+  it('retries idempotently, handles both trade directions and two returns, then frees both slots', async () => {
     persistedSave = createSaveGame('journey')
     const originalRoundId = persistedSave.visitRound.id
-    const visitorIds = persistedSave.visitRound.visitors.map((visitor) => visitor.id)
+    const visitorIds = visitors(persistedSave).map((visitor) => visitor.id)
     const soldItem = persistedSave.stash[0]!
     const filler = soldItem
     while (persistedSave.stash.length < persistedSave.stashLimit) {
       persistedSave.stash.push({ ...structuredClone(filler), id: `full-stash-${persistedSave.stash.length}` })
     }
-    for (const visitor of persistedSave.visitRound.visitors) {
+    for (const visitor of visitors(persistedSave)) {
       visitor.commissionOptions = [{
-        regionId: 'blood-moor', durationMs: 2_000, successChance: 1,
-        fullRewardGold: 68, partialRewardGold: 23
+        optionId: 'safe', title: 'Careful patrol', regionId: 'blood-moor', durationMs: 2_000, successChance: 1,
+        fullRewardGold: 68, partialRewardGold: 23, riskLevel: 'low',
+        failureConsequence: 'The slot stays occupied for the full duration and yields no reward.'
+      }, {
+        optionId: 'risky', title: 'Perilous delve', regionId: 'blood-moor', durationMs: 4_000, successChance: 0.5,
+        fullRewardGold: 120, partialRewardGold: 40, riskLevel: 'high',
+        failureConsequence: 'The slot stays occupied longer and a failure yields no reward.'
       }]
     }
-    const firstVisitor = persistedSave.visitRound.visitors[0]!
+    const firstVisitor = visitors(persistedSave)[0]!
     firstVisitor.acceptedItemTypes = [soldItem.type]
     firstVisitor.interestedItemTypes = [soldItem.type]
     firstVisitor.buyQuotes = { [soldItem.id]: soldItem.value }
     firstVisitor.budget = soldItem.value
-    const secondVisitor = persistedSave.visitRound.visitors[1]!
+    const secondVisitor = visitors(persistedSave)[1]!
     secondVisitor.offers = [{
       id: 'integration-offer',
       item: { ...structuredClone(filler), id: 'integration-purchase' },
@@ -129,13 +136,13 @@ describe('visitor HTTP/store/UI journey', () => {
       global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } }
     })
     await flushPromises()
-    expect(persistedSave.visitRound.visitors.every((visitor) => visitor.state === 'open')).toBe(true)
+    expect(visitors(persistedSave).every((visitor) => visitor.state === 'open')).toBe(true)
     expect(wrapper.findAll('.visitor-post')).toHaveLength(2)
     expect(wrapper.findAll('.state-chip').map((chip) => chip.text())).toEqual(['Ready to trade', 'Ready to trade'])
 
     await wrapper.get(`[data-testid="sell-${soldItem.id}"]`).trigger('click')
     await flushPromises()
-    expect(persistedSave.visitRound.visitors[0]!.equipmentSummary).toContainEqual(expect.objectContaining({
+    expect(visitors(persistedSave)[0]!.equipmentSummary).toContainEqual(expect.objectContaining({
       itemId: soldItem.id,
       name: soldItem.displayName
     }))
@@ -147,24 +154,25 @@ describe('visitor HTTP/store/UI journey', () => {
     expect(persistedSave.stash).toHaveLength(persistedSave.stashLimit)
     expect(persistedSave.stash.some((item) => item.id === 'integration-purchase')).toBe(true)
     expect(persistedSave.gold).toBe(goldBeforePurchase - 1)
-    expect(persistedSave.visitRound.visitors[1]!.offers[0]!.purchasedAt).toBeTruthy()
+    expect(visitors(persistedSave)[1]!.offers[0]!.purchasedAt).toBeTruthy()
 
     const commissionRandom = vi.spyOn(Math, 'random')
       .mockReturnValueOnce(0.01)
       .mockReturnValueOnce(0)
       .mockReturnValueOnce(0.02)
       .mockReturnValueOnce(0)
-    await wrapper.get('[data-testid="review-blood-moor"]').trigger('click')
-    await wrapper.get('[data-testid="confirm-blood-moor"]').trigger('click')
+    await wrapper.get('[data-testid="review-safe"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-safe"]').trigger('click')
     await flushPromises()
 
-    const secondReview = wrapper.findAll('[data-testid="review-blood-moor"]')[0]
+    const secondReview = wrapper.findAll('[data-testid="review-safe"]')[0]
     expect(secondReview).toBeDefined()
     await secondReview!.trigger('click')
-    await wrapper.get('[data-testid="confirm-blood-moor"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-safe"]').trigger('click')
     await flushPromises()
     commissionRandom.mockRestore()
-    expect(persistedSave.visitRound.visitors.filter((visitor) => visitor.state === 'commissioned')).toHaveLength(2)
+    expect(visitors(persistedSave).filter((visitor) => visitor.state === 'commissioned')).toHaveLength(2)
+    expect(persistedSave.visitRound.slots.every((slot) => Boolean(slot.visitor))).toBe(true)
     expect(wrapper.findAll('h3').filter((heading) => heading.text() === 'Away on commission')).toHaveLength(2)
 
     await vi.advanceTimersByTimeAsync(3_000)
@@ -175,8 +183,9 @@ describe('visitor HTTP/store/UI journey', () => {
     await wrapper.get(`[data-testid="claim-${visitorIds[0]}"]`).trigger('click')
     await flushPromises()
     expect(persistedSave.gold).toBe(goldBeforeClaim + 68)
-    expect(persistedSave.visitRound.visitors[0]!.state).toBe('departed')
-    expect(persistedSave.visitHistory).toHaveLength(0)
+    expect(persistedSave.visitRound.slots[0]!.visitor).toBeUndefined()
+    expect(persistedSave.visitRound.slots[0]!.nextArrivalCheckAt).toBeTruthy()
+    expect(persistedSave.visitHistory).toHaveLength(1)
     expect(wrapper.find(`[data-testid="claim-${visitorIds[0]}"]`).exists()).toBe(false)
 
     const stashBeforeRoundRenewingClaim = persistedSave.stash.map((item) => item.id)
@@ -186,16 +195,18 @@ describe('visitor HTTP/store/UI journey', () => {
     expect(wrapper.text()).toContain('Visitor round 1')
     expect(persistedSave.gold).toBe(goldBeforeClaim + 136)
     expect(persistedSave.stash.map((item) => item.id)).toEqual(stashBeforeRoundRenewingClaim)
-    expect(persistedSave.visitHistory.filter((round) => round.id === originalRoundId)).toHaveLength(1)
-    expect(persistedSave.visitHistory[0]!.visitors.every((visitor) => visitor.state === 'departed')).toBe(true)
-    const archivedSecondCommission = persistedSave.visitHistory[0]!.visitors.find((visitor) => visitor.id === visitorIds[1])!.commission!
-    expect(archivedSecondCommission.rewardGold).toBe(68)
-    expect(archivedSecondCommission.status).toBe('claimed')
-    expect(archivedSecondCommission.claimedAt).toBeTruthy()
+    expect(persistedSave.visitHistory).toHaveLength(2)
+    expect(persistedSave.visitRound.slots.every((slot) => !slot.visitor && Boolean(slot.nextArrivalCheckAt))).toBe(true)
+    const archivedSecondVisitor = persistedSave.visitHistory
+      .flatMap((round) => round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : []))
+      .find((visitor) => visitor.id === visitorIds[1])!
+    expect(archivedSecondVisitor.commission?.rewardGold).toBe(68)
+    expect(archivedSecondVisitor.commission?.status).toBe('claimed')
+    expect(archivedSecondVisitor.commission?.claimedAt).toBeTruthy()
     const committedRevision = persistedSave.revision
-    const committedClaimedAt = archivedSecondCommission.claimedAt
-    expect(persistedSave.visitRound.id).not.toBe(originalRoundId)
-    expect(persistedSave.visitRound.number).toBe(2)
+    const committedClaimedAt = archivedSecondVisitor.commission!.claimedAt
+    expect(persistedSave.visitRound.id).toBe(originalRoundId)
+    expect(persistedSave.visitRound.number).toBe(1)
     expect(wrapper.find(`[data-testid="claim-${visitorIds[1]}"]`).exists()).toBe(true)
 
     await wrapper.get(`[data-testid="claim-${visitorIds[1]}"]`).trigger('click')
@@ -209,14 +220,47 @@ describe('visitor HTTP/store/UI journey', () => {
     }])
     expect(persistedSave.gold).toBe(goldBeforeClaim + 136)
     expect(persistedSave.stash.map((item) => item.id)).toEqual(stashBeforeRoundRenewingClaim)
-    expect(persistedSave.visitHistory.filter((round) => round.id === originalRoundId)).toHaveLength(1)
-    expect(persistedSave.visitHistory[0]!.visitors.find((visitor) => visitor.id === visitorIds[1])!.commission!.claimedAt).toBe(committedClaimedAt)
+    expect(persistedSave.visitHistory).toHaveLength(2)
+    const retriedSecondVisitor = persistedSave.visitHistory
+      .flatMap((round) => round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : []))
+      .find((visitor) => visitor.id === visitorIds[1])!
+    expect(retriedSecondVisitor.commission?.claimedAt).toBe(committedClaimedAt)
     expect(persistedSave.revision).toBe(committedRevision)
     expect(wrapper.text()).not.toContain('Network disconnected after commit')
-    expect(persistedSave.visitRound.id).not.toBe(originalRoundId)
-    expect(persistedSave.visitRound.number).toBe(2)
-    expect(wrapper.text()).toContain('Visitor round 2')
-    expect(wrapper.findAll('.visitor-post')).toHaveLength(2)
+    expect(persistedSave.visitRound.id).toBe(originalRoundId)
+    expect(persistedSave.visitRound.number).toBe(1)
+    expect(wrapper.findAll('.visitor-post')).toHaveLength(0)
+    expect(wrapper.findAll('.visitor-slot--empty')).toHaveLength(2)
+    expect(wrapper.text()).toContain('Next arrival check')
+  })
+
+  it('removes a dismissed visitor immediately and keeps the other occupied post intact', async () => {
+    persistedSave = createSaveGame('dismiss-journey')
+    const [dismissed, remaining] = visitors(persistedSave)
+    const [{ default: saveHandler }, { default: dismissHandler }] = await Promise.all([
+      import('../server/api/savegame/index.get'),
+      import('../server/api/visitors/[visitorId]/dismiss.post')
+    ])
+    vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: Record<string, any>) => {
+      if (url === '/api/quests') return quests
+      if (url === '/api/savegame') return saveHandler({} as never)
+      if (url === `/api/visitors/${dismissed!.id}/dismiss`) {
+        return dismissHandler({ context: { params: { visitorId: dismissed!.id } }, body: options?.body } as never)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+
+    const wrapper = mount(TavernPage, {
+      global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } }
+    })
+    await flushPromises()
+    await wrapper.get(`[data-testid="dismiss-${dismissed!.id}"]`).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find(`[aria-labelledby="visitor-${dismissed!.id}"]`).exists()).toBe(false)
+    expect(wrapper.find(`[aria-labelledby="visitor-${remaining!.id}"]`).exists()).toBe(true)
+    expect(wrapper.findAll('.visitor-slot--empty')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Next arrival check')
   })
 })
 

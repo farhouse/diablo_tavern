@@ -252,7 +252,7 @@ describe('visitor trade and commission loop', () => {
       finishesAt: '2030-01-01T00:02:00.000Z',
       outcomeRoll: 0.42
     }
-    const legacyCommission = visitor.commission as typeof visitor.commission & Record<string, unknown>
+    const legacyCommission = visitor.commission as Partial<typeof visitor.commission> & Record<string, unknown>
     delete legacyCommission.optionId
     delete legacyCommission.title
     delete legacyCommission.riskLevel
