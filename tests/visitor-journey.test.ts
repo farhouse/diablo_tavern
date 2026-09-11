@@ -16,6 +16,43 @@ function commission(overrides: Partial<VisitorCommission> = {}): VisitorCommissi
   }
 }
 
+const JOURNEY_FIELDS = new Set<string>([
+  'startedAt', 'finishesAt', 'regionId', 'optionId'
+] satisfies Array<keyof VisitorJourneySource>)
+
+function guardedCommission(overrides: Partial<VisitorCommission> = {}) {
+  const reads = new Set<string>()
+  const source = new Proxy(commission(overrides), {
+    get(target, property, receiver) {
+      if (typeof property === 'string') {
+        if (!JOURNEY_FIELDS.has(property)) throw new Error(`Journey leaked unauthorized field: ${property}`)
+        reads.add(property)
+      }
+      return Reflect.get(target, property, receiver)
+    },
+    has(target, property) {
+      if (typeof property === 'string' && !JOURNEY_FIELDS.has(property)) {
+        throw new Error(`Journey checked unauthorized field: ${property}`)
+      }
+      return Reflect.has(target, property)
+    },
+    ownKeys(target) {
+      const unauthorized = Reflect.ownKeys(target)
+        .find((property) => typeof property === 'string' && !JOURNEY_FIELDS.has(property))
+      if (unauthorized) throw new Error(`Journey enumerated unauthorized field: ${String(unauthorized)}`)
+      return Reflect.ownKeys(target)
+    },
+    getOwnPropertyDescriptor(target, property) {
+      if (typeof property === 'string' && !JOURNEY_FIELDS.has(property)) {
+        throw new Error(`Journey inspected unauthorized field: ${property}`)
+      }
+      return Reflect.getOwnPropertyDescriptor(target, property)
+    }
+  })
+
+  return { reads, source }
+}
+
 describe('visitor journey milestones', () => {
   const regions = [
     ['blood-moor', 'Crossed into the Blood Moor'],
@@ -44,22 +81,7 @@ describe('visitor journey milestones', () => {
     { regionId, arrivalTitle, optionId: 'safe' as const, encounterTitle: 'A measured advance', routeWord: 'careful' },
     { regionId, arrivalTitle, optionId: 'risky' as const, encounterTitle: 'Pressed into danger', routeWord: 'perilous' }
   ]))('covers $regionId/$optionId without leaking sealed data', ({ regionId, arrivalTitle, optionId, encounterTitle, routeWord }) => {
-    const allowed = new Set(['startedAt', 'finishesAt', 'regionId', 'optionId'])
-    const reads = new Set<string>()
-    const source = new Proxy({
-      startedAt: '2026-09-10T20:00:00.000Z',
-      finishesAt: '2026-09-10T20:01:40.000Z',
-      regionId,
-      optionId
-    }, {
-      get(target, property, receiver) {
-        if (typeof property === 'string') {
-          if (!allowed.has(property)) throw new Error(`Journey leaked unauthorized field: ${property}`)
-          reads.add(property)
-        }
-        return Reflect.get(target, property, receiver)
-      }
-    }) as VisitorJourneySource
+    const { reads, source } = guardedCommission({ regionId, optionId })
     const now = new Date('2026-09-10T20:01:40.000Z').getTime()
 
     expect(getVisitorJourneyProgress(source, now)).toBe(1)
@@ -69,7 +91,32 @@ describe('visitor journey milestones', () => {
       'Set out', arrivalTitle, encounterTitle, 'Turned for the tavern'
     ])
     expect(milestones[0]?.description).toContain(routeWord)
-    expect(reads).toEqual(allowed)
+    expect(reads).toEqual(JOURNEY_FIELDS)
+  })
+
+  it('rejects direct and reflective access to every field outside the journey contract', () => {
+    const { source } = guardedCommission({
+      outcome: 'complete',
+      rewardGold: 54,
+      rewardItem: {
+        id: 'sealed-reward', baseName: 'Short Sword', displayName: 'Sealed reward',
+        type: 'weapon', rarity: 'rare', identified: true, width: 1, height: 3,
+        requiredLevel: 1, affixes: [{ stat: 'attackPower', value: 12 }], value: 30
+      },
+      claimedAt: '2026-09-10T20:02:00.000Z'
+    })
+
+    expect(() => source.outcome).toThrow('Journey leaked unauthorized field: outcome')
+    expect(() => 'outcome' in source).toThrow('Journey checked unauthorized field: outcome')
+    expect(() => Object.keys(source)).toThrow('Journey enumerated unauthorized field: id')
+    expect(() => Object.getOwnPropertyDescriptor(source, 'outcome'))
+      .toThrow('Journey inspected unauthorized field: outcome')
+    expect(() => ({ ...source })).toThrow('Journey enumerated unauthorized field: id')
+
+    const runtimeSymbol = Symbol('runtime')
+    expect(Reflect.get(source, runtimeSymbol)).toBeUndefined()
+    expect(Reflect.has(source, runtimeSymbol)).toBe(false)
+    expect(Reflect.getOwnPropertyDescriptor(source, runtimeSymbol)).toBeUndefined()
   })
 
   it.each([
