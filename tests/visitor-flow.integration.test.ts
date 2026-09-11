@@ -89,7 +89,7 @@ describe('visitor HTTP/store/UI journey', () => {
     }]
 
     const claimRequestIds: string[] = []
-    let loseFirstClaimResponse = true
+    let loseSecondClaimResponse = true
 
     const [{ default: saveHandler }, { default: buyHandler }, { default: sellHandler }, { default: commissionHandler }, { default: claimHandler }] = await Promise.all([
       import('../server/api/savegame/index.get'),
@@ -117,8 +117,8 @@ describe('visitor HTTP/store/UI journey', () => {
             ? await buyHandler(event as never)
             : await claimHandler(event as never)
 
-      if (operation === 'claim' && loseFirstClaimResponse) {
-        loseFirstClaimResponse = false
+      if (operation === 'claim' && visitorId === visitorIds[1] && loseSecondClaimResponse) {
+        loseSecondClaimResponse = false
         throw new Error('Network disconnected after commit')
       }
       return response
@@ -174,26 +174,45 @@ describe('visitor HTTP/store/UI journey', () => {
     const goldBeforeClaim = persistedSave.gold
     await wrapper.get(`[data-testid="claim-${visitorIds[0]}"]`).trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('Network disconnected after commit')
     expect(persistedSave.gold).toBe(goldBeforeClaim + 68)
     expect(persistedSave.visitRound.visitors[0]!.state).toBe('departed')
-    expect(wrapper.find(`[data-testid="claim-${visitorIds[0]}"]`).exists()).toBe(true)
+    expect(persistedSave.visitHistory).toHaveLength(0)
+    expect(wrapper.find(`[data-testid="claim-${visitorIds[0]}"]`).exists()).toBe(false)
 
-    await wrapper.get(`[data-testid="claim-${visitorIds[0]}"]`).trigger('click')
+    const stashBeforeRoundRenewingClaim = persistedSave.stash.map((item) => item.id)
+    await wrapper.get(`[data-testid="claim-${visitorIds[1]}"]`).trigger('click')
     await flushPromises()
-    expect(claimRequestIds).toHaveLength(2)
-    expect(claimRequestIds[1]).toBe(claimRequestIds[0])
-    expect(persistedSave.processedRequestIds.filter((id) => id === claimRequestIds[0])).toHaveLength(1)
-    expect(persistedSave.processedRequests.filter((entry) => entry.requestId === claimRequestIds[0])).toEqual([{
-      requestId: claimRequestIds[0],
-      operationKey: visitorOperationKey('claim', visitorIds[0]!)
-    }])
-    expect(persistedSave.gold).toBe(goldBeforeClaim + 68)
-    expect(persistedSave.stash).toHaveLength(persistedSave.stashLimit)
-    expect(wrapper.text()).not.toContain('Network disconnected after commit')
+    expect(wrapper.text()).toContain('Network disconnected after commit')
+    expect(wrapper.text()).toContain('Visitor round 1')
+    expect(persistedSave.gold).toBe(goldBeforeClaim + 136)
+    expect(persistedSave.stash.map((item) => item.id)).toEqual(stashBeforeRoundRenewingClaim)
+    expect(persistedSave.visitHistory.filter((round) => round.id === originalRoundId)).toHaveLength(1)
+    expect(persistedSave.visitHistory[0]!.visitors.every((visitor) => visitor.state === 'departed')).toBe(true)
+    const archivedSecondCommission = persistedSave.visitHistory[0]!.visitors.find((visitor) => visitor.id === visitorIds[1])!.commission!
+    expect(archivedSecondCommission.rewardGold).toBe(68)
+    expect(archivedSecondCommission.status).toBe('claimed')
+    expect(archivedSecondCommission.claimedAt).toBeTruthy()
+    const committedRevision = persistedSave.revision
+    const committedClaimedAt = archivedSecondCommission.claimedAt
+    expect(persistedSave.visitRound.id).not.toBe(originalRoundId)
+    expect(persistedSave.visitRound.number).toBe(2)
+    expect(wrapper.find(`[data-testid="claim-${visitorIds[1]}"]`).exists()).toBe(true)
 
     await wrapper.get(`[data-testid="claim-${visitorIds[1]}"]`).trigger('click')
     await flushPromises()
+    expect(claimRequestIds).toHaveLength(3)
+    expect(claimRequestIds[2]).toBe(claimRequestIds[1])
+    expect(persistedSave.processedRequestIds.filter((id) => id === claimRequestIds[1])).toHaveLength(1)
+    expect(persistedSave.processedRequests.filter((entry) => entry.requestId === claimRequestIds[1])).toEqual([{
+      requestId: claimRequestIds[1],
+      operationKey: visitorOperationKey('claim', visitorIds[1]!)
+    }])
+    expect(persistedSave.gold).toBe(goldBeforeClaim + 136)
+    expect(persistedSave.stash.map((item) => item.id)).toEqual(stashBeforeRoundRenewingClaim)
+    expect(persistedSave.visitHistory.filter((round) => round.id === originalRoundId)).toHaveLength(1)
+    expect(persistedSave.visitHistory[0]!.visitors.find((visitor) => visitor.id === visitorIds[1])!.commission!.claimedAt).toBe(committedClaimedAt)
+    expect(persistedSave.revision).toBe(committedRevision)
+    expect(wrapper.text()).not.toContain('Network disconnected after commit')
     expect(persistedSave.visitRound.id).not.toBe(originalRoundId)
     expect(persistedSave.visitRound.number).toBe(2)
     expect(wrapper.text()).toContain('Visitor round 2')
