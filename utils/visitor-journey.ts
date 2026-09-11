@@ -92,9 +92,10 @@ export function getVisitorJourneyMilestones(commission: VisitorJourneySource, no
   const finishesAt = new Date(commission.finishesAt).getTime()
   const validTiming = Number.isFinite(startedAt) && Number.isFinite(finishesAt) && finishesAt > startedAt
   const progress = validTiming ? getVisitorJourneyProgress(commission, now) : 0
+  const fallbackAt = Number.isFinite(startedAt) ? startedAt : Number.isFinite(now) ? now : 0
   const reachedAt = (threshold: number) => new Date(validTiming
     ? startedAt + (finishesAt - startedAt) * threshold
-    : Number.isFinite(startedAt) ? startedAt : now).toISOString()
+    : fallbackAt).toISOString()
 
   const milestones: VisitorJourneyMilestone[] = [
     {

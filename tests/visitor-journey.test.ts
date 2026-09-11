@@ -91,7 +91,8 @@ describe('visitor journey milestones', () => {
     ['invalid finish', { finishesAt: 'invalid' }, Date.now()],
     ['equal timestamps', { finishesAt: '2026-09-10T20:00:00.000Z' }, Date.now()],
     ['reversed timestamps', { finishesAt: '2026-09-10T19:59:59.000Z' }, Date.now()],
-    ['invalid current time', {}, Number.NaN]
+    ['invalid current time', {}, Number.NaN],
+    ['invalid start and current time', { startedAt: 'invalid' }, Number.NaN]
   ])('falls back safely for %s', (_label, overrides, now) => {
     const active = commission(overrides)
 
