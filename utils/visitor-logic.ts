@@ -96,10 +96,7 @@ export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'vis
     if (!Array.isArray(round.slots)) {
       round.slots = (legacyRound.visitors ?? []).slice(0, VISITOR_CONFIG.slotCount).map((visitor, index) => ({
         id: `visitor-slot-${index + 1}`,
-        visitor: isCurrentRound && visitor.state === 'departed' ? undefined : visitor,
-        nextArrivalCheckAt: isCurrentRound && visitor.state === 'departed'
-          ? nextArrivalCheck(safeDate(visitor.departedAt, round.createdAt)).toISOString()
-          : undefined
+        visitor
       }))
     }
     while (round.slots.length < VISITOR_CONFIG.slotCount) {

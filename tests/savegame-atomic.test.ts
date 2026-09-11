@@ -149,14 +149,20 @@ describe('atomic save mutation', () => {
   it('migrates the legacy visitor array into two persisted slots', async () => {
     const { getSaveGame } = await import('../server/utils/savegame')
     const legacyRound = document!.visitRound as unknown as { slots?: unknown; visitors?: unknown }
-    legacyRound.visitors = visitors(document!)
+    const legacyVisitors = visitors(document!)
+    legacyVisitors[0]!.state = 'departed'
+    legacyVisitors[0]!.departedAt = '2030-01-01T00:00:00.000Z'
+    const departedId = legacyVisitors[0]!.id
+    legacyRound.visitors = legacyVisitors
     delete legacyRound.slots
 
     const migrated = await getSaveGame('atomic-user')
 
     expect(migrated.visitRound.slots).toHaveLength(2)
-    expect(visitors(migrated)).toHaveLength(2)
+    expect(visitors(migrated)).toHaveLength(1)
     expect(document!.visitRound.slots).toHaveLength(2)
+    expect(document!.visitHistory[0]!.slots.some((slot) => slot.visitor?.id === departedId)).toBe(true)
+    expect(document!.visitRound.slots.find((slot) => !slot.visitor)!.nextArrivalCheckAt).toBeTruthy()
     expect('visitors' in (document!.visitRound as unknown as Record<string, unknown>)).toBe(false)
   })
 

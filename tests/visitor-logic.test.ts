@@ -242,6 +242,21 @@ describe('visitor trade and commission loop', () => {
   it('migrates legacy options to the hardest currently unlocked region', () => {
     const save = createSaveGame('legacy-options')
     const visitor = visitors(save)[0]!
+    const originalOption = visitor.commissionOptions[0]!
+    visitor.state = 'commissioned'
+    visitor.commission = {
+      ...originalOption,
+      id: 'legacy-active',
+      status: 'active',
+      startedAt: '2030-01-01T00:00:00.000Z',
+      finishesAt: '2030-01-01T00:02:00.000Z',
+      outcomeRoll: 0.42
+    }
+    const legacyCommission = visitor.commission as typeof visitor.commission & Record<string, unknown>
+    delete legacyCommission.optionId
+    delete legacyCommission.title
+    delete legacyCommission.riskLevel
+    delete legacyCommission.failureConsequence
     visitor.commissionOptions = visitor.commissionOptions.map(({ optionId: _optionId, ...option }) => option) as typeof visitor.commissionOptions
     for (const progress of save.questsProgress) progress.unlocked = true
 
@@ -251,6 +266,16 @@ describe('visitor trade and commission loop', () => {
 
     expect(migratedVisitor.commissionOptions).toHaveLength(2)
     expect(migratedVisitor.commissionOptions.every((option) => option.regionId === hardest.id)).toBe(true)
+    expect(migratedVisitor.commission).toMatchObject({
+      id: 'legacy-active',
+      durationMs: originalOption.durationMs,
+      successChance: originalOption.successChance,
+      fullRewardGold: originalOption.fullRewardGold,
+      partialRewardGold: originalOption.partialRewardGold,
+      startedAt: '2030-01-01T00:00:00.000Z',
+      finishesAt: '2030-01-01T00:02:00.000Z',
+      outcomeRoll: 0.42
+    })
   })
 
   it('frees a dismissed slot and persists probabilistic arrival checks while commissions keep theirs occupied', () => {
