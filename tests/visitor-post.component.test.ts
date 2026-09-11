@@ -180,6 +180,9 @@ describe('VisitorPost', () => {
     expect(log.text()).toContain('Turned for the tavern')
     expect(log.text()).not.toContain('failed')
     expect(log.findAll('li')).toHaveLength(4)
+    expect(wrapper.get('.journey-progress').attributes('aria-hidden')).toBe('true')
+    expect(log.attributes('aria-live')).toBeUndefined()
+    expect(log.text()).toContain('The sealed commission result remains unknown until return.')
   })
 
   it('describes complete and failed returns, including a full-stash reward', () => {

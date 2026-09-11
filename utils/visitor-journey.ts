@@ -1,5 +1,7 @@
 import type { VisitorCommission } from '~/types/game'
 
+export type VisitorJourneySource = Pick<VisitorCommission, 'startedAt' | 'finishesAt' | 'regionId' | 'optionId'>
+
 export interface VisitorJourneyMilestone {
   id: 'departure' | 'arrival' | 'encounter' | 'return'
   title: string
@@ -77,14 +79,14 @@ const FALLBACK_ROUTE: RouteNarrative = {
 
 const THRESHOLDS = [0, 0.25, 0.5, 0.8] as const
 
-export function getVisitorJourneyProgress(commission: VisitorCommission, now: number): number {
+export function getVisitorJourneyProgress(commission: VisitorJourneySource, now: number): number {
   const startedAt = new Date(commission.startedAt).getTime()
   const finishesAt = new Date(commission.finishesAt).getTime()
-  if (!Number.isFinite(startedAt) || !Number.isFinite(finishesAt) || finishesAt <= startedAt) return 0
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishesAt) || !Number.isFinite(now) || finishesAt <= startedAt) return 0
   return Math.min(1, Math.max(0, (now - startedAt) / (finishesAt - startedAt)))
 }
 
-export function getVisitorJourneyMilestones(commission: VisitorCommission, now: number): VisitorJourneyMilestone[] {
+export function getVisitorJourneyMilestones(commission: VisitorJourneySource, now: number): VisitorJourneyMilestone[] {
   const route = ROUTES[commission.regionId] ?? FALLBACK_ROUTE
   const startedAt = new Date(commission.startedAt).getTime()
   const finishesAt = new Date(commission.finishesAt).getTime()

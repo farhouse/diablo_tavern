@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { VisitorCommission } from '../types/game'
-import { getVisitorJourneyMilestones } from '../utils/visitor-journey'
+import {
+  getVisitorJourneyMilestones,
+  getVisitorJourneyProgress,
+  type VisitorJourneySource
+} from '../utils/visitor-journey'
 
 function commission(overrides: Partial<VisitorCommission> = {}): VisitorCommission {
   return {
@@ -13,6 +17,16 @@ function commission(overrides: Partial<VisitorCommission> = {}): VisitorCommissi
 }
 
 describe('visitor journey milestones', () => {
+  const regions = [
+    ['blood-moor', 'Crossed into the Blood Moor'],
+    ['den-of-evil', 'Reached the Den of Evil'],
+    ['cold-plains', 'Entered the Cold Plains'],
+    ['burial-grounds', 'Reached the Burial Grounds'],
+    ['forgotten-tower', 'Reached the Forgotten Tower'],
+    ['catacombs', 'Entered the Catacombs'],
+    ['act-boss', 'Reached the inner sanctum']
+  ] as const
+
   it('reveals stable milestones from persisted time progress', () => {
     const active = commission()
 
@@ -26,24 +40,62 @@ describe('visitor journey milestones', () => {
       .toEqual(getVisitorJourneyMilestones(active, new Date('2026-09-10T20:00:55.000Z').getTime()))
   })
 
-  it('changes the narrative by route and commission type without reading the sealed result', () => {
-    const risky = commission({
-      optionId: 'risky', title: 'Perilous delve', regionId: 'forgotten-tower', riskLevel: 'high',
-      outcomeRoll: 0.01
-    })
-    const differentSealedRoll = { ...risky, outcomeRoll: 0.99, outcome: 'failed' as const }
-    const now = new Date('2026-09-10T20:01:25.000Z').getTime()
-    const milestones = getVisitorJourneyMilestones(risky, now)
+  it.each(regions.flatMap(([regionId, arrivalTitle]) => [
+    { regionId, arrivalTitle, optionId: 'safe' as const, encounterTitle: 'A measured advance', routeWord: 'careful' },
+    { regionId, arrivalTitle, optionId: 'risky' as const, encounterTitle: 'Pressed into danger', routeWord: 'perilous' }
+  ]))('covers $regionId/$optionId without leaking sealed data', ({ regionId, arrivalTitle, optionId, encounterTitle, routeWord }) => {
+    const allowed = new Set(['startedAt', 'finishesAt', 'regionId', 'optionId'])
+    const reads = new Set<string>()
+    const source = new Proxy({
+      startedAt: '2026-09-10T20:00:00.000Z',
+      finishesAt: '2026-09-10T20:01:40.000Z',
+      regionId,
+      optionId
+    }, {
+      get(target, property, receiver) {
+        if (typeof property === 'string') {
+          if (!allowed.has(property)) throw new Error(`Journey leaked unauthorized field: ${property}`)
+          reads.add(property)
+        }
+        return Reflect.get(target, property, receiver)
+      }
+    }) as VisitorJourneySource
+    const now = new Date('2026-09-10T20:01:40.000Z').getTime()
 
-    expect(milestones.map((entry) => entry.title)).toEqual([
-      'Set out', 'Reached the Forgotten Tower', 'Pressed into danger', 'Turned for the tavern'
+    expect(getVisitorJourneyProgress(source, now)).toBe(1)
+    const milestones = getVisitorJourneyMilestones(source, now)
+
+    expect(milestones.map(({ title }) => title)).toEqual([
+      'Set out', arrivalTitle, encounterTitle, 'Turned for the tavern'
     ])
-    expect(milestones.some((entry) => entry.description.includes('tower'))).toBe(true)
-    expect(getVisitorJourneyMilestones(differentSealedRoll, now)).toEqual(milestones)
+    expect(milestones[0]?.description).toContain(routeWord)
+    expect(reads).toEqual(allowed)
   })
 
-  it('clamps malformed timing to the first milestone', () => {
-    expect(getVisitorJourneyMilestones(commission({ startedAt: 'invalid' }), Date.now()))
-      .toHaveLength(1)
+  it.each([
+    [0, 1],
+    [0.25, 2],
+    [0.5, 3],
+    [0.8, 4],
+    [1, 4]
+  ])('reveals the expected reports at %s progress', (progress, reportCount) => {
+    const active = commission()
+    const startedAt = new Date(active.startedAt).getTime()
+
+    expect(getVisitorJourneyProgress(active, startedAt + active.durationMs * progress)).toBe(progress)
+    expect(getVisitorJourneyMilestones(active, startedAt + active.durationMs * progress)).toHaveLength(reportCount)
+  })
+
+  it.each([
+    ['invalid start', { startedAt: 'invalid' }, Date.now()],
+    ['invalid finish', { finishesAt: 'invalid' }, Date.now()],
+    ['equal timestamps', { finishesAt: '2026-09-10T20:00:00.000Z' }, Date.now()],
+    ['reversed timestamps', { finishesAt: '2026-09-10T19:59:59.000Z' }, Date.now()],
+    ['invalid current time', {}, Number.NaN]
+  ])('falls back safely for %s', (_label, overrides, now) => {
+    const active = commission(overrides)
+
+    expect(getVisitorJourneyProgress(active, now)).toBe(0)
+    expect(getVisitorJourneyMilestones(active, now)).toHaveLength(1)
   })
 })
