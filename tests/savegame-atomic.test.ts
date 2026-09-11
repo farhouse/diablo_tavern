@@ -152,6 +152,8 @@ describe('atomic save mutation', () => {
     const legacyVisitors = visitors(document!)
     legacyVisitors[0]!.state = 'departed'
     legacyVisitors[0]!.departedAt = '2030-01-01T00:00:00.000Z'
+    legacyVisitors[0]!.budget = 123
+    legacyVisitors[0]!.trades = [{ requestId: 'legacy-trade', kind: 'player_sold', itemId: 'old-item', price: 17, createdAt: '2029-12-31T23:59:00.000Z' }]
     const departedId = legacyVisitors[0]!.id
     legacyRound.visitors = legacyVisitors
     delete legacyRound.slots
@@ -161,8 +163,12 @@ describe('atomic save mutation', () => {
     expect(migrated.visitRound.slots).toHaveLength(2)
     expect(visitors(migrated)).toHaveLength(1)
     expect(document!.visitRound.slots).toHaveLength(2)
-    expect(document!.visitHistory[0]!.slots.some((slot) => slot.visitor?.id === departedId)).toBe(true)
-    expect(document!.visitRound.slots.find((slot) => !slot.visitor)!.nextArrivalCheckAt).toBeTruthy()
+    const archived = document!.visitHistory[0]!.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])[0]!
+    expect(archived.id).toBe(departedId)
+    expect(archived.budget).toBe(123)
+    expect(archived.trades).toEqual(legacyVisitors[0]!.trades)
+    expect(archived.commissionOptions.map((option) => option.optionId)).toEqual(['safe', 'risky'])
+    expect(document!.visitRound.slots.find((slot) => !slot.visitor)!.nextArrivalCheckAt).toBe('2030-01-01T00:00:30.000Z')
     expect('visitors' in (document!.visitRound as unknown as Record<string, unknown>)).toBe(false)
   })
 

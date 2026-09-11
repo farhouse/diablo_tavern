@@ -110,6 +110,7 @@ export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'vis
       if (typeof slot.id !== 'string' || !slot.id) slot.id = `visitor-slot-${index + 1}`
       if (isCurrentRound && slot.visitor?.state === 'departed') {
         const departedVisitor = slot.visitor
+        normalizeVisitor(departedVisitor, save.questsProgress)
         if (!save.visitHistory.some((history) => history.slots?.some((entry) => entry.visitor?.id === departedVisitor.id))) {
           save.visitHistory.unshift({
             id: `${round.id}:${departedVisitor.id}`,
