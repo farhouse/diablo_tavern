@@ -250,18 +250,35 @@ function normalizeVisitor(visitor: Visitor): void {
   if (typeof visitor.origin !== 'string' || visitor.origin.trim().length === 0) {
     visitor.origin = visitorOrigins[stableIndex(visitor.id || visitor.name, visitorOrigins.length)]!
   }
-  if (Array.isArray(visitor.equipmentSummary) && visitor.equipmentSummary.length > 0) return
 
   const startingEquipment = arrivalEquipment[visitor.class] ?? arrivalEquipment.barbarian
-  visitor.equipmentSummary = [{ ...startingEquipment, powerBonus: 0 }]
+  visitor.equipmentSummary = Array.isArray(visitor.equipmentSummary)
+    ? visitor.equipmentSummary.filter(isValidEquipmentSummaryItem)
+    : []
+  if (visitor.equipmentSummary.length === 0) {
+    visitor.equipmentSummary.push({ ...startingEquipment, powerBonus: 0 })
+  }
   const inferredPowerBonus = Math.max(0, visitor.power - (42 + visitor.level * 9))
-  if (inferredPowerBonus > 0) {
+  const summarizedPowerBonus = visitor.equipmentSummary.reduce((sum, item) => sum + item.powerBonus, 0)
+  if (inferredPowerBonus > summarizedPowerBonus) {
     visitor.equipmentSummary.push({
       name: 'Equipment acquired at the tavern',
       type: visitor.interestedItemTypes[0] ?? startingEquipment.type,
-      powerBonus: inferredPowerBonus
+      powerBonus: inferredPowerBonus - summarizedPowerBonus
     })
   }
+}
+
+function isValidEquipmentSummaryItem(value: unknown): value is VisitorEquipmentSummaryItem {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Partial<VisitorEquipmentSummaryItem>
+  return typeof item.name === 'string'
+    && item.name.trim().length > 0
+    && allItemTypes.includes(item.type as ItemType)
+    && typeof item.powerBonus === 'number'
+    && Number.isFinite(item.powerBonus)
+    && item.powerBonus >= 0
+    && (item.itemId === undefined || typeof item.itemId === 'string')
 }
 
 function stableIndex(value: string, length: number): number {

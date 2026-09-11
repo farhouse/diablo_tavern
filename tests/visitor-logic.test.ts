@@ -189,6 +189,22 @@ describe('visitor trade and commission loop', () => {
     expect(migratedVisitor.power).toBe(visitor.power)
   })
 
+  it('repairs malformed and partial equipment summaries without losing power', () => {
+    const save = createSaveGame('partial-visitor-equipment')
+    const visitor = save.visitRound.visitors[0]!
+    visitor.power += 13
+    visitor.equipmentSummary = [
+      visitor.equipmentSummary[0]!,
+      { name: '', type: 'weapon', powerBonus: Number.NaN }
+    ]
+
+    const migrated = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
+    const summary = migrated.visitRound.visitors[0]!.equipmentSummary
+
+    expect(summary.every((item) => item.name && item.type && Number.isFinite(item.powerBonus))).toBe(true)
+    expect(summary.reduce((sum, item) => sum + item.powerBonus, 0)).toBe(13)
+  })
+
   it('replaces a round only after both visitors resolve', () => {
     const save = createSaveGame('rounds')
     const firstRoundId = save.visitRound.id

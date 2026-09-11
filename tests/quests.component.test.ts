@@ -116,4 +116,55 @@ describe('legacy expedition recovery', () => {
     expect(wrapper.text()).toContain('No legacy expeditions remain')
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
   })
+
+  it('reconciles a timed recall that was persisted before its response was lost', async () => {
+    const save = createSaveGame('lost-recall')
+    const expedition = returningExpedition('2026-09-10T20:00:30.000Z')
+    expedition.status = 'exploring'
+    delete expedition.returnStartedAt
+    delete expedition.returnsAt
+    save.activeExpeditions = [expedition]
+    let responseWasLost = false
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/savegame') return structuredClone(save)
+      if (url === '/api/quests') return quests
+      if (url === '/api/expeditions/recall') {
+        expedition.status = 'returning'
+        expedition.returnStartedAt = new Date().toISOString()
+        expedition.returnsAt = '2026-09-10T20:00:30.000Z'
+        save.revision += 1
+        responseWasLost = true
+        throw new Error('Connection closed after commit')
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    vi.stubGlobal('$fetch', fetchMock)
+
+    const wrapper = mount(QuestsPage, {
+      global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } }
+    })
+    await flushPromises()
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+
+    expect(responseWasLost).toBe(true)
+    expect(wrapper.text()).toContain('Legacy expedition recall started. Its return time is persisted.')
+    expect(wrapper.text()).toContain('Returns in 20s.')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('renders invalid persisted return times as unavailable instead of NaN', async () => {
+    const save = createSaveGame('invalid-return-time')
+    save.activeExpeditions = [returningExpedition('not-a-date')]
+    vi.stubGlobal('$fetch', vi.fn(async (url: string) => url === '/api/savegame' ? structuredClone(save) : quests))
+
+    const wrapper = mount(QuestsPage, {
+      global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } }
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="return-eta"]').text()).toContain('unavailable')
+    expect(wrapper.text()).not.toContain('NaN')
+    expect(wrapper.get('button').attributes('disabled')).toBeDefined()
+  })
 })

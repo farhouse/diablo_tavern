@@ -72,16 +72,19 @@ function questName(id: string): string {
 }
 
 function portalActive(until?: string): boolean {
-  return Boolean(until && new Date(until).getTime() > now.value)
+  const timestamp = until ? new Date(until).getTime() : Number.NaN
+  return Number.isFinite(timestamp) && timestamp > now.value
 }
 
 function returnReady(returnsAt?: string): boolean {
-  return Boolean(returnsAt && new Date(returnsAt).getTime() <= now.value)
+  const timestamp = returnTimestamp(returnsAt)
+  return timestamp !== undefined && timestamp <= now.value
 }
 
 function returnEta(returnsAt?: string): string {
-  if (!returnsAt) return 'Return time is unavailable. Refresh before processing.'
-  const remaining = Math.max(0, new Date(returnsAt).getTime() - now.value)
+  const timestamp = returnTimestamp(returnsAt)
+  if (timestamp === undefined) return 'Return time is unavailable. Refresh before processing.'
+  const remaining = Math.max(0, timestamp - now.value)
   if (remaining === 0) return 'Ready to process.'
   const seconds = Math.ceil(remaining / 1000)
   const minutes = Math.floor(seconds / 60)
@@ -94,8 +97,9 @@ function recoveryDisabledReason(expedition: ActiveExpedition): string {
     ? 'This recovery is being processed.'
     : 'Another expedition recovery is being processed.'
   if (expedition.status === 'returning' && !returnReady(expedition.returnsAt)) {
-    return expedition.returnsAt
-      ? `Wait until ${new Date(expedition.returnsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.`
+    const timestamp = returnTimestamp(expedition.returnsAt)
+    return timestamp !== undefined
+      ? `Wait until ${new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.`
       : 'Refresh to obtain the persisted return time.'
   }
   return ''
@@ -124,13 +128,25 @@ async function recover(expedition: ActiveExpedition) {
     const mutationError = game.error
     await game.load()
     const persisted = game.save?.activeExpeditions.find((entry) => entry.id === expedition.id)
-    if (!persisted) {
+    const recallPersisted = expedition.status !== 'returning'
+      && persisted?.status === 'returning'
+      && returnTimestamp(persisted.returnsAt) !== undefined
+    if (!persisted || recallPersisted) {
+      game.error = ''
       noticeTone.value = 'success'
-      notice.value = 'Legacy expedition returned and its recovered resources are persisted.'
+      notice.value = persisted
+        ? 'Legacy expedition recall started. Its return time is persisted.'
+        : 'Legacy expedition returned and its recovered resources are persisted.'
     } else if (!game.error) {
       game.error = mutationError
     }
   } finally { busyId.value = '' }
+}
+
+function returnTimestamp(value?: string): number | undefined {
+  if (!value) return undefined
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) ? timestamp : undefined
 }
 </script>
 

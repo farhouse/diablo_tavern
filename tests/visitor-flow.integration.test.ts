@@ -64,23 +64,36 @@ describe('visitor HTTP/store/UI journey', () => {
     persistedSave = createSaveGame('journey')
     const originalRoundId = persistedSave.visitRound.id
     const visitorIds = persistedSave.visitRound.visitors.map((visitor) => visitor.id)
-    const filler = persistedSave.stash[0]!
+    const soldItem = persistedSave.stash[0]!
+    const filler = soldItem
     while (persistedSave.stash.length < persistedSave.stashLimit) {
       persistedSave.stash.push({ ...structuredClone(filler), id: `full-stash-${persistedSave.stash.length}` })
     }
     for (const visitor of persistedSave.visitRound.visitors) {
-      visitor.state = 'traded'
       visitor.commissionOptions = [{
         regionId: 'blood-moor', durationMs: 2_000, successChance: 1,
         fullRewardGold: 68, partialRewardGold: 23
       }]
     }
+    const firstVisitor = persistedSave.visitRound.visitors[0]!
+    firstVisitor.acceptedItemTypes = [soldItem.type]
+    firstVisitor.interestedItemTypes = [soldItem.type]
+    firstVisitor.buyQuotes = { [soldItem.id]: soldItem.value }
+    firstVisitor.budget = soldItem.value
+    const secondVisitor = persistedSave.visitRound.visitors[1]!
+    secondVisitor.offers = [{
+      id: 'integration-offer',
+      item: { ...structuredClone(filler), id: 'integration-purchase' },
+      price: 1
+    }]
 
     const commissionRequestIds: string[] = []
     let loseFirstCommissionResponse = true
 
-    const [{ default: saveHandler }, { default: commissionHandler }, { default: claimHandler }] = await Promise.all([
+    const [{ default: saveHandler }, { default: buyHandler }, { default: sellHandler }, { default: commissionHandler }, { default: claimHandler }] = await Promise.all([
       import('../server/api/savegame/index.get'),
+      import('../server/api/visitors/[visitorId]/buy.post'),
+      import('../server/api/visitors/[visitorId]/sell.post'),
       import('../server/api/visitors/[visitorId]/commission.post'),
       import('../server/api/visitors/[visitorId]/claim.post')
     ])
@@ -89,7 +102,7 @@ describe('visitor HTTP/store/UI journey', () => {
       if (url === '/api/quests') return quests
       if (url === '/api/savegame') return saveHandler({} as never)
 
-      const match = url.match(/^\/api\/visitors\/([^/]+)\/(commission|claim)$/)
+      const match = url.match(/^\/api\/visitors\/([^/]+)\/(buy|sell|commission|claim)$/)
       if (!match) throw new Error(`Unexpected request: ${url}`)
       const [, visitorId, operation] = match
       const requestId = options?.body?.requestId as string
@@ -97,7 +110,11 @@ describe('visitor HTTP/store/UI journey', () => {
       const event = { context: { params: { visitorId: visitorId! } }, body: options?.body }
       const response = operation === 'commission'
         ? await commissionHandler(event as never)
-        : await claimHandler(event as never)
+        : operation === 'sell'
+          ? await sellHandler(event as never)
+          : operation === 'buy'
+            ? await buyHandler(event as never)
+            : await claimHandler(event as never)
 
       if (operation === 'commission' && loseFirstCommissionResponse) {
         loseFirstCommissionResponse = false
@@ -111,6 +128,18 @@ describe('visitor HTTP/store/UI journey', () => {
       global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } }
     })
     await flushPromises()
+
+    await wrapper.get(`[data-testid="sell-${soldItem.id}"]`).trigger('click')
+    await flushPromises()
+    expect(persistedSave.visitRound.visitors[0]!.equipmentSummary).toContainEqual(expect.objectContaining({
+      itemId: soldItem.id,
+      name: soldItem.displayName
+    }))
+    expect(wrapper.text()).toContain(soldItem.displayName)
+
+    await wrapper.get('[data-testid="buy-integration-offer"]').trigger('click')
+    await flushPromises()
+    expect(persistedSave.stash).toHaveLength(persistedSave.stashLimit)
 
     await wrapper.get('[data-testid="review-blood-moor"]').trigger('click')
     await wrapper.get('[data-testid="confirm-blood-moor"]').trigger('click')
