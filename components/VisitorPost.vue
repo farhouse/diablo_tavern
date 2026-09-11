@@ -169,7 +169,7 @@
 
     <section v-else class="departed-state">
       <h3>The post is empty</h3>
-      <p class="muted">A new pair arrives when both visitors have left.</p>
+      <p class="muted">This post checks independently for a new visitor after its next arrival check.</p>
     </section>
 
     <footer v-if="visitor.state === 'open' || visitor.state === 'traded'" class="visitor-footer">

@@ -193,4 +193,16 @@ describe('VisitorPost', () => {
     expect(wrapper.text()).toContain('Processing…')
     expect(wrapper.text()).toContain('Another action is being processed')
   })
+
+  it('explains that an emptied post rotates independently', () => {
+    const wrapper = mount(VisitorPost, {
+      props: {
+        visitor: visitor({ state: 'departed', departedAt: '2026-09-10T20:01:00.000Z' }),
+        stash: [], gold: 450, stashLimit: 20, quests: [quest], now: Date.now()
+      }
+    })
+
+    expect(wrapper.text()).toContain('This post checks independently for a new visitor after its next arrival check.')
+    expect(wrapper.text()).not.toContain('pair')
+  })
 })
