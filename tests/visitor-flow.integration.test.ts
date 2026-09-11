@@ -326,7 +326,7 @@ describe('visitor HTTP/store/UI journey', () => {
     await flushPromises()
     await wrapper.get('[data-testid="buy-buy-first"]').trigger('click')
     await flushPromises()
-    expect(wrapper.get(`[data-testid="sell-${sellable.id}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-testid="sell-${sellable.id}"]`).exists()).toBe(true)
     await wrapper.get(`[data-testid="sell-${sellable.id}"]`).trigger('click')
     await flushPromises()
     expect(visitors(persistedSave)[0]!.trades.map((trade) => trade.kind)).toEqual(['player_bought', 'player_sold'])
