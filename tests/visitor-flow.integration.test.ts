@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSaveGame } from '../utils/game-logic'
 import { quests } from '../utils/game-data'
 import { visitorOperationKey } from '../server/utils/visitor-api'
+import { useGameStore } from '../stores/game'
 import type { SaveGame } from '../types/game'
 
 const visitors = (save: SaveGame) => save.visitRound.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])
@@ -88,10 +89,20 @@ describe('visitor HTTP/store/UI journey', () => {
     firstVisitor.interestedItemTypes = [soldItem.type]
     firstVisitor.buyQuotes = { [soldItem.id]: soldItem.value }
     firstVisitor.budget = soldItem.value
-    const secondVisitor = visitors(persistedSave)[1]!
-    secondVisitor.offers = [{
+    firstVisitor.offers = [{
       id: 'integration-offer',
       item: { ...structuredClone(filler), id: 'integration-purchase' },
+      price: 1
+    }]
+    const secondVisitor = visitors(persistedSave)[1]!
+    const secondSoldItem = persistedSave.stash[1]!
+    secondVisitor.acceptedItemTypes = [secondSoldItem.type]
+    secondVisitor.interestedItemTypes = [secondSoldItem.type]
+    secondVisitor.buyQuotes = { [secondSoldItem.id]: secondSoldItem.value }
+    secondVisitor.budget = secondSoldItem.value
+    secondVisitor.offers = [{
+      id: 'second-integration-offer',
+      item: { ...structuredClone(filler), id: 'second-integration-purchase' },
       price: 1
     }]
 
@@ -154,7 +165,15 @@ describe('visitor HTTP/store/UI journey', () => {
     expect(persistedSave.stash).toHaveLength(persistedSave.stashLimit)
     expect(persistedSave.stash.some((item) => item.id === 'integration-purchase')).toBe(true)
     expect(persistedSave.gold).toBe(goldBeforePurchase - 1)
-    expect(visitors(persistedSave)[1]!.offers[0]!.purchasedAt).toBeTruthy()
+    expect(visitors(persistedSave)[0]!.trades.map((trade) => trade.kind)).toEqual(['player_sold', 'player_bought'])
+    expect(visitors(persistedSave)[0]!.offers[0]!.purchasedAt).toBeTruthy()
+
+    await wrapper.get(`[data-testid="sell-${secondSoldItem.id}"]`).trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="buy-second-integration-offer"]').trigger('click')
+    await flushPromises()
+    expect(visitors(persistedSave)[1]!.trades.map((trade) => trade.kind)).toEqual(['player_sold', 'player_bought'])
+    expect(persistedSave.stash).toHaveLength(persistedSave.stashLimit)
 
     const commissionRandom = vi.spyOn(Math, 'random')
       .mockReturnValueOnce(0.01)
@@ -261,6 +280,79 @@ describe('visitor HTTP/store/UI journey', () => {
     expect(wrapper.find(`[aria-labelledby="visitor-${remaining!.id}"]`).exists()).toBe(true)
     expect(wrapper.findAll('.visitor-slot--empty')).toHaveLength(1)
     expect(wrapper.text()).toContain('Next arrival check')
+  })
+
+  it('supports buy then sell for one visitor, rejects a duplicate kind, and retries a lost dismiss response', async () => {
+    persistedSave = createSaveGame('reverse-trade-journey')
+    const currentVisitor = visitors(persistedSave)[0]!
+    const sellable = persistedSave.stash[0]!
+    currentVisitor.acceptedItemTypes = [sellable.type]
+    currentVisitor.interestedItemTypes = [sellable.type]
+    currentVisitor.buyQuotes = { [sellable.id]: 30 }
+    currentVisitor.budget = 200
+    currentVisitor.offers = [
+      { id: 'buy-first', item: { ...structuredClone(sellable), id: 'buy-first-item' }, price: 1 },
+      { id: 'duplicate-buy', item: { ...structuredClone(sellable), id: 'duplicate-buy-item' }, price: 1 }
+    ]
+    let loseDismissResponse = true
+    const dismissRequestIds: string[] = []
+    const [{ default: saveHandler }, { default: buyHandler }, { default: sellHandler }, { default: dismissHandler }] = await Promise.all([
+      import('../server/api/savegame/index.get'),
+      import('../server/api/visitors/[visitorId]/buy.post'),
+      import('../server/api/visitors/[visitorId]/sell.post'),
+      import('../server/api/visitors/[visitorId]/dismiss.post')
+    ])
+    vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: Record<string, any>) => {
+      if (url === '/api/quests') return quests
+      if (url === '/api/savegame') return saveHandler({} as never)
+      const match = url.match(/^\/api\/visitors\/([^/]+)\/(buy|sell|dismiss)$/)
+      if (!match) throw new Error(`Unexpected request: ${url}`)
+      const [, visitorId, operation] = match
+      const event = { context: { params: { visitorId: visitorId! } }, body: options?.body }
+      const response = operation === 'buy'
+        ? await buyHandler(event as never)
+        : operation === 'sell' ? await sellHandler(event as never) : await dismissHandler(event as never)
+      if (operation === 'dismiss') {
+        dismissRequestIds.push(options?.body?.requestId)
+        if (loseDismissResponse) {
+          loseDismissResponse = false
+          throw new Error('Network disconnected after dismiss commit')
+        }
+      }
+      return response
+    }))
+
+    const wrapper = mount(TavernPage, { global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } } })
+    await flushPromises()
+    await wrapper.get('[data-testid="buy-buy-first"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get(`[data-testid="sell-${sellable.id}"]`).exists()).toBe(true)
+    await wrapper.get(`[data-testid="sell-${sellable.id}"]`).trigger('click')
+    await flushPromises()
+    expect(visitors(persistedSave)[0]!.trades.map((trade) => trade.kind)).toEqual(['player_bought', 'player_sold'])
+
+    await expect(useGameStore().buyFromVisitor(currentVisitor.id, 'duplicate-buy')).rejects.toThrow('already completed a sale')
+    await wrapper.get(`[data-testid="dismiss-${currentVisitor.id}"]`).trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Network disconnected after dismiss commit')
+    expect(wrapper.find(`[aria-labelledby="visitor-${currentVisitor.id}"]`).exists()).toBe(true)
+    await wrapper.get(`[data-testid="dismiss-${currentVisitor.id}"]`).trigger('click')
+    await flushPromises()
+    expect(dismissRequestIds).toHaveLength(2)
+    expect(dismissRequestIds[1]).toBe(dismissRequestIds[0])
+    expect(wrapper.find(`[aria-labelledby="visitor-${currentVisitor.id}"]`).exists()).toBe(false)
+    expect(wrapper.findAll('.visitor-slot--empty')).toHaveLength(1)
+  })
+
+  it('rejects malformed optionId instead of treating it as a legacy region', async () => {
+    persistedSave = createSaveGame('invalid-option')
+    visitors(persistedSave)[0]!.state = 'traded'
+    const { default: commissionHandler } = await import('../server/api/visitors/[visitorId]/commission.post')
+
+    await expect(commissionHandler({
+      context: { params: { visitorId: visitors(persistedSave)[0]!.id } },
+      body: { requestId: 'invalid-option-request', optionId: 'blood-moor' }
+    } as never)).rejects.toMatchObject({ statusCode: 400 })
   })
 })
 

@@ -116,15 +116,16 @@
             <div><dt>Duration</dt><dd>{{ duration(option.durationMs) }}</dd></div>
             <div><dt>Full reward</dt><dd>{{ option.fullRewardGold }}g + item</dd></div>
           </dl>
+          <ul class="mission-consequences">
+            <li>Complete: {{ option.fullRewardGold }}g and one item if stash has room.</li>
+            <li>Partial: {{ option.partialRewardGold }}g.</li>
+            <li>Failure: {{ option.failureConsequence }}</li>
+          </ul>
           <button :data-testid="`review-${option.optionId}`" class="btn" type="button" :aria-expanded="reviewingOptionId === option.optionId" :aria-controls="`review-${visitor.id}-${option.optionId}`" @click="toggleReview(option.optionId)">
-            {{ reviewingOptionId === option.optionId ? 'Hide consequences' : 'Review consequences' }}
+            {{ reviewingOptionId === option.optionId ? 'Cancel selection' : `Select ${option.optionId}` }}
           </button>
           <div v-if="reviewingOptionId === option.optionId" :id="`review-${visitor.id}-${option.optionId}`" class="mission-review">
-            <ul>
-              <li>Complete: {{ option.fullRewardGold }}g and one item if stash has room.</li>
-              <li>Partial: {{ option.partialRewardGold }}g.</li>
-              <li>Failure: {{ option.failureConsequence }}</li>
-            </ul>
+            <p>Confirm this persisted option. The visitor will occupy this post until the return is claimed.</p>
             <button
               :data-testid="`confirm-${option.optionId}`"
               class="btn primary"
@@ -382,7 +383,7 @@ function titleCase(value: string): string {
 .risk-chip--high { color: var(--bad); }
 .trade-complete { color: var(--ok); }
 .mission-review { border-top: 1px solid var(--line); display: grid; gap: 0.65rem; grid-column: 1 / -1; padding-top: 0.75rem; }
-.mission-review ul { color: var(--muted); display: grid; gap: 0.25rem; margin: 0; padding-left: 1.2rem; }
+.mission-consequences { color: var(--muted); display: grid; gap: 0.25rem; grid-column: 1 / -1; margin: 0; padding-left: 1.2rem; }
 .impact-note { background: #17231a; border: 1px solid #315b3b; border-radius: 8px; display: grid; gap: 0.25rem; padding: 0.8rem; }
 .away-state, .return-state, .departed-state { background: #14120f; border-radius: 8px; padding: 1rem; }
 .away-state { align-items: center; display: flex; gap: 0.8rem; }

@@ -50,7 +50,7 @@
           @claim="claim"
           @dismiss="dismiss"
         />
-        <article v-else class="visitor-slot visitor-slot--empty" role="status" :aria-labelledby="`empty-slot-${slot.id}`">
+        <article v-else class="visitor-slot visitor-slot--empty" :aria-labelledby="`empty-slot-${slot.id}`">
           <span class="empty-sigil" aria-hidden="true">{{ index + 1 }}</span>
           <div>
             <h2 :id="`empty-slot-${slot.id}`">Visitor post {{ index + 1 }} is empty</h2>

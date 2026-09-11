@@ -103,9 +103,9 @@ describe('VisitorPost', () => {
     expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('1m 48s')
     expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('122g')
 
-    await wrapper.get('[data-testid="review-risky"]').trigger('click')
     expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain(riskyOption.failureConsequence)
     expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('Partial: 32g')
+    await wrapper.get('[data-testid="review-risky"]').trigger('click')
     await wrapper.get('[data-testid="confirm-risky"]').trigger('click')
     expect(wrapper.emitted('commission')).toEqual([['visitor-1', 'risky']])
   })

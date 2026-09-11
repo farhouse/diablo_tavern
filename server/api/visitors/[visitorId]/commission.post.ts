@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   const visitorId = getRouterParam(event, 'visitorId') || ''
   const body = await readVisitorMutation(event)
   const selection = typeof body.optionId === 'string'
-    ? requireString(body.optionId, 'optionId')
+    ? requireCommissionOptionId(body.optionId)
     : requireString(body.regionId, 'regionId')
   try {
     return await mutateSaveGameAtomic(user.id, body.requestId, visitorOperationKey('commission', visitorId, selection), (save) => assignVisitorCommission(save, visitorId, selection))
@@ -17,3 +17,11 @@ export default defineEventHandler(async (event) => {
     visitorMutationError(error, 'Cannot assign commission')
   }
 })
+
+function requireCommissionOptionId(value: unknown): 'safe' | 'risky' {
+  const optionId = requireString(value, 'optionId')
+  if (optionId !== 'safe' && optionId !== 'risky') {
+    throw createError({ statusCode: 400, statusMessage: 'optionId must be safe or risky' })
+  }
+  return optionId
+}
