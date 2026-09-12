@@ -37,13 +37,6 @@ for (const viewport of viewports) {
         const posts = [...document.querySelectorAll<HTMLElement>('.visitor-grid > .visitor-post, .visitor-grid > .visitor-slot')]
         const tradeColumns = document.querySelector<HTMLElement>('.trade-columns')
         const missionOption = document.querySelector<HTMLElement>('.mission-option')
-        const mobileControls = [...document.querySelectorAll<HTMLElement>([
-          '[data-testid^="buy-"]',
-          '[data-testid^="sell-"]',
-          '[data-testid^="review-"]',
-          '[data-testid^="claim-"]',
-          '[data-testid^="dismiss-"]'
-        ].join(', '))]
         return {
           innerWidth: window.innerWidth,
           scrollWidth: document.documentElement.scrollWidth,
@@ -55,20 +48,6 @@ for (const viewport of viewports) {
           posts: posts.map((post) => {
             const rect = post.getBoundingClientRect()
             return { width: rect.width, height: rect.height, top: rect.top }
-          }),
-          mobileControls: mobileControls.map((control) => {
-            const container = control.parentElement
-            const containerStyle = container ? getComputedStyle(container) : undefined
-            const horizontalPadding = containerStyle
-              ? Number.parseFloat(containerStyle.paddingLeft) + Number.parseFloat(containerStyle.paddingRight)
-              : 0
-            const horizontalBorder = containerStyle
-              ? Number.parseFloat(containerStyle.borderLeftWidth) + Number.parseFloat(containerStyle.borderRightWidth)
-              : 0
-            return {
-              width: control.getBoundingClientRect().width,
-              containerWidth: (container?.getBoundingClientRect().width ?? 0) - horizontalPadding - horizontalBorder
-            }
           })
         }
       })
@@ -98,9 +77,39 @@ for (const viewport of viewports) {
         expect(geometry.posts[1]!.top).toBeGreaterThan(geometry.posts[0]!.top)
         expect(geometry.tradeColumns).toBe(1)
         expect(geometry.missionColumns).toBe(1)
-        expect(geometry.mobileControls.length).toBeGreaterThan(0)
-        for (const control of geometry.mobileControls) {
-          expect(Math.abs(control.width - control.containerWidth)).toBeLessThanOrEqual(1)
+        const mobileControls = page.locator([
+          '[data-testid^="buy-"]',
+          '[data-testid^="sell-"]',
+          '[data-testid^="review-"]',
+          '[data-testid^="claim-"]',
+          '[data-testid^="dismiss-"]'
+        ].join(', '))
+        const mobileControlCount = await mobileControls.count()
+        expect(mobileControlCount).toBeGreaterThan(0)
+
+        for (let index = 0; index < mobileControlCount; index += 1) {
+          const control = mobileControls.nth(index)
+          const container = control.locator('..')
+          await expect(control).toBeVisible()
+          await expect(container).toBeVisible()
+
+          const controlBox = await control.boundingBox()
+          const containerBox = await container.boundingBox()
+          expect(controlBox).not.toBeNull()
+          expect(containerBox).not.toBeNull()
+          expect(controlBox!.width).toBeGreaterThan(0)
+          expect(controlBox!.height).toBeGreaterThan(0)
+          expect(containerBox!.width).toBeGreaterThan(0)
+          expect(containerBox!.height).toBeGreaterThan(0)
+
+          const containerInsets = await container.evaluate((element) => {
+            const style = getComputedStyle(element)
+            return Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight)
+              + Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.borderRightWidth)
+          })
+          const containerContentWidth = containerBox!.width - containerInsets
+          expect(containerContentWidth).toBeGreaterThan(0)
+          expect(Math.abs(controlBox!.width - containerContentWidth)).toBeLessThanOrEqual(1)
         }
       }
     })

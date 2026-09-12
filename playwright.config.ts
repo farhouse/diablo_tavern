@@ -12,12 +12,12 @@ export default defineConfig({
   fullyParallel: false,
   timeout: 30_000,
   webServer: {
-    command: 'pnpm build && pnpm preview',
+    command: 'node scripts/run-responsive-preview.mjs',
     env: {
       ...process.env,
       HOST: '127.0.0.1',
       PORT: '3105',
-      NUXT_PUBLIC_BUILD_SHA: buildSha
+      PLAYWRIGHT_EXPECTED_SHA: buildSha
     },
     reuseExistingServer: false,
     timeout: 180_000,

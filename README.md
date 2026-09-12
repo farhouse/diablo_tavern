@@ -79,7 +79,10 @@ preview on `127.0.0.1:3105`. Authentication and Tavern APIs use deterministic
 fixtures, so MongoDB and demo credentials are not required. The runner refuses to
 reuse an existing server and checks the Git SHA embedded in its compiled Nitro
 bundle through `/api/build-info` before measuring the 2K, desktop, and mobile
-layouts.
+layouts. Its Node launcher deliberately gives the preview a different runtime SHA
+than the build, so that check fails if the endpoint ever stops reading the compiled
+value. The launcher also forwards termination signals and cleans up its child
+process on every exit path.
 
 Install Chromium once with `pnpm exec playwright install chromium` when Playwright's
 bundled browser is absent. To use a system Chromium build instead, set
