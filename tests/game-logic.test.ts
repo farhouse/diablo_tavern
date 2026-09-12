@@ -575,6 +575,28 @@ describe('game logic', () => {
       expect(expedition!.events.length).toBe(initialEventCount)
     })
 
+    it('repairs an invalid legacy return time so recall can establish a valid ETA', () => {
+      const startedAt = new Date('2026-01-01T00:00:00.000Z')
+      const recallAt = new Date('2026-01-01T00:00:10.000Z')
+      const save = createSaveGame('invalid-return-time')
+      const barbarian = createHero('barbarian')
+      save.heroes.push(barbarian)
+      startExpedition(save, 'blood-moor', [barbarian.id], startedAt)
+      const expedition = save.activeExpeditions[0]!
+      expedition.status = 'returning'
+      expedition.returnStartedAt = 'not-a-date'
+      expedition.returnsAt = 'not-a-date'
+
+      normalizeSaveGame(save)
+      expect(expedition.status).toBe('exploring')
+      expect(expedition.returnStartedAt).toBeUndefined()
+      expect(expedition.returnsAt).toBeUndefined()
+
+      recallExpedition(save, expedition.id, recallAt)
+      expect(expedition.status).toBe('returning')
+      expect(Number.isFinite(new Date(expedition.returnsAt!).getTime())).toBe(true)
+    })
+
     describe('caravan logic', () => {
     it('new save has caravan with 3 hero capacity, 1 expedition, 20 stash', () => {
       const save = createSaveGame('user-1')
@@ -622,10 +644,11 @@ describe('game logic', () => {
     it('stash capacity upgrades work', () => {
       const save = createSaveGame('user-1')
       save.gold = 10000
-      save.materials = 500
+      save.materials = 0
       upgradeCaravan(save, 'stashWagon')
       expect(getStashCapacity(save)).toBe(30)
       expect(save.stashLimit).toBe(30)
+      expect(save.materials).toBe(0)
       upgradeCaravan(save, 'stashWagon')
       expect(getStashCapacity(save)).toBe(45)
     })

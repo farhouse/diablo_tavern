@@ -1,168 +1,237 @@
 <template>
-  <main class="page">
-    <div class="section-title">
+  <main class="page tavern-page">
+    <header class="tavern-heading">
       <div>
-        <h1>Tavern</h1>
-        <p class="muted">Hire heroes and manage your active roster. {{ activeHeroCount }} / {{ heroCap }} capacity.</p>
+        <p class="round-mark">Visitor round {{ game.save?.visitRound.number ?? '—' }}</p>
+        <h1>Tavern floor</h1>
+        <p class="muted">Read each traveler, buy and sell once each if useful, then send a commission or let them continue down the road.</p>
       </div>
-      <button class="btn ghost" type="button" @click="game.load">Refresh</button>
+      <div class="tavern-summary" aria-label="Current resources">
+        <span><strong>{{ game.save?.gold ?? 0 }}g</strong> in coffer</span>
+        <span><strong>{{ stashUsed }}/{{ stashLimit }}</strong> stash</span>
+        <button class="btn ghost" type="button" :disabled="game.loading" @click="reload()">
+          {{ game.loading ? 'Refreshing…' : 'Refresh from server' }}
+        </button>
+      </div>
+    </header>
+
+    <div v-if="game.error" class="page-alert page-alert--error" role="alert">
+      <div>
+        <strong>The tavern could not update.</strong>
+        <p>{{ game.error }} Your last confirmed state is still shown.</p>
+      </div>
+      <button class="btn" type="button" :disabled="game.loading" @click="reload()">Try again</button>
     </div>
+    <p v-if="notice" class="page-alert page-alert--success" role="status">{{ notice }}</p>
 
-    <p v-if="game.error" class="error">{{ game.error }}</p>
-
-    <section class="grid two">
-      <article class="card stack">
-        <h2>Hire</h2>
-        <p class="muted">Select one candidate to inspect stats before hiring. Cost: {{ hireCost }} gold.</p>
-        <div class="grid two">
-          <button
-            v-for="option in classOptions"
-            :key="option.value"
-            class="card hire-card"
-            :class="{ selected: selectedClass === option.value }"
-            type="button"
-            @click="toggleCandidate(option.value)"
-          >
-            <span class="row">
-              <strong>{{ option.label }}</strong>
-              <span class="tag">{{ option.role }}</span>
-            </span>
-            <span class="muted">{{ option.description }}</span>
-          </button>
-        </div>
-
-        <div v-if="selectedCandidate" class="card stack">
-          <div class="row">
-            <div>
-              <h3>{{ selectedCandidate.label }}</h3>
-              <p class="muted">{{ selectedCandidate.description }}</p>
-            </div>
-            <span class="tag">{{ hireCost }} gold</span>
-          </div>
-
-          <div class="stat-grid">
-            <span class="stat">Strength {{ selectedPreview.baseStats.strength }}</span>
-            <span class="stat">Dexterity {{ selectedPreview.baseStats.dexterity }}</span>
-            <span class="stat">Vitality {{ selectedPreview.baseStats.vitality }}</span>
-            <span class="stat">Energy {{ selectedPreview.baseStats.energy }}</span>
-            <span class="stat">Life {{ selectedPreview.derivedStats.life }}</span>
-            <span class="stat">Mana {{ selectedPreview.derivedStats.mana }}</span>
-            <span class="stat">Attack {{ selectedPreview.derivedStats.attackPower }}</span>
-            <span class="stat">Defense {{ selectedPreview.derivedStats.defense }}</span>
-          </div>
-
-          <p v-if="!hasEnoughGold" class="error">Need {{ hireCost - (game.save?.gold || 0) }} more gold.</p>
-          <p v-else-if="isRosterFull" class="error">Roster is full. Upgrade Wagons in Caravan.</p>
-
-          <div class="row">
-            <button class="btn primary" type="button" :disabled="!canHireSelected || hiring" @click="hireSelected">
-              {{ hiring ? 'Hiring...' : 'Hire selected' }}
-            </button>
-            <button class="btn ghost" type="button" @click="selectedClass = null">Clear</button>
-          </div>
-        </div>
-
-        <p v-else class="muted">No candidate selected.</p>
-      </article>
-
-      <article class="card stack">
-        <h2>Roster</h2>
-        <p v-if="!activeHeroes.length" class="muted">No active heroes hired yet.</p>
-        <div v-for="hero in activeHeroes" :key="hero.id" class="card">
-          <div class="row">
-            <div>
-              <h3>{{ hero.name }} <span class="muted">Lv {{ hero.level }}</span></h3>
-              <span class="tag" :class="{ bad: hero.status === 'injured', ok: hero.status === 'available' }">{{ hero.status }}</span>
-            </div>
-            <div class="row">
-              <button v-if="hero.status === 'injured'" class="btn" type="button" @click="game.recover(hero.id)">Recover</button>
-              <NuxtLink class="btn" :to="`/heroes/${hero.id}`">Details</NuxtLink>
-            </div>
-          </div>
-          <div class="stat-grid">
-            <span class="stat">Power {{ hero.derivedStats.attackPower }}</span>
-            <span class="stat">Defense {{ hero.derivedStats.defense }}</span>
-            <span class="stat">Life {{ hero.derivedStats.life }}</span>
-          </div>
-        </div>
+    <section v-if="game.loading && !game.save" class="visitor-grid" aria-label="Loading visitors" aria-busy="true">
+      <article v-for="seat in 2" :key="seat" class="visitor-skeleton">
+        <span class="skeleton-line skeleton-line--title" />
+        <span class="skeleton-line" />
+        <span class="skeleton-block" />
       </article>
     </section>
 
-    <section v-if="cemeteryHeroes.length" class="stack" style="margin-top: 1rem;">
-      <article class="card stack cemetery">
-        <div class="row">
+    <section v-else-if="slots.length" id="commissions" class="visitor-grid" aria-label="Visitor posts">
+      <template v-for="(slot, index) in slots" :key="slot.id">
+        <VisitorPost
+          v-if="slot.visitor"
+          :visitor="slot.visitor"
+          :stash="game.save?.stash ?? []"
+          :gold="game.save?.gold ?? 0"
+          :stash-limit="stashLimit"
+          :quests="game.quests"
+          :now="now"
+          :pending="game.isVisitorMutationPending(slot.visitor.id)"
+          :trade-impact="tradeImpacts[slot.visitor.id]"
+          @buy="buy"
+          @sell="sell"
+          @commission="commission"
+          @claim="claim"
+          @dismiss="dismiss"
+        />
+        <article v-else class="visitor-slot visitor-slot--empty" :aria-labelledby="`empty-slot-${slot.id}`">
+          <span class="empty-sigil" aria-hidden="true">{{ index + 1 }}</span>
           <div>
-            <h2>Cemetery</h2>
-            <p class="muted">{{ cemeteryHeroes.length }} fallen {{ cemeteryHeroes.length === 1 ? 'hero' : 'heroes' }} remembered here.</p>
+            <h2 :id="`empty-slot-${slot.id}`">Visitor post {{ index + 1 }} is empty</h2>
+            <p>A traveler may arrive when the server evaluates this post.</p>
+            <p class="next-check"><strong>Next arrival check:</strong> {{ arrivalLabel(slot.nextArrivalCheckAt) }}</p>
+            <p class="muted">Arrival is not guaranteed. This post remains available while other visitors travel.</p>
           </div>
-          <span class="tag bad">{{ cemeteryHeroes.length }} dead</span>
-        </div>
-
-        <div class="grid three">
-          <div v-for="hero in cemeteryHeroes" :key="hero.id" class="card fallen-hero">
-            <div class="row">
-              <div>
-                <h3>{{ hero.name }} <span class="muted">Lv {{ hero.level }}</span></h3>
-                <span class="tag bad">dead</span>
-              </div>
-              <NuxtLink class="btn ghost" :to="`/heroes/${hero.id}`">Details</NuxtLink>
-            </div>
-            <div class="stat-grid">
-              <span class="stat">Power {{ hero.derivedStats.attackPower }}</span>
-              <span class="stat">Defense {{ hero.derivedStats.defense }}</span>
-              <span class="stat">Life {{ hero.derivedStats.life }}</span>
-            </div>
-          </div>
-        </div>
-      </article>
+        </article>
+      </template>
     </section>
+
+    <section v-else class="empty-tavern">
+      <h2>No visitors are seated</h2>
+      <p class="muted">Refresh to restore the two persisted visitor posts and their arrival schedules.</p>
+      <button class="btn primary" type="button" :disabled="game.loading" @click="reload()">Restore round</button>
+    </section>
+
+    <aside class="tavern-rules" aria-label="Trade rules">
+      <h2>The house rules</h2>
+      <div>
+        <p><strong>One purchase and one sale per traveler.</strong> Either can happen first; prices and quotes stay fixed for this visit.</p>
+        <p><strong>No hidden sale.</strong> Unidentified goods must visit the Appraiser before a traveler will buy them.</p>
+        <p><strong>Safe retries.</strong> Buttons lock while requests are in flight; a network retry reuses the same request identity.</p>
+      </div>
+    </aside>
   </main>
 </template>
 
 <script setup lang="ts">
-import type { HeroClass } from '~/types/game'
-import { heroClassStats } from '~/utils/game-data'
-import { createHero, getHeroCapacity, getActiveHeroCount, getHireCost } from '~/utils/game-logic'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import VisitorPost from '~/components/VisitorPost.vue'
+import { useGameStore } from '~/stores/game'
+import type { Visitor } from '~/types/game'
+
+interface TradeImpact {
+  powerBefore: number
+  powerAfter: number
+  chances: Array<{ optionId: 'safe' | 'risky'; before: number; after: number }>
+}
 
 const game = useGameStore()
-await game.load()
+const now = ref(Date.now())
+const notice = ref('')
+const tradeImpacts = ref<Record<string, TradeImpact>>({})
+const slots = computed(() => game.save?.visitRound.slots ?? [])
+const visitors = computed(() => slots.value.flatMap((slot) => slot.visitor ? [slot.visitor] : []))
+const stashUsed = computed(() => game.save?.stash.length ?? 0)
+const stashLimit = computed(() => game.save?.stashLimit ?? 0)
+let timer: ReturnType<typeof setInterval> | undefined
+let lastReturnRefresh = 0
 
-const selectedClass = ref<HeroClass | null>(null)
-const hiring = ref(false)
+onMounted(async () => {
+  await reload()
+  timer = setInterval(() => {
+    now.value = Date.now()
+    const returnIsDue = visitors.value.some((visitor) => visitor.state === 'commissioned'
+      && visitor.commission
+      && new Date(visitor.commission.finishesAt).getTime() <= now.value)
+    const arrivalCheckIsDue = slots.value.some((slot) => !slot.visitor && slot.nextArrivalCheckAt
+      && new Date(slot.nextArrivalCheckAt).getTime() <= now.value)
+    if ((returnIsDue || arrivalCheckIsDue) && !game.loading && now.value - lastReturnRefresh >= 5000) {
+      lastReturnRefresh = now.value
+      void reload(false)
+    }
+  }, 1000)
+})
 
-const heroCap = computed(() => game.save ? getHeroCapacity(game.save) : 0)
-const activeHeroCount = computed(() => game.save ? getActiveHeroCount(game.save) : 0)
-const activeHeroes = computed(() => game.save?.heroes.filter(hero => hero.status !== 'dead') ?? [])
-const cemeteryHeroes = computed(() => game.save?.heroes.filter(hero => hero.status === 'dead') ?? [])
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer)
+})
 
-const classOptions: Array<{ label: string; value: HeroClass; role: string; description: string }> = [
-  { label: 'Barbarian', value: 'barbarian', role: 'Frontline', description: 'High life and physical attack.' },
-  { label: 'Sorceress', value: 'sorceress', role: 'Damage', description: 'High mana and burst power, low defense.' },
-  { label: 'Paladin', value: 'paladin', role: 'Defense', description: 'Strong vitality and reliable defenses.' },
-  { label: 'Necromancer', value: 'necromancer', role: 'Balanced', description: 'Flexible stats with strong energy growth.' }
-]
-
-const hireCost = computed(() => game.save ? getHireCost(game.save) : 120)
-const selectedCandidate = computed(() => classOptions.find((option) => option.value === selectedClass.value))
-const selectedPreview = computed(() => createHero(selectedClass.value || 'barbarian'))
-const hasEnoughGold = computed(() => Boolean(game.save && game.save.gold >= hireCost.value))
-const isRosterFull = computed(() => Boolean(game.save && activeHeroCount.value >= heroCap.value))
-const canHireSelected = computed(() => Boolean(selectedClass.value && hasEnoughGold.value && !isRosterFull.value))
-
-function toggleCandidate(heroClass: HeroClass) {
-  selectedClass.value = selectedClass.value === heroClass ? null : heroClass
-}
-
-async function hireSelected() {
-  if (!selectedClass.value || !canHireSelected.value || hiring.value) return
-  hiring.value = true
+async function reload(clearNotice = true) {
+  if (clearNotice) notice.value = ''
   try {
-    await game.hire(selectedClass.value)
-    selectedClass.value = null
+    await game.load()
   } catch {
-    // Store already records the error.
-  } finally {
-    hiring.value = false
+    // The store keeps the last confirmed save and exposes a recoverable error.
   }
 }
+
+async function buy(visitorId: string, offerId: string) {
+  await perform('Purchase confirmed.', () => game.buyFromVisitor(visitorId, offerId))
+}
+
+async function sell(visitorId: string, itemId: string) {
+  const before = visitorSnapshot(visitorId)
+  const succeeded = await perform('Sale confirmed.', () => game.sellToVisitor(visitorId, itemId))
+  const after = visitorSnapshot(visitorId)
+  if (!succeeded || !before || !after || after.power <= before.power) return
+  tradeImpacts.value[visitorId] = {
+    powerBefore: before.power,
+    powerAfter: after.power,
+    chances: after.commissionOptions.map((option) => ({
+      optionId: option.optionId,
+      before: before.commissionOptions.find((entry) => entry.optionId === option.optionId)?.successChance ?? option.successChance,
+      after: option.successChance
+    }))
+  }
+  notice.value = `Sale confirmed. ${after.name}'s useful equipment raised their power and commission odds.`
+}
+
+async function commission(visitorId: string, optionId: 'safe' | 'risky') {
+  await perform('Commission confirmed. The return time is now persisted.', () => game.commissionVisitor(visitorId, optionId))
+}
+
+async function claim(visitorId: string) {
+  await perform('Return claimed exactly once.', () => game.claimVisitor(visitorId))
+}
+
+async function dismiss(visitorId: string) {
+  await perform('Visitor departed.', () => game.dismissVisitor(visitorId))
+}
+
+async function perform(successMessage: string, action: () => Promise<void>): Promise<boolean> {
+  notice.value = ''
+  try {
+    await action()
+    notice.value = successMessage
+    return true
+  } catch {
+    return false
+  }
+}
+
+function visitorSnapshot(visitorId: string): Visitor | undefined {
+  const visitor = visitors.value.find((entry) => entry.id === visitorId)
+  return visitor ? JSON.parse(JSON.stringify(visitor)) as Visitor : undefined
+}
+
+function arrivalLabel(timestamp?: string): string {
+  if (!timestamp) return 'waiting for the server schedule'
+  const remaining = Math.max(0, new Date(timestamp).getTime() - now.value)
+  if (remaining <= 0) return 'evaluating now…'
+  const seconds = Math.ceil(remaining / 1000)
+  return `in ${seconds}s · ${new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+}
 </script>
+
+<style scoped>
+.tavern-page { display: grid; gap: 1.25rem; max-width: min(100%, 1680px); }
+.tavern-heading { align-items: end; display: flex; gap: 1.5rem; justify-content: space-between; }
+.tavern-heading h1 { font-size: 2rem; letter-spacing: -0.025em; margin: 0.15rem 0 0.35rem; text-wrap: balance; }
+.tavern-heading p { margin: 0; max-width: 66ch; text-wrap: pretty; }
+.round-mark { color: var(--accent-2); font-size: 0.82rem; font-weight: 750; }
+.tavern-summary { align-items: center; display: flex; flex-wrap: wrap; gap: 0.65rem; justify-content: flex-end; }
+.tavern-summary > span { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0.55rem 0.7rem; }
+.visitor-grid { align-items: start; display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.visitor-slot--empty { align-items: start; background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; display: flex; gap: 1rem; min-height: 15rem; padding: 1.1rem; }
+.visitor-slot--empty h2, .visitor-slot--empty p { margin: 0; }
+.visitor-slot--empty > div { display: grid; gap: 0.65rem; }
+.empty-sigil { align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 50%; color: var(--muted); display: inline-flex; flex: 0 0 2.75rem; font-weight: 800; height: 2.75rem; justify-content: center; }
+.next-check { color: var(--accent-2); }
+.page-alert { align-items: center; border-radius: 8px; display: flex; gap: 1rem; justify-content: space-between; padding: 0.8rem 1rem; }
+.page-alert p { margin: 0.15rem 0 0; }
+.page-alert--error { background: #2b1716; border: 1px solid #7e3732; }
+.page-alert--success { background: #17231a; border: 1px solid #315b3b; margin: 0; }
+.visitor-skeleton { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0.8rem; padding: 1rem; }
+.skeleton-line, .skeleton-block { animation: pulse 1.5s ease-in-out infinite; background: var(--panel-2); border-radius: 6px; display: block; }
+.skeleton-line { height: 1rem; width: 55%; }
+.skeleton-line--title { height: 1.8rem; width: 35%; }
+.skeleton-block { height: 12rem; width: 100%; }
+.empty-tavern { align-items: start; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0.6rem; justify-items: start; padding: 1.5rem; }
+.empty-tavern h2, .empty-tavern p { margin: 0; }
+.tavern-rules { border-top: 1px solid var(--line); display: grid; gap: 1rem; grid-template-columns: minmax(10rem, 0.4fr) 1fr; padding-top: 1.25rem; }
+.tavern-rules h2 { margin: 0; }
+.tavern-rules > div { display: grid; gap: 0.5rem; }
+.tavern-rules p { color: var(--muted); margin: 0; }
+.tavern-rules strong { color: var(--text); }
+
+@keyframes pulse { 50% { opacity: 0.55; } }
+
+@media (max-width: 1100px) { .visitor-grid { grid-template-columns: 1fr; } }
+
+@media (max-width: 640px) {
+  .tavern-heading { align-items: stretch; flex-direction: column; }
+  .tavern-summary { justify-content: stretch; }
+  .tavern-summary > span { flex: 1 1 auto; }
+  .tavern-summary .btn { justify-content: center; width: 100%; }
+  .page-alert { align-items: stretch; flex-direction: column; }
+  .tavern-rules { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) { .skeleton-line, .skeleton-block { animation: none; } }
+</style>

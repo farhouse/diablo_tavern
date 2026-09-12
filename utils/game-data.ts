@@ -168,9 +168,9 @@ export const caravanUpgradeCosts: Record<CaravanUpgradeId, Array<{ gold: number;
   ],
   stashWagon: [
     { gold: 0, materials: 0 },
-    { gold: 500, materials: 15 },
-    { gold: 1600, materials: 60 },
-    { gold: 3600, materials: 150 }
+    { gold: 500, materials: 0 },
+    { gold: 1600, materials: 0 },
+    { gold: 3600, materials: 0 }
   ],
   infirmary: [
     { gold: 0, materials: 0 },
@@ -180,9 +180,9 @@ export const caravanUpgradeCosts: Record<CaravanUpgradeId, Array<{ gold: number;
   ],
   appraiser: [
     { gold: 0, materials: 0 },
-    { gold: 900, materials: 35 },
-    { gold: 2600, materials: 100 },
-    { gold: 5600, materials: 240 }
+    { gold: 900, materials: 0 },
+    { gold: 2600, materials: 0 },
+    { gold: 5600, materials: 0 }
   ]
 }
 
