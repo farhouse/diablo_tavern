@@ -39,7 +39,7 @@ export function createRefreshToken(user: User): string {
 
 export async function requireUser(event: H3Event): Promise<PublicUser> {
   const header = getHeader(event, 'authorization')
-  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined
+  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : getCookie(event, 'accessToken')
   if (!token) throw createError({ statusCode: 401, statusMessage: 'Missing access token' })
 
   try {

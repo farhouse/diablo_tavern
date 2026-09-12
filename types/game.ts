@@ -122,6 +122,12 @@ export interface ExpeditionHeroState {
   maxTemporaryHp: number
   dead: boolean
   permanentDeath?: boolean
+  startLevel?: number
+  startXp?: number
+  projectedLevel?: number
+  projectedXp?: number
+  xpToNextLevel?: number
+  leveledUp?: boolean
 }
 
 export interface ExpeditionEvent {
@@ -147,6 +153,7 @@ export interface ExpeditionEvent {
   title: string
   description: string
   damageTaken?: number
+  healingDone?: number
   xpGained?: number
   goldFound?: number
   lootFound?: Item[]
