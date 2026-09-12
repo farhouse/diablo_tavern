@@ -9,7 +9,7 @@
   --text: #f1ece2;
   --muted: #a99f91;
   --line: #3a342d;
-  --accent: #c94f2c;
+  --accent: #a94327;
   --accent-2: #d8a849;
   --ok: #51b36b;
   --bad: #d45b5b;
@@ -30,6 +30,11 @@ button,
 input,
 select {
   font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent-2);
+  outline-offset: 3px;
 }
 
 a {
@@ -96,6 +101,11 @@ a {
 .btn:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.btn:not(:disabled):hover,
+.nav a:hover {
+  border-color: var(--accent-2);
 }
 
 .page {
@@ -216,38 +226,38 @@ a {
 }
 
 .item {
-  border-left: 3px solid var(--line);
+  border-color: var(--line);
 }
 
 .item.magic {
-  border-left-color: #5b8dee;
+  border-color: #5b8dee;
 }
 
 .item.rare {
-  border-left-color: #d8a849;
+  border-color: #d8a849;
 }
 
 .item.unique {
-  border-left-color: #b87333;
+  border-color: #b87333;
 }
 
-.hire-card {
-  align-items: stretch;
-  color: var(--text);
-  cursor: pointer;
-  display: grid;
-  gap: 0.55rem;
-  text-align: left;
-  width: 100%;
+.page-alert {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 0.8rem 1rem;
 }
 
-.hire-card:hover,
-.hire-card.selected {
-  border-color: var(--accent-2);
+.page-alert--error {
+  background: #2b1716;
+  border: 1px solid #7e3732;
 }
 
-.hire-card.selected {
-  background: #2a241a;
+.page-alert--success {
+  background: #17231a;
+  border: 1px solid #315b3b;
 }
 
 .quest-progress {
@@ -314,6 +324,21 @@ a {
 
   .row {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .topbar-stats {
+    align-items: center;
+    flex-direction: row;
+    width: 100%;
+  }
+
+  .topbar-stats .btn {
+    margin-left: auto;
+  }
+
+  .page-alert {
+    align-items: stretch;
     flex-direction: column;
   }
 }

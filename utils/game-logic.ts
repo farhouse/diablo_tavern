@@ -1,5 +1,6 @@
 import type { ActiveQuestRun, Affix, DerivedStats, EquipmentSlot, Hero, HeroClass, Item, ItemRarity, Quest, QuestRun, SaveGame, ActiveExpedition, ExpeditionHeroState, ExpeditionEvent, ExpeditionSummary, CaravanUpgradeId, CaravanState, AppraisalJob } from '~/types/game'
 import { affixPool, heroClassStats, itemBases, itemTypeToSlots, quests, uniqueItems, caravanUpgradeCosts, heroCapacities, expeditionCapacities, stashCapacities, infirmaryLevels, deathChanceReduction, appraiserQueueSizes } from '~/utils/game-data'
+import { createStarterItems, createVisitRound, normalizeVisitorDetails, refreshVisitRound, salvageItem } from '~/utils/visitor-logic'
 
 const QUEST_DURATION_SCALE_MS = 1000
 const EXPEDITION_EVENT_INTERVAL_MS = 5000
@@ -11,8 +12,7 @@ const rareSuffixes = ['Loop', 'Grasp', 'Shelter', 'Song', 'Brand', 'Guard']
 
 export function createSaveGame(userId: string): SaveGame {
   const now = new Date().toISOString()
-
-  return {
+  const save: SaveGame = {
     userId,
     gold: 450,
     materials: 0,
@@ -23,7 +23,7 @@ export function createSaveGame(userId: string): SaveGame {
     },
     stashLimit: 20,
     heroes: [],
-    stash: [],
+    stash: createStarterItems(),
     pendingLoot: [],
     questsProgress: quests.map((quest, index) => ({
       questId: quest.id,
@@ -32,12 +32,25 @@ export function createSaveGame(userId: string): SaveGame {
     })),
     activeExpeditions: [],
     expeditionHistory: [],
+    visitRound: undefined as never,
+    visitHistory: [],
+    processedRequestIds: [],
+    processedRequests: [],
+    revision: 0,
     createdAt: now,
     updatedAt: now
   }
+  save.visitRound = createVisitRound(save, 1, new Date(now))
+  return save
 }
 
-export function normalizeSaveGame(save: SaveGame): SaveGame {
+export function normalizeSaveGame(save: SaveGame, options: { refreshVisitors?: boolean } = {}): SaveGame {
+  if (!Number.isInteger(save.revision) || save.revision < 0) save.revision = 0
+  if (!Array.isArray(save.processedRequestIds)) save.processedRequestIds = []
+  if (!Array.isArray(save.processedRequests)) {
+    save.processedRequests = save.processedRequestIds.map((requestId) => ({ requestId, operationKey: '' }))
+  }
+  if (!Array.isArray(save.visitHistory)) save.visitHistory = []
   if (!('materials' in save)) (save as Record<string, unknown>).materials = 0
   if (!('caravan' in save)) {
     (save as Record<string, unknown>).caravan = {
@@ -80,8 +93,11 @@ export function normalizeSaveGame(save: SaveGame): SaveGame {
     if (typeof record.carriedMaterials !== 'number') record.carriedMaterials = 0
     if (typeof record.bossReady !== 'boolean') record.bossReady = record.status === 'bossReady'
     if (typeof record.bossDefeated !== 'boolean') record.bossDefeated = false
-    if (record.status === 'returning' && !record.returnsAt) {
+    const returnTime = typeof record.returnsAt === 'string' ? new Date(record.returnsAt).getTime() : Number.NaN
+    if (record.status === 'returning' && !Number.isFinite(returnTime)) {
       record.status = 'exploring'
+      delete record.returnStartedAt
+      delete record.returnsAt
     }
     updateExpeditionHeroProgress(save, expedition)
   }
@@ -98,6 +114,12 @@ export function normalizeSaveGame(save: SaveGame): SaveGame {
   }
 
   save.expeditionHistory = save.expeditionHistory.slice(0, EXPEDITION_HISTORY_LIMIT)
+  const legacyRound = save.visitRound as SaveGame['visitRound'] & { visitors?: unknown[] }
+  if (!save.visitRound || (!Array.isArray(save.visitRound.slots) && !Array.isArray(legacyRound.visitors))) {
+    save.visitRound = createVisitRound(save, 1)
+  }
+  normalizeVisitorDetails(save)
+  if (options.refreshVisitors !== false) refreshVisitRound(save)
   delete legacy.activeExpedition
   delete legacy.lastExpeditionRun
   return save
@@ -355,12 +377,7 @@ export function identifyItem(save: SaveGame, itemId: string): SaveGame {
 }
 
 export function sellItem(save: SaveGame, itemId: string): SaveGame {
-  const stashIndex = save.stash.findIndex((item) => item.id === itemId)
-  if (stashIndex === -1) throw createGameError('Item not found in stash')
-  const [item] = save.stash.splice(stashIndex, 1)
-  if (!item) throw createGameError('Item not found in stash')
-  save.gold += item.value
-  return touchSave(save)
+  return salvageItem(save, itemId)
 }
 
 export function equipItem(save: SaveGame, heroId: string, itemId: string, slot?: EquipmentSlot): SaveGame {
