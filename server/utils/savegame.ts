@@ -1,6 +1,6 @@
 import type { Filter } from 'mongodb'
 import type { SaveGame } from '~/types/game'
-import { createSaveGame, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
+import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 export async function getSaveGame(userId: string): Promise<SaveGame> {
@@ -17,6 +17,7 @@ export async function getSaveGame(userId: string): Promise<SaveGame> {
     const persistedVisitHistory = JSON.stringify(existing.visitHistory)
     const serialized = serializeSave(existing)
     const needsMigration = existing.schemaVersion !== SAVE_SCHEMA_VERSION
+      || LEGACY_SAVE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(existing, field))
     const visitStateChanged = persistedVisitRound !== JSON.stringify(serialized.visitRound)
       || persistedVisitHistory !== JSON.stringify(serialized.visitHistory)
     if (needsMigration || visitStateChanged) {
@@ -32,21 +33,6 @@ export async function getSaveGame(userId: string): Promise<SaveGame> {
     return serialized
   }
   throw new Error('Save changed concurrently; retry the operation')
-}
-
-export async function replaceSaveGame(save: SaveGame): Promise<SaveGame> {
-  save = normalizeSaveGame(save)
-  const saves = await saveGamesCollection()
-  const currentRevision = save.revision
-  const next = { ...save, revision: currentRevision + 1 }
-  const { _id, ...document } = next
-  const revisionFilter = currentRevision === 0
-    ? { $or: [{ revision: 0 }, { revision: { $exists: false } }] }
-    : { revision: currentRevision }
-  const result = await saves.replaceOne({ userId: save.userId, ...revisionFilter } as Filter<DbSaveGame>, document)
-  if (result.modifiedCount !== 1) throw new Error('Save changed concurrently; retry the operation')
-  save.revision = next.revision
-  return save
 }
 
 export async function mutateSaveGameAtomic(

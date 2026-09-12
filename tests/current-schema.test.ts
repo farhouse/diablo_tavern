@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import type { SaveGame } from '../types/game'
 import { createSaveGame, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '../utils/game-logic'
 
 const legacySaveFields = [
@@ -46,6 +47,17 @@ describe('current save schema', () => {
     expect(recreated.stash.some((item) => item.id === 'legacy-item')).toBe(false)
     for (const field of legacySaveFields) expect(recreated).not.toHaveProperty(field)
   })
+
+  it('strips legacy fields accidentally attached to a current document', () => {
+    const current = createSaveGame('current-with-debris') as SaveGame & Record<string, unknown>
+    current.heroes = [{ id: 'should-not-survive' }]
+    current.activeExpeditions = [{ id: 'should-not-survive' }]
+
+    const normalized = normalizeSaveGame(current, { refreshVisitors: false })
+
+    expect(normalized).not.toHaveProperty('heroes')
+    expect(normalized).not.toHaveProperty('activeExpeditions')
+  })
 })
 
 describe('legacy surface removal', () => {
@@ -60,6 +72,7 @@ describe('legacy surface removal', () => {
       'server/api/expeditions/recall.post.ts',
       'server/api/quests/complete.post.ts',
       'server/api/quests/[questId]/start.post.ts',
+      'server/api/quests/index.get.ts',
       'server/api/items/[itemId]/sell.post.ts'
     ]
 

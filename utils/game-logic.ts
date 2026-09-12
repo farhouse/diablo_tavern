@@ -3,6 +3,10 @@ import { appraiserQueueSizes, caravanUpgradeCosts, quests, stashCapacities } fro
 import { createStarterItems, createVisitRound, normalizeVisitorDetails, refreshVisitRound } from '~/utils/visitor-logic'
 
 export const SAVE_SCHEMA_VERSION = 2
+export const LEGACY_SAVE_FIELDS = [
+  'materials', 'heroes', 'pendingLoot', 'questsProgress', 'activeQuestRun',
+  'lastQuestRun', 'activeExpedition', 'activeExpeditions', 'lastExpeditionRun', 'expeditionHistory'
+] as const
 const rarePrefixes = ['Storm', 'Blood', 'Dread', 'Rune', 'Grim', 'Havoc']
 const rareSuffixes = ['Loop', 'Grasp', 'Shelter', 'Song', 'Brand', 'Guard']
 
@@ -34,6 +38,9 @@ export function createSaveGame(userId: string): SaveGame {
 
 export function normalizeSaveGame(save: SaveGame, options: { refreshVisitors?: boolean } = {}): SaveGame {
   if (save?.schemaVersion !== SAVE_SCHEMA_VERSION) return createSaveGame(requireUserId(save))
+
+  const rawSave = save as SaveGame & Record<string, unknown>
+  for (const field of LEGACY_SAVE_FIELDS) delete rawSave[field]
 
   if (!Number.isInteger(save.revision) || save.revision < 0) save.revision = 0
   if (!Array.isArray(save.processedRequestIds)) save.processedRequestIds = []

@@ -72,8 +72,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useGameStore } from '~/stores/game'
-import type { Item, ItemRarity } from '~/types/game'
-import { getAppraiserQueueSize } from '~/utils/game-logic'
+import type { Item } from '~/types/game'
+import { getAppraiserQueueSize, identifyCost } from '~/utils/game-logic'
 
 const game = useGameStore()
 const busyItem = ref('')
@@ -97,13 +97,6 @@ function isInQueue(itemId: string) {
 
 function itemName(item: Item): string {
   return item.identified ? item.displayName : `Unidentified ${capitalize(item.rarity)} ${item.baseName}`
-}
-
-function identifyCost(rarity: ItemRarity): number {
-  if (rarity === 'magic') return 50
-  if (rarity === 'rare') return 150
-  if (rarity === 'unique') return 500
-  return 0
 }
 
 function identifyDisabledReason(item: Item): string {

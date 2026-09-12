@@ -31,6 +31,7 @@ export interface Item {
   requiredLevel: number
   affixes: Affix[]
   value: number
+  acquisitionCost?: number
   position?: { x: number; y: number }
 }
 

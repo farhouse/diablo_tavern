@@ -143,6 +143,35 @@ describe('visitor trade and commission loop', () => {
     }
   })
 
+  it('generates obtainable unidentified magic items for the appraisal loop', () => {
+    const save = createSaveGame('rarity-loop')
+    save.visitRound = createVisitRound(save, 2, new Date(0), () => 0.7)
+    const offers = visitors(save).flatMap((visitor) => visitor.offers)
+
+    expect(offers).toContainEqual(expect.objectContaining({
+      item: expect.objectContaining({ rarity: 'magic', identified: false })
+    }))
+  })
+
+  it('caps later visitor quotes at acquisition cost under adversarial high rolls', () => {
+    const save = createSaveGame('cross-visit-arbitrage')
+    const firstVisitor = visitors(save)[0]!
+    const offer = firstVisitor.offers[0]!
+    offer.price = Math.round(offer.item.value * 0.9)
+    save.gold = offer.price
+    buyFromVisitor(save, firstVisitor.id, offer.id, 'buy-low')
+    const acquired = save.stash.find((item) => item.id === offer.item.id)!
+    save.stash = [acquired]
+    save.gold = 0
+
+    save.visitRound = createVisitRound(save, 2, new Date(60_000), () => 0.999999)
+    const laterQuote = visitors(save)[0]!.buyQuotes[acquired.id]
+
+    expect(acquired.acquisitionCost).toBe(offer.price)
+    expect(laterQuote).toBeDefined()
+    expect(laterQuote).toBeLessThanOrEqual(offer.price)
+  })
+
   it('allows one purchase and one sale with the same visitor, but not duplicate trade kinds', () => {
     const save = createSaveGame('buyer')
     const visitor = visitors(save)[0]!

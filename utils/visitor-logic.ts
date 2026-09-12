@@ -9,7 +9,7 @@ import type {
   Visitor,
   VisitorEquipmentSummaryItem
 } from '~/types/game'
-import { itemBases, quests } from '~/utils/game-data'
+import { affixPool, itemBases, quests, uniqueItems } from '~/utils/game-data'
 
 export type RandomSource = () => number
 
@@ -139,7 +139,7 @@ export function buyFromVisitor(save: SaveGame, visitorId: string, offerId: strin
   save.gold -= offer.price
   visitor.budget += offer.price
   offer.purchasedAt = now.toISOString()
-  save.stash.push(cloneItem(offer.item))
+  save.stash.push({ ...cloneItem(offer.item), acquisitionCost: offer.price })
   visitor.trades.push({ requestId, kind: 'player_bought', itemId: offer.item.id, price: offer.price, createdAt: now.toISOString() })
   visitor.state = 'traded'
   return touch(save, now)
@@ -302,9 +302,10 @@ function createVisitor(save: Pick<SaveGame, 'stash' | 'unlockedRegionIds'>, now:
   visitor.initialBudget = visitor.budget
   for (const item of save.stash) {
     if (!item.identified || !acceptedItemTypes.includes(item.type)) continue
-    visitor.buyQuotes[item.id] = interestedItemTypes.includes(item.type)
+    const quote = interestedItemTypes.includes(item.type)
       ? percentage(item.value, 0.80, 1.10, random)
       : percentage(item.value, 0.40, 0.60, random)
+    visitor.buyQuotes[item.id] = capQuoteForAcquisition(item, quote)
   }
   visitor.commissionOptions = unlockedCommissionOptions(save.unlockedRegionIds, visitor.power)
   return visitor
@@ -388,7 +389,10 @@ function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | '
     if (!first.interestedItemTypes.includes(sellable.type)) first.interestedItemTypes[0] = sellable.type
     const quotedPrice = percentage(sellable.value, 0.80, 1.10, random)
     const requiredForPurchase = Math.max(0, cheapestOfferPrice - save.gold)
-    guaranteedQuote = Math.max(quotedPrice, Math.min(requiredForPurchase, Math.round(sellable.value * 1.10)))
+    guaranteedQuote = capQuoteForAcquisition(
+      sellable,
+      Math.max(quotedPrice, Math.min(requiredForPurchase, Math.round(sellable.value * 1.10)))
+    )
     first.buyQuotes[sellable.id] = guaranteedQuote
     first.budget = Math.max(first.budget, guaranteedQuote)
     first.initialBudget = first.budget
@@ -527,7 +531,30 @@ function starterItem(index: number, random: RandomSource): Item {
 }
 
 function createOfferItem(random: RandomSource): Item {
-  return starterItem(randomInt(0, itemBases.length - 1, random), random)
+  const base = itemBases[randomInt(0, itemBases.length - 1, random)] ?? itemBases[0]!
+  const rarityRoll = clampRandom(random())
+  const rarity = rarityRoll < 0.55 ? 'normal' : rarityRoll < 0.82 ? 'magic' : rarityRoll < 0.96 ? 'rare' : 'unique'
+  if (rarity === 'unique') {
+    const candidates = uniqueItems.filter((item) => item.type === base.type)
+    const unique = candidates.length ? pick(candidates, random) : pick(uniqueItems, random)
+    return { ...unique, id: randomId(random), identified: false, affixes: unique.affixes.map((affix) => ({ ...affix })) }
+  }
+
+  const affixCount = rarity === 'normal' ? 0 : rarity === 'magic' ? 1 : 3
+  const affixes = [...(base.implicit ?? []).map((affix) => ({ ...affix }))]
+  const available = [...affixPool]
+  for (let index = 0; index < affixCount && available.length; index += 1) {
+    const selectedIndex = randomInt(0, available.length - 1, random)
+    const selected = available.splice(selectedIndex, 1)[0]!
+    affixes.push({ ...selected })
+  }
+  const multiplier = rarity === 'magic' ? 1.8 : rarity === 'rare' ? 3.2 : 1
+  return {
+    id: randomId(random), baseName: base.baseName,
+    displayName: rarity === 'normal' ? base.baseName : `${rarity[0]!.toUpperCase()}${rarity.slice(1)} ${base.baseName}`,
+    type: base.type, rarity, identified: rarity === 'normal', width: base.width, height: base.height,
+    requiredLevel: base.requiredLevel, affixes, value: Math.round(base.value * multiplier)
+  }
 }
 
 function cloneItem(item: Item): Item {
@@ -536,6 +563,10 @@ function cloneItem(item: Item): Item {
 
 function percentage(value: number, min: number, max: number, random: RandomSource): number {
   return Math.max(1, Math.round(value * (min + clampRandom(random()) * (max - min))))
+}
+
+function capQuoteForAcquisition(item: Item, quote: number): number {
+  return item.acquisitionCost === undefined ? quote : Math.min(quote, item.acquisitionCost)
 }
 
 function randomInt(min: number, max: number, random: RandomSource): number {
