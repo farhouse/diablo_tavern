@@ -1,6 +1,6 @@
-import type { CaravanUpgradeId, HeroClass, ItemType } from '~/types/game'
+import type { HeroClass, ItemType } from '~/types/game'
 
-export type CaravanSpriteId = CaravanUpgradeId | 'wagons' | 'scoutTable' | 'infirmary'
+export type CaravanSpriteId = keyof typeof caravanSpriteByUpgrade
 
 export const heroSpriteByClass = {
   barbarian: '/images/game/heroes/barbarian.png',
@@ -26,7 +26,7 @@ export const caravanSpriteByUpgrade = {
   stashWagon: '/images/game/caravan/stash-wagon.png',
   infirmary: '/images/game/caravan/infirmary.png',
   appraiser: '/images/game/caravan/appraiser.png'
-} satisfies Record<CaravanSpriteId, string>
+} as const
 
 export const heroClassLabel = {
   barbarian: 'Barbarian',

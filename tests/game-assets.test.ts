@@ -7,6 +7,11 @@ import type { HeroClass, ItemType } from '~/types/game'
 import { caravanSpriteByUpgrade, heroSpriteByClass, itemSpriteByType, type CaravanSpriteId } from '~/utils/game-assets'
 
 describe('game asset maps', () => {
+  it('defines caravan sprites independently from the economic domain', () => {
+    const source = readFileSync(new URL('../utils/game-assets.ts', import.meta.url), 'utf8')
+    expect(source).not.toMatch(/CaravanUpgradeId/)
+  })
+
   it('maps every domain enum to exactly one stable asset', () => {
     const classes: HeroClass[] = ['barbarian', 'sorceress', 'paladin', 'necromancer']
     const itemTypes: ItemType[] = ['weapon', 'armor', 'helmet', 'gloves', 'boots', 'ring', 'amulet', 'charm']
