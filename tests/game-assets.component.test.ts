@@ -26,13 +26,11 @@ describe('game asset components', () => {
     }
   })
 
-  it('renders item types without encoding rarity in the asset', () => {
-    const image = mount(ItemSprite, {
-      props: { itemType: 'weapon', alt: 'Short Sword, normal weapon' }
-    }).get('img')
+  it('keeps generic item art decorative and rarity outside the asset', () => {
+    const image = mount(ItemSprite, { props: { itemType: 'weapon' } }).get('img')
 
     expect(image.attributes('src')).toBe('/images/game/items/weapon.png')
-    expect(image.attributes('alt')).toBe('Short Sword, normal weapon')
+    expect(image.attributes('alt')).toBe('')
     expect(image.attributes('src')).not.toMatch(/normal|magic|rare|unique/)
   })
 

@@ -31,7 +31,7 @@
       </div>
       <ul>
         <li v-for="item in visitor.equipmentSummary" :key="item.itemId ?? `${item.type}-${item.name}`">
-          <ItemSprite :item-type="item.type" :alt="`${item.name}, ${item.type}`" />
+          <ItemSprite :item-type="item.type" />
           <span class="equipment-copy">
             <strong>{{ item.name }}</strong>
             <span>{{ capitalize(item.type) }} · {{ item.powerBonus > 0 ? `+${item.powerBonus} power` : 'starting gear' }}</span>
@@ -54,7 +54,6 @@
               <ItemSprite
                 :data-testid="`offer-sprite-${offer.id}`"
                 :item-type="offer.item.type"
-                :alt="itemImageAlt(offer.item)"
               />
               <div>
                 <strong>{{ itemName(offer.item) }}</strong>
@@ -84,7 +83,6 @@
               <ItemSprite
                 :data-testid="`quote-sprite-${entry.item.id}`"
                 :item-type="entry.item.type"
-                :alt="itemImageAlt(entry.item)"
               />
               <div>
                 <strong>{{ itemName(entry.item) }}</strong>
@@ -319,10 +317,6 @@ function itemName(item: Item): string {
 
 function itemMeta(item: Item): string {
   return `${capitalize(item.type)} · level ${item.requiredLevel} · ${capitalize(item.rarity)}`
-}
-
-function itemImageAlt(item: Item): string {
-  return `${itemName(item)}, ${item.rarity} ${item.type}`
 }
 
 function duration(milliseconds: number): string {

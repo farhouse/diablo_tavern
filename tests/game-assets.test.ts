@@ -19,7 +19,8 @@ describe('game asset maps', () => {
     const paths = [
       ...Object.values(heroSpriteByClass),
       ...Object.values(itemSpriteByType),
-      ...Object.values(caravanSpriteByUpgrade)
+      ...Object.values(caravanSpriteByUpgrade),
+      '/images/game/tavern/background.png'
     ]
 
     for (const assetPath of paths) {
@@ -30,6 +31,12 @@ describe('game asset maps', () => {
       expect(png.readUInt32BE(16), `${assetPath} width`).toBeGreaterThan(0)
       expect(png.readUInt32BE(20), `${assetPath} height`).toBeGreaterThan(0)
       expect(png[25], `${assetPath} must use RGBA color`).toBe(6)
+
+      const width = png.readUInt32BE(16)
+      const height = png.readUInt32BE(20)
+      if (assetPath.includes('/items/')) expect([width, height]).toEqual([96, 96])
+      if (assetPath.includes('/caravan/')) expect(Math.max(width, height)).toBeLessThanOrEqual(256)
+      if (assetPath.includes('/tavern/')) expect([width, height]).toEqual([1280, 720])
     }
   })
 })

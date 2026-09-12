@@ -22,7 +22,7 @@
     <section v-else-if="game.save?.stash.length" class="grid three" aria-label="Stored items">
       <article v-for="item in game.save.stash" :key="item.id" class="card item stack" :class="item.rarity">
         <div class="item-heading">
-          <ItemSprite :item-type="item.type" :alt="itemImageAlt(item)" />
+          <ItemSprite :item-type="item.type" />
           <div class="stack item-heading-copy">
             <div class="row">
               <h2>{{ itemName(item) }}</h2>
@@ -103,10 +103,6 @@ function isInQueue(itemId: string) {
 
 function itemName(item: Item): string {
   return item.identified ? item.displayName : `Unidentified ${capitalize(item.rarity)} ${item.baseName}`
-}
-
-function itemImageAlt(item: Item): string {
-  return `${itemName(item)}, ${item.rarity} ${item.type}`
 }
 
 function identifyDisabledReason(item: Item): string {

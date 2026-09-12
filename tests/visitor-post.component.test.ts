@@ -61,7 +61,7 @@ describe('VisitorPost', () => {
     expect(wrapper.get('[data-testid="buy-offer-1"]').text()).toContain('Buy for 40g')
     expect(wrapper.get('[data-testid="sell-sword"]').text()).toContain('Sell for 31g')
     expect(wrapper.get('[data-testid="offer-sprite-offer-1"]').attributes('src')).toBe('/images/game/items/weapon.png')
-    expect(wrapper.get('[data-testid="quote-sprite-sword"]').attributes('alt')).toBe('Short Sword, normal weapon')
+    expect(wrapper.get('[data-testid="quote-sprite-sword"]').attributes('alt')).toBe('')
   })
 
   it('renders persisted tavern equipment impact after a reload', () => {

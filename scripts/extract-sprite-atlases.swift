@@ -78,6 +78,39 @@ func writePng(_ image: CGImage, to url: URL) throws {
   }
 }
 
+func writeResizedPng(_ image: CGImage, width: Int, height: Int, to url: URL) throws {
+  let pixels = UnsafeMutablePointer<UInt8>.allocate(capacity: width * height * 4)
+  defer { pixels.deallocate() }
+  pixels.initialize(repeating: 0, count: width * height * 4)
+
+  guard let context = CGContext(
+    data: pixels,
+    width: width,
+    height: height,
+    bitsPerComponent: 8,
+    bytesPerRow: width * 4,
+    space: CGColorSpaceCreateDeviceRGB(),
+    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+  ) else {
+    throw NSError(domain: "SpriteAtlas", code: 5, userInfo: [NSLocalizedDescriptionKey: "Unable to resize image for \(url.path)"])
+  }
+
+  context.interpolationQuality = .none
+  context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+  guard let resized = context.makeImage() else {
+    throw NSError(domain: "SpriteAtlas", code: 6, userInfo: [NSLocalizedDescriptionKey: "Unable to encode resized image for \(url.path)"])
+  }
+  try writePng(resized, to: url)
+}
+
+func fittedSize(for image: CGImage, maximumDimension: Int) -> (width: Int, height: Int) {
+  let scale = min(1, Double(maximumDimension) / Double(max(image.width, image.height)))
+  return (
+    width: max(1, Int((Double(image.width) * scale).rounded())),
+    height: max(1, Int((Double(image.height) * scale).rounded()))
+  )
+}
+
 func centeredSquare(around bounds: CGRect, cell: CGRect, side: CGFloat) -> CGRect {
   let centerX = bounds.midX
   let centerY = bounds.midY
@@ -90,7 +123,16 @@ func centeredSquare(around bounds: CGRect, cell: CGRect, side: CGFloat) -> CGRec
 
 let projectRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let sourceRoot = projectRoot.appendingPathComponent("sprite-work/source")
-let outputRoot = projectRoot.appendingPathComponent("public/images/game")
+let publicImagesRoot = projectRoot.appendingPathComponent("public/images")
+let outputRoot = publicImagesRoot.appendingPathComponent(".game-staging-\(UUID().uuidString)")
+let finalOutputRoot = publicImagesRoot.appendingPathComponent("game")
+let backupRoot = publicImagesRoot.appendingPathComponent(".game-backup-\(UUID().uuidString)")
+let fileManager = FileManager.default
+
+defer {
+  try? fileManager.removeItem(at: outputRoot)
+  try? fileManager.removeItem(at: backupRoot)
+}
 
 func copySource(_ sourceName: String, to relativeDestination: String) throws {
   let source = sourceRoot.appendingPathComponent(sourceName)
@@ -106,7 +148,12 @@ try copySource("barbaro-supervivencia-46x70.png", to: "heroes/barbarian.png")
 try copySource("sorceress-supervivencia-46x70.png", to: "heroes/sorceress.png")
 try copySource("paladin-supervivencia-46x70.png", to: "heroes/paladin.png")
 try copySource("necromancer-supervivencia-46x70.png", to: "heroes/necromancer.png")
-try copySource("tavern-supervivencia-background.png", to: "tavern/background.png")
+
+let tavern = try Bitmap(url: sourceRoot.appendingPathComponent("tavern-supervivencia-background.png"))
+guard let tavernImage = tavern.context.makeImage() else {
+  throw NSError(domain: "SpriteAtlas", code: 7, userInfo: [NSLocalizedDescriptionKey: "Unable to render the Tavern background"])
+}
+try writeResizedPng(tavernImage, width: 1280, height: 720, to: outputRoot.appendingPathComponent("tavern/background.png"))
 
 let equipmentNames = ["weapon", "armor", "helmet", "gloves", "boots", "ring", "amulet", "charm"]
 let equipment = try Bitmap(url: sourceRoot.appendingPathComponent("equipment-supervivencia-source-sheet.png"))
@@ -122,11 +169,15 @@ for (index, name) in equipmentNames.enumerated() {
     width: equipmentCellWidth,
     height: equipmentCellHeight
   )
-  guard let bounds = equipment.alphaBounds(in: cell) else { continue }
+  guard let bounds = equipment.alphaBounds(in: cell) else {
+    throw NSError(domain: "SpriteAtlas", code: 8, userInfo: [NSLocalizedDescriptionKey: "No visible pixels found for item \(name)"])
+  }
   let side = min(416, floor(min(cell.width, cell.height)))
   let crop = centeredSquare(around: bounds, cell: cell, side: side)
-  guard let image = equipment.image(in: crop) else { continue }
-  try writePng(image, to: outputRoot.appendingPathComponent("items/\(name).png"))
+  guard let image = equipment.image(in: crop) else {
+    throw NSError(domain: "SpriteAtlas", code: 9, userInfo: [NSLocalizedDescriptionKey: "Unable to crop item \(name)"])
+  }
+  try writeResizedPng(image, width: 96, height: 96, to: outputRoot.appendingPathComponent("items/\(name).png"))
 }
 
 let buildingNames = ["wagons", "scout-table", "stash-wagon", "infirmary", "appraiser"]
@@ -144,7 +195,9 @@ let buildingRanges: [(start: CGFloat, end: CGFloat)] = [
 for (index, name) in buildingNames.enumerated() {
   let range = buildingRanges[index]
   let cell = CGRect(x: range.start, y: 0, width: range.end - range.start, height: CGFloat(buildings.height))
-  guard let bounds = buildings.alphaBounds(in: cell) else { continue }
+  guard let bounds = buildings.alphaBounds(in: cell) else {
+    throw NSError(domain: "SpriteAtlas", code: 10, userInfo: [NSLocalizedDescriptionKey: "No visible pixels found for building \(name)"])
+  }
   let padding: CGFloat = 8
   let crop = CGRect(
     x: max(cell.minX, bounds.minX - padding).rounded(.down),
@@ -152,8 +205,41 @@ for (index, name) in buildingNames.enumerated() {
     width: min(cell.maxX, bounds.maxX + padding) - max(cell.minX, bounds.minX - padding),
     height: min(CGFloat(buildings.height), bounds.maxY + padding) - max(0, bounds.minY - padding)
   ).integral
-  guard let image = buildings.image(in: crop) else { continue }
-  try writePng(image, to: outputRoot.appendingPathComponent("caravan/\(name).png"))
+  guard let image = buildings.image(in: crop) else {
+    throw NSError(domain: "SpriteAtlas", code: 11, userInfo: [NSLocalizedDescriptionKey: "Unable to crop building \(name)"])
+  }
+  let size = fittedSize(for: image, maximumDimension: 256)
+  try writeResizedPng(image, width: size.width, height: size.height, to: outputRoot.appendingPathComponent("caravan/\(name).png"))
+}
+
+let expectedFiles = [
+  "heroes/barbarian.png", "heroes/sorceress.png", "heroes/paladin.png", "heroes/necromancer.png",
+  "items/weapon.png", "items/armor.png", "items/helmet.png", "items/gloves.png",
+  "items/boots.png", "items/ring.png", "items/amulet.png", "items/charm.png",
+  "caravan/wagons.png", "caravan/scout-table.png", "caravan/stash-wagon.png",
+  "caravan/infirmary.png", "caravan/appraiser.png", "tavern/background.png"
+]
+
+for relativePath in expectedFiles {
+  let file = outputRoot.appendingPathComponent(relativePath)
+  let attributes = try fileManager.attributesOfItem(atPath: file.path)
+  guard let size = attributes[.size] as? NSNumber, size.intValue > 0 else {
+    throw NSError(domain: "SpriteAtlas", code: 12, userInfo: [NSLocalizedDescriptionKey: "Generated file is empty: \(relativePath)"])
+  }
+}
+
+if fileManager.fileExists(atPath: finalOutputRoot.path) {
+  try fileManager.moveItem(at: finalOutputRoot, to: backupRoot)
+}
+
+do {
+  try fileManager.moveItem(at: outputRoot, to: finalOutputRoot)
+  try? fileManager.removeItem(at: backupRoot)
+} catch {
+  if fileManager.fileExists(atPath: backupRoot.path) && !fileManager.fileExists(atPath: finalOutputRoot.path) {
+    try? fileManager.moveItem(at: backupRoot, to: finalOutputRoot)
+  }
+  throw error
 }
 
 print("Generated 4 heroes, 8 item icons, 5 caravan buildings, and 1 Tavern background in public/images/game")

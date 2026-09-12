@@ -3,6 +3,8 @@
     class="pixel-sprite caravan-upgrade-sprite"
     :src="caravanSpriteByUpgrade[upgradeId]"
     :alt="alt"
+    width="320"
+    height="240"
     loading="lazy"
     decoding="async"
   >

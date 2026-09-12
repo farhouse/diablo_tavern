@@ -194,22 +194,21 @@ function arrivalLabel(timestamp?: string): string {
 .tavern-page {
   display: grid;
   gap: 1.25rem;
-  isolation: isolate;
   max-width: min(100%, 1680px);
-  position: relative;
 }
-.tavern-page::before {
+.tavern-heading {
+  align-items: end;
   background:
-    linear-gradient(180deg, rgba(17, 16, 14, 0.3), rgba(17, 16, 14, 0.82)),
-    url('/images/game/tavern/background.png') center top / cover no-repeat;
-  content: '';
-  inset: 0;
-  opacity: 0.36;
-  pointer-events: none;
-  position: absolute;
-  z-index: -1;
+    linear-gradient(90deg, rgba(17, 16, 14, 0.93) 0%, rgba(17, 16, 14, 0.72) 58%, rgba(17, 16, 14, 0.84) 100%),
+    url('/images/game/tavern/background.png') center 48% / cover no-repeat;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: flex;
+  gap: 1.5rem;
+  justify-content: space-between;
+  min-height: 15rem;
+  padding: 1.5rem;
 }
-.tavern-heading { align-items: end; display: flex; gap: 1.5rem; justify-content: space-between; }
 .tavern-heading h1 { font-size: 2rem; letter-spacing: -0.025em; margin: 0.15rem 0 0.35rem; text-wrap: balance; }
 .tavern-heading p { margin: 0; max-width: 66ch; text-wrap: pretty; }
 .round-mark { color: var(--accent-2); font-size: 0.82rem; font-weight: 750; }
@@ -243,7 +242,17 @@ function arrivalLabel(timestamp?: string): string {
 @media (max-width: 1100px) { .visitor-grid { grid-template-columns: 1fr; } }
 
 @media (max-width: 640px) {
-  .tavern-heading { align-items: stretch; flex-direction: column; }
+  .tavern-heading {
+    align-items: stretch;
+    background-image:
+      linear-gradient(180deg, rgba(17, 16, 14, 0.56) 0%, rgba(17, 16, 14, 0.94) 62%),
+      url('/images/game/tavern/background.png');
+    background-position: 58% center;
+    flex-direction: column;
+    justify-content: end;
+    min-height: 20rem;
+    padding: 1rem;
+  }
   .tavern-summary { justify-content: stretch; }
   .tavern-summary > span { flex: 1 1 auto; }
   .tavern-summary .btn { justify-content: center; width: 100%; }

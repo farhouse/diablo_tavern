@@ -35,7 +35,7 @@ describe('game assets in active pages', () => {
 
     const item = save.stash[0]!
     const image = wrapper.get(`img[src="/images/game/items/${item.type}.png"]`)
-    expect(image.attributes('alt')).toContain(item.displayName)
+    expect(image.attributes('alt')).toBe('')
     expect(wrapper.text()).toContain(item.rarity)
     expect(wrapper.find('summary').exists()).toBe(true)
   })
