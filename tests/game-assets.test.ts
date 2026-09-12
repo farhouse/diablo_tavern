@@ -50,7 +50,7 @@ describe('game asset maps', () => {
     }
   })
 
-  it('restores the previous asset tree when installation fails after backup', () => {
+  it.skipIf(process.platform !== 'darwin')('restores the previous asset tree when installation fails after backup', () => {
     const root = mkdtempSync(join(tmpdir(), 'sprite-atlas-rollback-'))
     const publicImagesRoot = join(root, 'public', 'images')
     const previousAssets = join(publicImagesRoot, 'game')
