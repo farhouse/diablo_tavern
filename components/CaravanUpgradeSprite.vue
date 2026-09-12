@@ -11,11 +11,10 @@
 </template>
 
 <script setup lang="ts">
-import type { CaravanUpgradeId } from '~/types/game'
-import { caravanSpriteByUpgrade } from '~/utils/game-assets'
+import { caravanSpriteByUpgrade, type CaravanSpriteId } from '~/utils/game-assets'
 
 withDefaults(defineProps<{
-  upgradeId: CaravanUpgradeId
+  upgradeId: CaravanSpriteId
   alt?: string
 }>(), { alt: '' })
 </script>

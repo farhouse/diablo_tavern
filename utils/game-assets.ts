@@ -1,5 +1,7 @@
 import type { CaravanUpgradeId, HeroClass, ItemType } from '~/types/game'
 
+export type CaravanSpriteId = CaravanUpgradeId | 'wagons' | 'scoutTable' | 'infirmary'
+
 export const heroSpriteByClass = {
   barbarian: '/images/game/heroes/barbarian.png',
   sorceress: '/images/game/heroes/sorceress.png',
@@ -24,7 +26,7 @@ export const caravanSpriteByUpgrade = {
   stashWagon: '/images/game/caravan/stash-wagon.png',
   infirmary: '/images/game/caravan/infirmary.png',
   appraiser: '/images/game/caravan/appraiser.png'
-} satisfies Record<CaravanUpgradeId, string>
+} satisfies Record<CaravanSpriteId, string>
 
 export const heroClassLabel = {
   barbarian: 'Barbarian',

@@ -3,14 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { CaravanUpgradeId, HeroClass, ItemType } from '~/types/game'
-import { caravanSpriteByUpgrade, heroSpriteByClass, itemSpriteByType } from '~/utils/game-assets'
+import type { HeroClass, ItemType } from '~/types/game'
+import { caravanSpriteByUpgrade, heroSpriteByClass, itemSpriteByType, type CaravanSpriteId } from '~/utils/game-assets'
 
 describe('game asset maps', () => {
   it('maps every domain enum to exactly one stable asset', () => {
     const classes: HeroClass[] = ['barbarian', 'sorceress', 'paladin', 'necromancer']
     const itemTypes: ItemType[] = ['weapon', 'armor', 'helmet', 'gloves', 'boots', 'ring', 'amulet', 'charm']
-    const upgrades: CaravanUpgradeId[] = ['wagons', 'scoutTable', 'stashWagon', 'infirmary', 'appraiser']
+    const upgrades: CaravanSpriteId[] = ['wagons', 'scoutTable', 'stashWagon', 'infirmary', 'appraiser']
 
     expect(Object.keys(heroSpriteByClass)).toEqual(classes)
     expect(Object.keys(itemSpriteByType)).toEqual(itemTypes)
