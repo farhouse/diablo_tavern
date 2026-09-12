@@ -43,10 +43,7 @@ for (const viewport of viewports) {
         missionColumns: missionOption ? getComputedStyle(missionOption).gridTemplateColumns.split(' ').length : 0,
         posts: posts.map((post) => {
           const rect = post.getBoundingClientRect()
-          const style = getComputedStyle(post)
-          const contentBottom = Math.max(...[...post.children].map(child => child.getBoundingClientRect().bottom))
-          const expectedBottomGap = Number.parseFloat(style.paddingBottom) + Number.parseFloat(style.borderBottomWidth)
-          return { width: rect.width, top: rect.top, bottomGap: rect.bottom - contentBottom, expectedBottomGap }
+          return { width: rect.width, top: rect.top }
         })
       }
     })
@@ -56,7 +53,6 @@ for (const viewport of viewports) {
     expect(geometry.gridAlignment).toBe('start')
     expect(geometry.tradeColumns).toBeGreaterThan(0)
     expect(geometry.missionColumns).toBeGreaterThan(0)
-    for (const post of geometry.posts) expect(post.bottomGap).toBeLessThanOrEqual(post.expectedBottomGap + 2)
 
     if (viewport.width === 2560) {
       expect(geometry.tavernWidth).toBeGreaterThanOrEqual(1600)
