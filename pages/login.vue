@@ -45,7 +45,7 @@ async function submit() {
   try {
     if (mode.value === 'login') await auth.login(email.value, password.value)
     else await auth.register(email.value, password.value, inviteCode.value)
-    await navigateTo('/tavern')
+    return await navigateTo('/tavern', { replace: true })
   } catch (error) {
     auth.error = message(error)
   }

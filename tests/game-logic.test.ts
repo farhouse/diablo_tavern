@@ -359,10 +359,73 @@ describe('game logic', () => {
 
       const portalEvents = expedition!.events.filter(event => event.type === 'portal')
       expect(portalEvents).toHaveLength(1)
-      expect(portalEvents[0]?.createdAt).toBe(new Date(now.getTime() + 15000).toISOString())
+      expect(portalEvents[0]?.createdAt).toBe(new Date(now.getTime() + 20000).toISOString())
       expect(expedition!.portalEventId).toBe(portalEvents[0]?.id)
       expect(expedition!.portalEventId).not.toBe('old-portal')
       random.mockRestore()
+    })
+
+    it('does not generate expedition events while a portal is active', () => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0.999999)
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      barbarian.derivedStats.life = 200
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+      expedition!.portalAvailableUntil = new Date(now.getTime() + 30000).toISOString()
+      expedition!.portalEventId = 'portal-1'
+
+      advanceExpedition(save, new Date(now.getTime() + 20000))
+
+      expect(expedition!.events).toHaveLength(0)
+      expect(expedition!.portalEventId).toBe('portal-1')
+
+      advanceExpedition(save, new Date(now.getTime() + 35000))
+
+      const portalEvents = expedition!.events.filter(event => event.type === 'portal')
+      expect(portalEvents).toHaveLength(1)
+      expect(portalEvents[0]?.createdAt).toBe(new Date(now.getTime() + 35000).toISOString())
+      random.mockRestore()
+    })
+
+    it('stops generating events when every party member is down or dead', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+      expedition!.partyState[0]!.temporaryHp = 0
+      expedition!.partyState[0]!.dead = true
+
+      advanceExpedition(save, new Date(now.getTime() + 30000))
+
+      expect(expedition!.events).toHaveLength(0)
+      expect(expedition!.depth).toBe(0)
+    })
+
+    it('projects expedition XP and level-ups for party members', () => {
+      const now = new Date('2026-01-01T00:00:00.000Z')
+      const save = createSaveGame('user-1')
+      const barbarian = createHero('barbarian')
+      barbarian.level = 1
+      barbarian.xp = 170
+      save.heroes.push(barbarian)
+
+      startExpedition(save, 'blood-moor', [barbarian.id], now)
+      const expedition = save.activeExpeditions[0]
+      expedition!.carriedXp = 10
+
+      normalizeSaveGame(save)
+
+      expect(expedition!.partyState[0]?.projectedLevel).toBe(2)
+      expect(expedition!.partyState[0]?.projectedXp).toBe(5)
+      expect(expedition!.partyState[0]?.xpToNextLevel).toBe(250)
+      expect(expedition!.partyState[0]?.leveledUp).toBe(true)
     })
 
     it('portal expires after 30 seconds during advanceExpedition', () => {
@@ -472,6 +535,7 @@ describe('game logic', () => {
       const advanceTime = new Date(now.getTime() + 10000)
       const advanced = advanceExpedition(save, advanceTime)
       recallExpedition(advanced, expedition!.id, advanceTime)
+      const expectedGold = advanced.gold + advanced.activeExpeditions[0]!.carriedGold
 
       // Expedition should be returning with returnsAt set
       expect(advanced.activeExpeditions[0]?.status).toBe('returning')
@@ -484,7 +548,7 @@ describe('game logic', () => {
       // Expedition should be completed now
       expect(advanced.activeExpeditions).toHaveLength(0)
       // Gold should be transferred
-      expect(advanced.gold).toBe(500)
+      expect(advanced.gold).toBe(expectedGold)
     })
 
     it('returning expeditions do not generate new events', () => {
