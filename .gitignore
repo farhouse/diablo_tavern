@@ -6,3 +6,5 @@ coverage
 dist
 *.log
 artifacts/
+playwright-report/
+test-results/

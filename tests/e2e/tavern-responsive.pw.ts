@@ -1,11 +1,9 @@
 import { expect, test } from '@playwright/test'
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL
-const email = process.env.PLAYWRIGHT_DEMO_EMAIL
-const password = process.env.PLAYWRIGHT_DEMO_PASSWORD
+const expectedSha = process.env.PLAYWRIGHT_EXPECTED_SHA
 
-if (!baseURL || !email || !password) {
-  throw new Error('PLAYWRIGHT_BASE_URL, PLAYWRIGHT_DEMO_EMAIL and PLAYWRIGHT_DEMO_PASSWORD are required.')
+if (!expectedSha) {
+  throw new Error('PLAYWRIGHT_EXPECTED_SHA must be supplied by playwright.config.ts.')
 }
 
 const viewports = [
@@ -15,66 +13,104 @@ const viewports = [
 ]
 
 for (const viewport of viewports) {
-  test(`${viewport.name} keeps the Tavern readable without overflow or stretched posts`, async ({ browser }) => {
-    const context = await browser.newContext({ viewport })
-    const page = await context.newPage()
-    await page.route('**/api/savegame', route => route.fulfill({ json: responsiveSave }))
-    await page.route('**/api/quests', route => route.fulfill({ json: responsiveQuests }))
-    await page.goto(`${baseURL}/login`)
-    await page.getByLabel('Email').fill(email)
-    await page.getByLabel('Password').fill(password)
-    await page.getByRole('button', { name: 'Login' }).click()
-    await page.waitForURL('**/tavern')
-    await page.getByRole('region', { name: 'Visitor posts' }).waitFor()
+  test.describe(viewport.name, () => {
+    test.use({ viewport })
 
-    const geometry = await page.evaluate(() => {
-      const tavern = document.querySelector<HTMLElement>('.tavern-page')
-      const grid = document.querySelector<HTMLElement>('.visitor-grid')
-      const posts = [...document.querySelectorAll<HTMLElement>('.visitor-grid > .visitor-post, .visitor-grid > .visitor-slot')]
-      const tradeColumns = document.querySelector<HTMLElement>('.trade-columns')
-      const missionOption = document.querySelector<HTMLElement>('.mission-option')
-      return {
-        innerWidth: window.innerWidth,
-        scrollWidth: document.documentElement.scrollWidth,
-        tavernWidth: tavern?.getBoundingClientRect().width ?? 0,
-        gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
-        gridAlignment: grid ? getComputedStyle(grid).alignItems : '',
-        tradeColumns: tradeColumns ? getComputedStyle(tradeColumns).gridTemplateColumns.split(' ').length : 0,
-        missionColumns: missionOption ? getComputedStyle(missionOption).gridTemplateColumns.split(' ').length : 0,
-        posts: posts.map((post) => {
-          const rect = post.getBoundingClientRect()
-          return { width: rect.width, top: rect.top }
-        })
+    test('keeps the Tavern readable without overflow or stretched posts', async ({ page, request }) => {
+      const buildInfo = await request.get('/api/build-info')
+      await expect(buildInfo).toBeOK()
+      await expect(buildInfo.json()).resolves.toEqual({ sha: expectedSha })
+
+      await page.route('**/api/auth/login', route => route.fulfill({ json: responsiveAuth }))
+      await page.route('**/api/savegame', route => route.fulfill({ json: responsiveSave }))
+      await page.route('**/api/quests', route => route.fulfill({ json: responsiveQuests }))
+      await page.goto('/login')
+      await page.getByLabel('Email').fill('responsive@example.test')
+      await page.getByLabel('Password').fill('responsive-test-password')
+      await page.getByRole('button', { name: 'Login' }).click()
+      await page.waitForURL('**/tavern')
+      await page.getByRole('region', { name: 'Visitor posts' }).waitFor()
+
+      const geometry = await page.evaluate(() => {
+        const tavern = document.querySelector<HTMLElement>('.tavern-page')
+        const grid = document.querySelector<HTMLElement>('.visitor-grid')
+        const posts = [...document.querySelectorAll<HTMLElement>('.visitor-grid > .visitor-post, .visitor-grid > .visitor-slot')]
+        const tradeColumns = document.querySelector<HTMLElement>('.trade-columns')
+        const missionOption = document.querySelector<HTMLElement>('.mission-option')
+        const mobileControls = [...document.querySelectorAll<HTMLElement>([
+          '[data-testid^="buy-"]',
+          '[data-testid^="sell-"]',
+          '[data-testid^="review-"]',
+          '[data-testid^="claim-"]',
+          '[data-testid^="dismiss-"]'
+        ].join(', '))]
+        return {
+          innerWidth: window.innerWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+          tavernWidth: tavern?.getBoundingClientRect().width ?? 0,
+          gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
+          gridAlignment: grid ? getComputedStyle(grid).alignItems : '',
+          tradeColumns: tradeColumns ? getComputedStyle(tradeColumns).gridTemplateColumns.split(' ').length : 0,
+          missionColumns: missionOption ? getComputedStyle(missionOption).gridTemplateColumns.split(' ').length : 0,
+          posts: posts.map((post) => {
+            const rect = post.getBoundingClientRect()
+            return { width: rect.width, height: rect.height, top: rect.top }
+          }),
+          mobileControls: mobileControls.map((control) => {
+            const container = control.parentElement
+            const containerStyle = container ? getComputedStyle(container) : undefined
+            const horizontalPadding = containerStyle
+              ? Number.parseFloat(containerStyle.paddingLeft) + Number.parseFloat(containerStyle.paddingRight)
+              : 0
+            const horizontalBorder = containerStyle
+              ? Number.parseFloat(containerStyle.borderLeftWidth) + Number.parseFloat(containerStyle.borderRightWidth)
+              : 0
+            return {
+              width: control.getBoundingClientRect().width,
+              containerWidth: (container?.getBoundingClientRect().width ?? 0) - horizontalPadding - horizontalBorder
+            }
+          })
+        }
+      })
+
+      expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.innerWidth)
+      expect(geometry.posts).toHaveLength(2)
+      expect(geometry.gridAlignment).toBe('start')
+      expect(geometry.tradeColumns).toBeGreaterThan(0)
+      expect(geometry.missionColumns).toBeGreaterThan(0)
+
+      if (viewport.width === 2560) {
+        expect(geometry.tavernWidth).toBeGreaterThanOrEqual(1600)
+        expect(geometry.gridColumns).toBe(2)
+        expect(Math.min(...geometry.posts.map(post => post.width))).toBeGreaterThan(740)
+        expect(geometry.tradeColumns).toBe(2)
+        expect(geometry.missionColumns).toBe(2)
+        expect(geometry.posts[0]!.height - geometry.posts[1]!.height).toBeGreaterThan(300)
+      } else if (viewport.width === 1440) {
+        expect(geometry.gridColumns).toBe(2)
+        expect(Math.min(...geometry.posts.map(post => post.width))).toBeGreaterThan(620)
+        expect(geometry.tradeColumns).toBe(1)
+        expect(geometry.missionColumns).toBe(1)
+        expect(geometry.posts[0]!.height - geometry.posts[1]!.height).toBeGreaterThan(300)
+      } else {
+        expect(geometry.gridColumns).toBe(1)
+        expect(geometry.posts[0]!.width).toBeLessThanOrEqual(358)
+        expect(geometry.posts[1]!.top).toBeGreaterThan(geometry.posts[0]!.top)
+        expect(geometry.tradeColumns).toBe(1)
+        expect(geometry.missionColumns).toBe(1)
+        expect(geometry.mobileControls.length).toBeGreaterThan(0)
+        for (const control of geometry.mobileControls) {
+          expect(Math.abs(control.width - control.containerWidth)).toBeLessThanOrEqual(1)
+        }
       }
     })
-
-    expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.innerWidth)
-    expect(geometry.posts).toHaveLength(2)
-    expect(geometry.gridAlignment).toBe('start')
-    expect(geometry.tradeColumns).toBeGreaterThan(0)
-    expect(geometry.missionColumns).toBeGreaterThan(0)
-
-    if (viewport.width === 2560) {
-      expect(geometry.tavernWidth).toBeGreaterThanOrEqual(1600)
-      expect(geometry.gridColumns).toBe(2)
-      expect(Math.min(...geometry.posts.map(post => post.width))).toBeGreaterThan(740)
-      expect(geometry.tradeColumns).toBe(2)
-      expect(geometry.missionColumns).toBe(2)
-    } else if (viewport.width === 1440) {
-      expect(geometry.gridColumns).toBe(2)
-      expect(Math.min(...geometry.posts.map(post => post.width))).toBeGreaterThan(620)
-      expect(geometry.tradeColumns).toBe(1)
-      expect(geometry.missionColumns).toBe(1)
-    } else {
-      expect(geometry.gridColumns).toBe(1)
-      expect(geometry.posts[0]!.width).toBeLessThanOrEqual(358)
-      expect(geometry.posts[1]!.top).toBeGreaterThan(geometry.posts[0]!.top)
-      expect(geometry.tradeColumns).toBe(1)
-      expect(geometry.missionColumns).toBe(1)
-    }
-
-    await context.close()
   })
+}
+
+const responsiveAuth = {
+  user: { id: 'responsive-e2e', email: 'responsive@example.test' },
+  accessToken: 'responsive-access-token',
+  refreshToken: 'responsive-refresh-token'
 }
 
 const item = {

@@ -8,7 +8,8 @@ export default defineNuxtConfig({
     jwtSecret: process.env.JWT_SECRET || 'dev-secret-change-me',
     inviteCode: process.env.INVITE_CODE || '',
     public: {
-      appName: 'Guild Manager ARPG'
+      appName: 'Guild Manager ARPG',
+      buildSha: process.env.NUXT_PUBLIC_BUILD_SHA || 'development'
     }
   },
   typescript: {
