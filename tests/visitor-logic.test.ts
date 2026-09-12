@@ -166,6 +166,9 @@ describe('visitor trade and commission loop', () => {
     expect(() => salvageItem(save, item.id)).toThrow('Item is in the appraiser queue')
     expect(save.stash).toContainEqual(expect.objectContaining({ id: item.id, identified: false }))
     expect(save.caravan.services.appraiserQueue).toContainEqual(expect.objectContaining({ itemId: item.id }))
+
+    item.identified = true
+    expect(() => identifyItem(save, item.id)).toThrow('Item is already in the appraiser queue')
   })
 
   it('caps later visitor quotes at acquisition cost under adversarial high rolls', () => {
