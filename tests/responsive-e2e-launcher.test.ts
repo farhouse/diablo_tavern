@@ -279,6 +279,22 @@ describe('responsive E2E preview launcher', () => {
     expect(processTarget.listenerCount('SIGINT')).toBe(0)
     expect(processTarget.listenerCount('SIGTERM')).toBe(0)
   })
+
+  it('removes lifecycle listeners when tree termination rejects', async () => {
+    const build = createChild(2002)
+    const processTarget = createProcessTarget()
+    const spawnNode = vi.fn(() => build)
+    const terminateTree = vi.fn(async () => {
+      throw new Error('termination crashed')
+    })
+    const run = runResponsivePreview(launcherEnvironment, { processTarget, spawnNode, terminateTree })
+
+    processTarget.emit('SIGTERM')
+
+    await expect(run).rejects.toThrow('termination crashed')
+    expect(processTarget.listenerCount('SIGINT')).toBe(0)
+    expect(processTarget.listenerCount('SIGTERM')).toBe(0)
+  })
 })
 
 const launcherEnvironment = {

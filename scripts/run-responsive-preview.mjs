@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { performance } from 'node:perf_hooks'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
@@ -190,7 +191,7 @@ export async function terminateChildTree(child, signal, options = {}) {
   const killProcessGroup = options.killProcessGroup ?? process.kill
   const taskkill = options.taskkill ?? runTaskkill
   const findWindowsDescendants = options.findWindowsDescendants ?? listWindowsDescendantPids
-  const now = options.now ?? Date.now
+  const now = options.now ?? (() => performance.now())
   const startedAt = now()
   const gracefulDeadline = startedAt + Math.ceil(timeoutMs / 2)
   const shutdownDeadline = startedAt + timeoutMs
@@ -328,9 +329,13 @@ export async function runResponsivePreview(environment = process.env, dependenci
     }
   } finally {
     shutdownPromise ??= terminateTree(activeChild, 'SIGTERM')
-    const cleaned = await shutdownPromise
-    processTarget.removeListener('SIGINT', forwardSigint)
-    processTarget.removeListener('SIGTERM', forwardSigterm)
+    let cleaned
+    try {
+      cleaned = await shutdownPromise
+    } finally {
+      processTarget.removeListener('SIGINT', forwardSigint)
+      processTarget.removeListener('SIGTERM', forwardSigterm)
+    }
     if (!cleaned) throw new Error('Responsive E2E process tree did not stop cleanly.')
   }
 }
