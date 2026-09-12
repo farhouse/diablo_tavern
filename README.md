@@ -77,8 +77,9 @@ pnpm test:e2e:responsive # Self-contained responsive browser checks
 `pnpm test:e2e:responsive` builds the current HEAD and starts its own production
 preview on `127.0.0.1:3105`. Authentication and Tavern APIs use deterministic
 fixtures, so MongoDB and demo credentials are not required. The runner refuses to
-reuse an existing server and checks `/api/build-info` against the current Git SHA
-before measuring the 2K, desktop, and mobile layouts.
+reuse an existing server and checks the Git SHA embedded in its compiled Nitro
+bundle through `/api/build-info` before measuring the 2K, desktop, and mobile
+layouts.
 
 Install Chromium once with `pnpm exec playwright install chromium` when Playwright's
 bundled browser is absent. To use a system Chromium build instead, set

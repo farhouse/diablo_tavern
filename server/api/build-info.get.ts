@@ -1,4 +1,5 @@
+declare const __DIABLO_BUILD_SHA__: string
+
 export default defineEventHandler(() => {
-  const config = useRuntimeConfig()
-  return { sha: config.public.buildSha }
+  return { sha: __DIABLO_BUILD_SHA__ }
 })
