@@ -82,7 +82,8 @@ bundle through `/api/build-info` before measuring the 2K, desktop, and mobile
 layouts. Its Node launcher deliberately gives the preview a different runtime SHA
 than the build, so that check fails if the endpoint ever stops reading the compiled
 value. The launcher also forwards termination signals and cleans up its child
-process on every exit path.
+process tree on every exit path; Playwright grants that graceful shutdown a
+bounded window before forcing termination.
 
 Install Chromium once with `pnpm exec playwright install chromium` when Playwright's
 bundled browser is absent. To use a system Chromium build instead, set

@@ -1,9 +1,10 @@
+import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
   createBuildEnvironment,
   createPreviewEnvironment,
-  stopChild
+  terminateChildTree
 } from '../scripts/run-responsive-preview.mjs'
 
 describe('responsive E2E preview launcher', () => {
@@ -25,14 +26,62 @@ describe('responsive E2E preview launcher', () => {
     expect(previewEnvironment.NUXT_PUBLIC_BUILD_SHA).not.toBe(expectedSha)
   })
 
-  it('forwards shutdown signals only to a live child process', () => {
-    const kill = vi.fn(() => true)
+  it('signals the complete POSIX process group and waits for its exit', async () => {
+    const child = createChild(8123)
+    const killProcessGroup = vi.fn(() => {
+      child.signalCode = 'SIGTERM'
+      child.emit('exit', null, 'SIGTERM')
+    })
 
-    expect(stopChild({ killed: false, kill }, 'SIGTERM')).toBe(true)
-    expect(kill).toHaveBeenCalledWith('SIGTERM')
+    await expect(terminateChildTree(child, 'SIGTERM', {
+      platform: 'darwin',
+      timeoutMs: 10,
+      killProcessGroup
+    })).resolves.toBe(true)
+    expect(killProcessGroup).toHaveBeenCalledWith(-8123, 'SIGTERM')
+  })
 
-    kill.mockClear()
-    expect(stopChild({ killed: true, kill }, 'SIGINT')).toBe(false)
-    expect(kill).not.toHaveBeenCalled()
+  it('escalates cleanup when the process tree ignores graceful shutdown', async () => {
+    const child = createChild(9123)
+    const killProcessGroup = vi.fn((_pid, signal) => {
+      if (signal === 'SIGKILL') {
+        child.signalCode = 'SIGKILL'
+        child.emit('exit', null, 'SIGKILL')
+      }
+    })
+
+    await expect(terminateChildTree(child, 'SIGINT', {
+      platform: 'linux',
+      timeoutMs: 1,
+      killProcessGroup
+    })).resolves.toBe(true)
+    expect(killProcessGroup).toHaveBeenNthCalledWith(1, -9123, 'SIGINT')
+    expect(killProcessGroup).toHaveBeenNthCalledWith(2, -9123, 'SIGKILL')
+  })
+
+  it('uses taskkill for a complete Windows child tree', async () => {
+    const child = createChild(7123)
+    const taskkill = vi.fn(async (_pid, force) => {
+      if (!force) {
+        child.signalCode = 'SIGTERM'
+        child.emit('exit', null, 'SIGTERM')
+      }
+      return true
+    })
+
+    await expect(terminateChildTree(child, 'SIGTERM', {
+      platform: 'win32',
+      timeoutMs: 10,
+      taskkill
+    })).resolves.toBe(true)
+    expect(taskkill).toHaveBeenCalledWith(7123, false)
   })
 })
+
+function createChild(pid: number) {
+  return Object.assign(new EventEmitter(), {
+    pid,
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null
+  })
+}

@@ -19,6 +19,10 @@ export default defineConfig({
       PORT: '3105',
       PLAYWRIGHT_EXPECTED_SHA: buildSha
     },
+    gracefulShutdown: {
+      signal: 'SIGTERM',
+      timeout: 15_000
+    },
     reuseExistingServer: false,
     timeout: 180_000,
     url: `${baseURL}/api/build-info`
