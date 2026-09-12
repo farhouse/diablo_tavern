@@ -54,7 +54,9 @@ import { getUpgradeCost, getMaxUpgradeLevel } from '~/utils/game-logic'
 import { caravanUpgradeCosts } from '~/utils/game-data'
 
 const game = useGameStore()
-await game.load()
+onMounted(() => {
+  void game.load()
+})
 
 const upgrading = ref<CaravanUpgradeId | null>(null)
 

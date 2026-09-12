@@ -83,6 +83,7 @@ export function normalizeSaveGame(save: SaveGame): SaveGame {
     if (record.status === 'returning' && !record.returnsAt) {
       record.status = 'exploring'
     }
+    updateExpeditionHeroProgress(save, expedition)
   }
 
   if (legacy.lastExpeditionRun && !save.expeditionHistory.some((summary) => summary.id === legacy.lastExpeditionRun?.id)) {
@@ -542,7 +543,13 @@ export function startExpedition(save: SaveGame, questId: string, heroIds: string
       heroId: hero.id,
       temporaryHp: hero.derivedStats.life,
       maxTemporaryHp: hero.derivedStats.life,
-      dead: false
+      dead: false,
+      startLevel: hero.level,
+      startXp: hero.xp,
+      projectedLevel: hero.level,
+      projectedXp: hero.xp,
+      xpToNextLevel: xpForNextLevel(hero.level),
+      leveledUp: false
     })),
     events: [],
     carriedLoot: [],
@@ -583,6 +590,23 @@ function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, n
   }
 
   // Normal event generation for exploring/bossReady expeditions
+  const portalUntilTime = expedition.portalAvailableUntil ? new Date(expedition.portalAvailableUntil).getTime() : undefined
+  if (portalUntilTime) {
+    if (portalUntilTime > nowTime) {
+      pauseExpeditionEventsUntil(expedition, nowTime)
+      updateExpeditionHeroProgress(save, expedition)
+      return
+    }
+    pauseExpeditionEventsUntil(expedition, portalUntilTime)
+    clearExpiredPortal(expedition, nowTime)
+  }
+
+  if (!hasLivingPartyMembers(expedition)) {
+    pauseExpeditionEventsUntil(expedition, nowTime)
+    updateExpeditionHeroProgress(save, expedition)
+    return
+  }
+
   const lastEventTime = new Date(expedition.lastEventAt).getTime()
   const quest = quests.find(q => q.id === expedition.questId)
   if (!quest) throw createGameError('Quest not found')
@@ -595,23 +619,32 @@ function advanceSingleExpedition(save: SaveGame, expedition: ActiveExpedition, n
     return
   }
 
+  let processedEvents = 0
+  let processedUntilTime = lastEventTime
+
   for (let i = 0; i < eventsToGenerate; i++) {
     const eventTimeMs = lastEventTime + ((i + 1) * EXPEDITION_EVENT_INTERVAL_MS)
     clearExpiredPortal(expedition, eventTimeMs)
+    if (expedition.portalAvailableUntil) break
+    if (!hasLivingPartyMembers(expedition)) break
     const eventTime = new Date(eventTimeMs)
     const event = generateExpeditionEvent(save, expedition, quest, eventTime, skipPortal)
     expedition.events.push(event)
     applyExpeditionEvent(save, expedition, event)
+    processedEvents += 1
+    processedUntilTime = eventTimeMs
+    if (expedition.portalAvailableUntil || !hasLivingPartyMembers(expedition)) break
   }
 
   // Clean portal if still expired after catch-up event generation
   clearExpiredPortal(expedition, nowTime)
 
-  expedition.lastEventAt = new Date(lastEventTime + (eventsToGenerate * EXPEDITION_EVENT_INTERVAL_MS)).toISOString()
+  expedition.lastEventAt = new Date(processedUntilTime).toISOString()
   expedition.nextEventAt = new Date(new Date(expedition.lastEventAt).getTime() + EXPEDITION_EVENT_INTERVAL_MS).toISOString()
 
-  expedition.depth += eventsToGenerate
+  expedition.depth += processedEvents
   expedition.danger = Math.min(100, expedition.depth)
+  updateExpeditionHeroProgress(save, expedition)
 
   if (!expedition.bossReady && expedition.depth >= 100 && expedition.heroIds.some(id => {
     const hero = save.heroes.find(h => h.id === id)
@@ -721,6 +754,7 @@ function generateExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, q
   let title = ''
   let description = ''
   let damageTaken: number | undefined
+  let healingDone: number | undefined
   let xpGained: number | undefined
   let goldFound: number | undefined
   let lootFound: Item[] | undefined
@@ -745,7 +779,8 @@ function generateExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, q
     damageTaken = Math.floor(Math.random() * 15) + 10
   } else if (type === 'rest') {
     title = 'Safe Haven'
-    description = 'The party found a place to rest and recover.'
+    healingDone = Math.floor(20 + Math.random() * 20)
+    description = `The party found a place to rest and recovered ${healingDone} HP.`
   } else if (type === 'champion') {
     title = 'Champion Encounter'
     description = 'A powerful champion blocked the party\'s path.'
@@ -793,6 +828,7 @@ function generateExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, q
     title,
     description,
     damageTaken,
+    healingDone,
     xpGained,
     goldFound,
     lootFound,
@@ -835,7 +871,7 @@ function applyExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, even
   }
 
   if (event.type === 'rest') {
-    const healAmount = Math.floor(20 + Math.random() * 20)
+    const healAmount = event.healingDone ?? Math.floor(20 + Math.random() * 20)
     for (const state of expedition.partyState) {
       if (!state.dead) {
         state.temporaryHp = Math.min(state.maxTemporaryHp, state.temporaryHp + healAmount)
@@ -848,6 +884,7 @@ function applyExpeditionEvent(save: SaveGame, expedition: ActiveExpedition, even
   if (event.materialsFound !== undefined) expedition.carriedMaterials += event.materialsFound
   if (event.lootFound?.length) expedition.carriedLoot.push(...event.lootFound)
   if (event.depthGained !== undefined) expedition.depth += event.depthGained
+  updateExpeditionHeroProgress(save, expedition)
 }
 
 // --- Private helpers ---
@@ -906,6 +943,48 @@ function clearExpiredPortal(expedition: ActiveExpedition, atTimeMs: number): voi
     delete expedition.portalAvailableUntil
     delete expedition.portalEventId
   }
+}
+
+function pauseExpeditionEventsUntil(expedition: ActiveExpedition, atTimeMs: number): void {
+  const lastEventTime = new Date(expedition.lastEventAt).getTime()
+  const pausedUntil = Number.isFinite(lastEventTime) ? Math.max(lastEventTime, atTimeMs) : atTimeMs
+  expedition.lastEventAt = new Date(pausedUntil).toISOString()
+  expedition.nextEventAt = new Date(pausedUntil + EXPEDITION_EVENT_INTERVAL_MS).toISOString()
+}
+
+function hasLivingPartyMembers(expedition: ActiveExpedition): boolean {
+  return expedition.partyState.some((state) => !state.dead)
+}
+
+function updateExpeditionHeroProgress(save: SaveGame, expedition: ActiveExpedition): void {
+  const livingStates = expedition.partyState.filter((state) => !state.dead)
+  const xpPerHero = livingStates.length ? Math.floor(expedition.carriedXp / livingStates.length) : 0
+
+  for (const state of expedition.partyState) {
+    const hero = save.heroes.find((candidate) => candidate.id === state.heroId)
+    if (!hero) continue
+
+    const startLevel = state.startLevel ?? hero.level
+    const startXp = state.startXp ?? hero.xp
+    state.startLevel = startLevel
+    state.startXp = startXp
+
+    const progress = projectHeroProgress(startLevel, startXp + (state.dead ? 0 : xpPerHero))
+    state.projectedLevel = progress.level
+    state.projectedXp = progress.xp
+    state.xpToNextLevel = xpForNextLevel(progress.level)
+    state.leveledUp = progress.level > startLevel
+  }
+}
+
+function projectHeroProgress(level: number, xp: number): { level: number; xp: number } {
+  let projectedLevel = level
+  let projectedXp = xp
+  while (projectedXp >= xpForNextLevel(projectedLevel)) {
+    projectedXp -= xpForNextLevel(projectedLevel)
+    projectedLevel += 1
+  }
+  return { level: projectedLevel, xp: projectedXp }
 }
 
 function rollRarity(lootTableId: string, magicFind: number): ItemRarity {

@@ -56,7 +56,9 @@ const game = useGameStore()
 async function reload() {
   await game.load()
 }
-await reload()
+onMounted(() => {
+  void reload()
+})
 
 const stashCap = computed(() => game.save ? getStashCapacity(game.save) : 0)
 const stashUsed = computed(() => game.save?.stash.length ?? 0)
