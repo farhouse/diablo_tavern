@@ -61,6 +61,16 @@ describe('current save schema', () => {
 })
 
 describe('legacy surface removal', () => {
+  it('does not ship obsolete legacy plans or credential reset helpers', () => {
+    const retiredArtifacts = [
+      'IMPLEMENTATION-SUMMARY.md',
+      'UI-UX-Improvements-Documentation.md',
+      'scripts/reset-password.ts'
+    ]
+
+    for (const artifact of retiredArtifacts) expect(existsSync(artifact), artifact).toBe(false)
+  })
+
   it('has no server routes that bypass the visitor cycle', () => {
     const removedRoutes = [
       'server/api/heroes/hire.post.ts',
