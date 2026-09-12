@@ -1,21 +1,20 @@
 import type { CaravanUpgradeId } from '~/types/game'
 import { requireUser } from '~/server/utils/auth'
-import { readRequiredBody, requireString } from '~/server/utils/body'
-import { getSaveGame, replaceSaveGame } from '~/server/utils/savegame'
-import { touchSave, normalizeSaveGame, upgradeCaravan } from '~/utils/game-logic'
+import { requireString } from '~/server/utils/body'
+import { mutateSaveGameAtomic } from '~/server/utils/savegame'
+import { mutationError, operationKey, readMutation } from '~/server/utils/visitor-api'
+import { upgradeCaravan } from '~/utils/game-logic'
+
+const validUpgrades: CaravanUpgradeId[] = ['stashWagon', 'appraiser']
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
-  const body = await readRequiredBody(event)
+  const body = await readMutation(event)
   const upgradeId = requireString(body.upgradeId, 'upgradeId') as CaravanUpgradeId
-  const validUpgrades: CaravanUpgradeId[] = ['wagons', 'scoutTable', 'stashWagon', 'infirmary', 'appraiser']
   if (!validUpgrades.includes(upgradeId)) throw createError({ statusCode: 400, statusMessage: 'Invalid upgrade' })
-
   try {
-    let save = normalizeSaveGame(await getSaveGame(user.id))
-    save = upgradeCaravan(save, upgradeId)
-    return replaceSaveGame(touchSave(save))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('upgrade', upgradeId), (save) => upgradeCaravan(save, upgradeId))
   } catch (error) {
-    throw createError({ statusCode: 400, statusMessage: error instanceof Error ? error.message : 'Cannot upgrade' })
+    mutationError(error, 'Cannot upgrade')
   }
 })

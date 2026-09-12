@@ -1,6 +1,6 @@
 import type { Filter } from 'mongodb'
 import type { SaveGame } from '~/types/game'
-import { createSaveGame, normalizeSaveGame } from '~/utils/game-logic'
+import { createSaveGame, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 export async function getSaveGame(userId: string): Promise<SaveGame> {
@@ -16,11 +16,7 @@ export async function getSaveGame(userId: string): Promise<SaveGame> {
     const persistedVisitRound = JSON.stringify(existing.visitRound)
     const persistedVisitHistory = JSON.stringify(existing.visitHistory)
     const serialized = serializeSave(existing)
-    const needsMigration = !('visitRound' in existing)
-      || !('revision' in existing)
-      || !('processedRequestIds' in existing)
-      || !('processedRequests' in existing)
-      || !('visitHistory' in existing)
+    const needsMigration = existing.schemaVersion !== SAVE_SCHEMA_VERSION
     const visitStateChanged = persistedVisitRound !== JSON.stringify(serialized.visitRound)
       || persistedVisitHistory !== JSON.stringify(serialized.visitHistory)
     if (needsMigration || visitStateChanged) {
@@ -39,16 +35,17 @@ export async function getSaveGame(userId: string): Promise<SaveGame> {
 }
 
 export async function replaceSaveGame(save: SaveGame): Promise<SaveGame> {
-  normalizeSaveGame(save)
+  save = normalizeSaveGame(save)
   const saves = await saveGamesCollection()
   const currentRevision = save.revision
-  save.revision += 1
-  const { _id, ...document } = save
+  const next = { ...save, revision: currentRevision + 1 }
+  const { _id, ...document } = next
   const revisionFilter = currentRevision === 0
     ? { $or: [{ revision: 0 }, { revision: { $exists: false } }] }
     : { revision: currentRevision }
   const result = await saves.replaceOne({ userId: save.userId, ...revisionFilter } as Filter<DbSaveGame>, document)
   if (result.modifiedCount !== 1) throw new Error('Save changed concurrently; retry the operation')
+  save.revision = next.revision
   return save
 }
 
@@ -112,16 +109,11 @@ export class IdempotencyConflictError extends Error {
   override name = 'IdempotencyConflictError'
 }
 
-export async function resetSaveGame(userId: string): Promise<SaveGame> {
-  const save = createSaveGame(userId)
-  const saves = await saveGamesCollection()
-  await saves.replaceOne({ userId } as Filter<DbSaveGame>, save, { upsert: true })
-  return save
-}
-
 export function serializeSave(save: SaveGame | DbSaveGame): SaveGame {
-  return normalizeSaveGame({
+  const normalized = normalizeSaveGame({
     ...save,
     _id: save._id ? String(save._id) : undefined
   } as SaveGame)
+  if (save._id) normalized._id = String(save._id)
+  return normalized
 }

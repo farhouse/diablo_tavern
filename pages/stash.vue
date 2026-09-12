@@ -15,10 +15,6 @@
       <button class="btn" type="button" @click="reload">Try again</button>
     </div>
     <p v-if="notice" class="page-alert page-alert--success" role="status">{{ notice }}</p>
-    <p v-if="game.save?.pendingLoot.length" class="page-alert page-alert--error" role="alert">
-      {{ game.save.pendingLoot.length }} items are waiting because the stash is full. Clear space before claiming more loot.
-    </p>
-
     <section v-if="game.loading && !game.save" class="grid three" aria-busy="true" aria-label="Loading stash">
       <div v-for="index in 3" :key="index" class="card stash-skeleton" />
     </section>
@@ -142,7 +138,7 @@ async function queueAppraise(itemId: string) {
 }
 
 async function salvage(item: Item) {
-  await perform(item.id, `${itemName(item)} salvaged for ${salvageValue(item)}g.`, () => game.sell(item.id))
+  await perform(item.id, `${itemName(item)} salvaged for ${salvageValue(item)}g.`, () => game.salvage(item.id))
 }
 
 async function perform(itemId: string, message: string, action: () => Promise<void>) {

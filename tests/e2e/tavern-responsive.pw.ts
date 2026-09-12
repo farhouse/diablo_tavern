@@ -23,7 +23,6 @@ for (const viewport of viewports) {
 
       await page.route('**/api/auth/login', route => route.fulfill({ json: responsiveAuth }))
       await page.route('**/api/savegame', route => route.fulfill({ json: responsiveSave }))
-      await page.route('**/api/quests', route => route.fulfill({ json: responsiveQuests }))
       await page.goto('/login')
       await page.getByLabel('Email').fill('responsive@example.test')
       await page.getByLabel('Password').fill('responsive-test-password')
@@ -139,11 +138,9 @@ const visitor = (id: string, name: string) => ({
   arrivedAt: '2026-09-10T20:00:00.000Z'
 })
 const responsiveSave = {
-  userId: 'responsive-e2e', gold: 450, materials: 0,
-  caravan: { level: 0, upgrades: { wagons: 0, scoutTable: 0, stashWagon: 0, infirmary: 0, appraiser: 0 }, services: { appraiserQueue: [] } },
-  stashLimit: 20, heroes: [], stash: [item], pendingLoot: [],
-  questsProgress: [{ questId: 'blood-moor', completed: false, unlocked: true }],
-  activeExpeditions: [], expeditionHistory: [],
+  schemaVersion: 2, userId: 'responsive-e2e', gold: 450,
+  caravan: { level: 0, upgrades: { stashWagon: 0, appraiser: 0 }, services: { appraiserQueue: [] } },
+  stashLimit: 20, stash: [item], unlockedRegionIds: ['blood-moor'],
   visitRound: {
     id: 'responsive-round', number: 1, createdAt: '2026-09-10T20:00:00.000Z',
     slots: [
@@ -154,7 +151,3 @@ const responsiveSave = {
   visitHistory: [], processedRequestIds: [], processedRequests: [], revision: 1,
   createdAt: '2026-09-10T20:00:00.000Z', updatedAt: '2026-09-10T20:00:00.000Z'
 }
-const responsiveQuests = [{
-  id: 'blood-moor', name: 'Blood Moor', act: 1, difficulty: 34, minLevel: 1,
-  rewards: { xp: 70, gold: 90 }, lootTableId: 'act1-low'
-}]

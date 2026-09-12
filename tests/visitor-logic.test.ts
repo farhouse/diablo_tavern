@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SaveGame, VisitRound } from '../types/game'
-import { createSaveGame, normalizeSaveGame, sellItem } from '../utils/game-logic'
+import { createSaveGame, normalizeSaveGame } from '../utils/game-logic'
 import { itemBases, quests } from '../utils/game-data'
 import {
   assignVisitorCommission,
@@ -12,6 +12,7 @@ import {
   hasPurchaseAction,
   hasSaleAction,
   refreshVisitRound,
+  salvageItem,
   sellToVisitor
 } from '../utils/visitor-logic'
 
@@ -245,23 +246,7 @@ describe('visitor trade and commission loop', () => {
       .toThrow('limit reached')
   })
 
-  it('normalizes legacy saves without deleting historical heroes', () => {
-    const legacy = createSaveGame('legacy') as unknown as Record<string, unknown>
-    const historicalHeroes = [{ id: 'old-hero', status: 'dead' }]
-    legacy.heroes = historicalHeroes
-    delete legacy.visitRound
-    delete legacy.visitHistory
-    delete legacy.processedRequestIds
-    delete legacy.processedRequests
-    delete legacy.revision
-
-    const migrated = normalizeSaveGame(legacy as unknown as ReturnType<typeof createSaveGame>)
-    expect(migrated.heroes).toEqual(historicalHeroes)
-    expect(visitors(migrated)).toHaveLength(2)
-    expect(hasCommercialAction(migrated)).toBe(true)
-  })
-
-  it('migrates missing visitor origin and equipment without losing an existing power increase', () => {
+  it('repairs missing current visitor details without losing an existing power increase', () => {
     const save = createSaveGame('legacy-visitor-details')
     const visitor = visitors(save)[0]!
     visitor.power += 17
@@ -295,7 +280,7 @@ describe('visitor trade and commission loop', () => {
     expect(summary.reduce((sum, item) => sum + item.powerBonus, 0)).toBe(13)
   })
 
-  it('migrates legacy options to the hardest currently unlocked region', () => {
+  it('repairs incomplete current options using the hardest unlocked region', () => {
     const save = createSaveGame('legacy-options')
     const visitor = visitors(save)[0]!
     const originalOption = visitor.commissionOptions[0]!
@@ -314,7 +299,7 @@ describe('visitor trade and commission loop', () => {
     delete legacyCommission.riskLevel
     delete legacyCommission.failureConsequence
     visitor.commissionOptions = visitor.commissionOptions.map(({ optionId: _optionId, ...option }) => option) as typeof visitor.commissionOptions
-    for (const progress of save.questsProgress) progress.unlocked = true
+    save.unlockedRegionIds = quests.map((quest) => quest.id)
 
     const migrated = normalizeSaveGame(JSON.parse(JSON.stringify(save)))
     const hardest = [...quests].sort((a, b) => b.difficulty - a.difficulty)[0]!
@@ -371,7 +356,7 @@ describe('visitor trade and commission loop', () => {
 
     const visitor = visitors(save)[0]!
     visitor.state = 'traded'
-    assignVisitorCommission(save, visitor.id, options[0]!.regionId, seeded(4))
+    assignVisitorCommission(save, visitor.id, options[0]!.optionId, seeded(4))
     expect(visitor.commission!.optionId).toBe('safe')
   })
 
@@ -379,7 +364,7 @@ describe('visitor trade and commission loop', () => {
     const save = createSaveGame('salvage')
     const item = save.stash[0]!
     const initialGold = save.gold
-    sellItem(save, item.id)
+    salvageItem(save, item.id)
     expect(save.gold - initialGold).toBe(Math.floor(item.value * 0.25))
   })
 
@@ -405,6 +390,8 @@ describe('visitor trade and commission loop', () => {
     }
 
     expect(softLocks).toBe(0)
+    expect(netGold).toBe(-450)
+    expect(save.gold).toBe(0)
     expect(netGold / 1000).toBeLessThan(5)
     expect(save.gold).toBeLessThan(startingGold * 10)
   })

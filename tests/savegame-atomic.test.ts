@@ -124,52 +124,25 @@ describe('atomic save mutation', () => {
     expect(new Set(document!.processedRequestIds)).toEqual(new Set(['new-1', 'new-2']))
   })
 
-  it('persists a legacy visitor migration without removing historical data', async () => {
+  it('recreates an incompatible save and discards its legacy economy', async () => {
     const { getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
     const legacyRecord = document as unknown as Record<string, unknown>
     legacyRecord.heroes = [{ id: 'historic-hero', status: 'dead' }]
+    legacyRecord.gold = 999_999
     legacyRecord.processedRequestIds = ['legacy-request']
-    delete legacyRecord.visitRound
-    delete legacyRecord.visitHistory
-    delete legacyRecord.processedRequests
-    delete legacyRecord.revision
+    delete legacyRecord.schemaVersion
 
-    const migrated = await getSaveGame('atomic-user')
-    expect(visitors(migrated)).toHaveLength(2)
-    expect(migrated.heroes).toEqual([{ id: 'historic-hero', status: 'dead' }])
+    const recreated = await getSaveGame('atomic-user')
+    expect(visitors(recreated)).toHaveLength(2)
+    expect(recreated.gold).toBe(450)
+    expect(recreated).not.toHaveProperty('heroes')
     expect(visitors(document!)).toHaveLength(2)
-    expect(document!.processedRequests).toEqual([{ requestId: 'legacy-request', operationKey: '' }])
+    expect(document!.processedRequests).toEqual([])
     expect(collection.replaceOne).toHaveBeenCalledTimes(1)
 
     const mutate = vi.fn()
     await mutateSaveGameAtomic('atomic-user', 'legacy-request', 'new-fingerprint', mutate)
-    expect(mutate).not.toHaveBeenCalled()
-  })
-
-  it('migrates the legacy visitor array into two persisted slots', async () => {
-    const { getSaveGame } = await import('../server/utils/savegame')
-    const legacyRound = document!.visitRound as unknown as { slots?: unknown; visitors?: unknown }
-    const legacyVisitors = visitors(document!)
-    legacyVisitors[0]!.state = 'departed'
-    legacyVisitors[0]!.departedAt = '2030-01-01T00:00:00.000Z'
-    legacyVisitors[0]!.budget = 123
-    legacyVisitors[0]!.trades = [{ requestId: 'legacy-trade', kind: 'player_sold', itemId: 'old-item', price: 17, createdAt: '2029-12-31T23:59:00.000Z' }]
-    const departedId = legacyVisitors[0]!.id
-    legacyRound.visitors = legacyVisitors
-    delete legacyRound.slots
-
-    const migrated = await getSaveGame('atomic-user')
-
-    expect(migrated.visitRound.slots).toHaveLength(2)
-    expect(visitors(migrated)).toHaveLength(1)
-    expect(document!.visitRound.slots).toHaveLength(2)
-    const archived = document!.visitHistory[0]!.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])[0]!
-    expect(archived.id).toBe(departedId)
-    expect(archived.budget).toBe(123)
-    expect(archived.trades).toEqual(legacyVisitors[0]!.trades)
-    expect(archived.commissionOptions.map((option) => option.optionId)).toEqual(['safe', 'risky'])
-    expect(document!.visitRound.slots.find((slot) => !slot.visitor)!.nextArrivalCheckAt).toBe('2030-01-01T00:00:30.000Z')
-    expect('visitors' in (document!.visitRound as unknown as Record<string, unknown>)).toBe(false)
+    expect(mutate).toHaveBeenCalledOnce()
   })
 
   it('persists a freed slot schedule once across an idempotent retry', async () => {

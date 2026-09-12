@@ -1,15 +1,14 @@
 import { requireUser } from '~/server/utils/auth'
-import { getSaveGame, replaceSaveGame } from '~/server/utils/savegame'
-import { touchSave, normalizeSaveGame, completeAppraisalQueue } from '~/utils/game-logic'
+import { mutateSaveGameAtomic } from '~/server/utils/savegame'
+import { mutationError, operationKey, readMutation } from '~/server/utils/visitor-api'
+import { completeAppraisalQueue } from '~/utils/game-logic'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
-
+  const body = await readMutation(event)
   try {
-    let save = normalizeSaveGame(await getSaveGame(user.id))
-    save = completeAppraisalQueue(save)
-    return replaceSaveGame(touchSave(save))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('appraise-complete'), (save) => completeAppraisalQueue(save))
   } catch (error) {
-    throw createError({ statusCode: 400, statusMessage: error instanceof Error ? error.message : 'Cannot complete appraisal' })
+    mutationError(error, 'Cannot complete appraisal')
   }
 })

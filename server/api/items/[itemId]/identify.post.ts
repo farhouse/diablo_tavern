@@ -1,14 +1,15 @@
 import { requireUser } from '~/server/utils/auth'
-import { getSaveGame, replaceSaveGame } from '~/server/utils/savegame'
+import { mutateSaveGameAtomic } from '~/server/utils/savegame'
+import { mutationError, operationKey, readMutation } from '~/server/utils/visitor-api'
 import { identifyItem } from '~/utils/game-logic'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
   const itemId = getRouterParam(event, 'itemId') || ''
-
+  const body = await readMutation(event)
   try {
-    return replaceSaveGame(identifyItem(await getSaveGame(user.id), itemId))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('identify', itemId), (save) => identifyItem(save, itemId))
   } catch (error) {
-    throw createError({ statusCode: 400, statusMessage: error instanceof Error ? error.message : 'Cannot identify item' })
+    mutationError(error, 'Cannot identify item')
   }
 })

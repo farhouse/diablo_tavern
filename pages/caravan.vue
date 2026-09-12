@@ -68,10 +68,6 @@
       <small v-if="processing" id="appraisal-process-reason" class="error">Ready appraisals are being processed.</small>
     </section>
 
-    <aside class="paused-systems">
-      <strong>Outside this MVP</strong>
-      <p>Materials and the Infirmary remain preserved in old saves, but they are not part of the visitor trade flow.</p>
-    </aside>
   </main>
 </template>
 
@@ -156,14 +152,12 @@ async function completeAppraisal() {
 .service-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .service-row { align-items: center; background: var(--panel); display: flex; gap: 1rem; justify-content: space-between; padding: 1rem; }
 .service-row + .service-row { border-top: 1px solid var(--line); }
-.service-row h2, .service-row p, .appraiser-panel h2, .appraiser-panel p, .paused-systems p { margin: 0; }
+.service-row h2, .service-row p, .appraiser-panel h2, .appraiser-panel p { margin: 0; }
 .service-row > div:first-child { display: grid; gap: 0.3rem; }
 .service-action { align-items: end; display: grid; gap: 0.35rem; justify-items: end; }
 .appraiser-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0.85rem; padding: 1rem; }
 .queue-list { display: grid; gap: 0.5rem; }
 .queue-row { align-items: center; background: #14120f; border-radius: 6px; display: flex; justify-content: space-between; padding: 0.65rem; }
-.paused-systems { border-top: 1px solid var(--line); color: var(--muted); padding-top: 1rem; }
-.paused-systems strong { color: var(--text); }
 @media (max-width: 600px) {
   .caravan-status { display: grid; grid-template-columns: repeat(3, 1fr); }
   .caravan-status > div { min-width: 0; padding: 0.8rem; }

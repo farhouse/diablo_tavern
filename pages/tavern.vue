@@ -40,7 +40,7 @@
           :stash="game.save?.stash ?? []"
           :gold="game.save?.gold ?? 0"
           :stash-limit="stashLimit"
-          :quests="game.quests"
+          :quests="quests"
           :now="now"
           :pending="game.isVisitorMutationPending(slot.visitor.id)"
           :trade-impact="tradeImpacts[slot.visitor.id]"
@@ -82,6 +82,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import VisitorPost from '~/components/VisitorPost.vue'
+import { quests } from '~/utils/game-data'
 import { useGameStore } from '~/stores/game'
 import type { Visitor } from '~/types/game'
 

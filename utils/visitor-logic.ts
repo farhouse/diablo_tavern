@@ -44,7 +44,7 @@ export function createStarterItems(random: RandomSource = Math.random): Item[] {
 }
 
 export function createVisitRound(
-  save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | 'questsProgress'>,
+  save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | 'unlockedRegionIds'>,
   roundNumber: number,
   now = new Date(),
   random: RandomSource = Math.random
@@ -89,16 +89,9 @@ export function refreshVisitRound(save: SaveGame, now = new Date(), random: Rand
   return save
 }
 
-export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'visitHistory' | 'questsProgress'>): void {
+export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'visitHistory' | 'unlockedRegionIds'>): void {
   for (const round of [save.visitRound, ...save.visitHistory]) {
     const isCurrentRound = round === save.visitRound
-    const legacyRound = round as VisitRound & { visitors?: Visitor[] }
-    if (!Array.isArray(round.slots)) {
-      round.slots = (legacyRound.visitors ?? []).slice(0, VISITOR_CONFIG.slotCount).map((visitor, index) => ({
-        id: `visitor-slot-${index + 1}`,
-        visitor
-      }))
-    }
     while (round.slots.length < VISITOR_CONFIG.slotCount) {
       round.slots.push({
         id: `visitor-slot-${round.slots.length + 1}`,
@@ -110,7 +103,7 @@ export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'vis
       if (typeof slot.id !== 'string' || !slot.id) slot.id = `visitor-slot-${index + 1}`
       if (isCurrentRound && slot.visitor?.state === 'departed') {
         const departedVisitor = slot.visitor
-        normalizeVisitor(departedVisitor, save.questsProgress)
+        normalizeVisitor(departedVisitor, save.unlockedRegionIds)
         if (!save.visitHistory.some((history) => history.slots?.some((entry) => entry.visitor?.id === departedVisitor.id))) {
           save.visitHistory.unshift({
             id: `${round.id}:${departedVisitor.id}`,
@@ -124,13 +117,12 @@ export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'vis
         slot.nextArrivalCheckAt = nextArrivalCheck(safeDate(departedVisitor.departedAt, round.createdAt)).toISOString()
         delete slot.visitor
       } else if (slot.visitor) {
-        normalizeVisitor(slot.visitor, isCurrentRound ? save.questsProgress : [])
+        normalizeVisitor(slot.visitor, isCurrentRound ? save.unlockedRegionIds : [])
         delete slot.nextArrivalCheckAt
       } else if (isCurrentRound && !isValidDate(slot.nextArrivalCheckAt)) {
         slot.nextArrivalCheckAt = nextArrivalCheck(safeDate(round.createdAt)).toISOString()
       }
     }
-    delete legacyRound.visitors
   }
   save.visitHistory = save.visitHistory.slice(0, VISIT_HISTORY_LIMIT)
 }
@@ -190,7 +182,7 @@ export function sellToVisitor(save: SaveGame, visitorId: string, itemId: string,
 export function assignVisitorCommission(
   save: SaveGame,
   visitorId: string,
-  optionId: string,
+  optionId: CommissionOption['optionId'],
   random: RandomSource = Math.random,
   now = new Date()
 ): SaveGame {
@@ -200,7 +192,6 @@ export function assignVisitorCommission(
   const activeCount = currentVisitors(save).filter((entry) => entry.commission && entry.commission.status !== 'claimed').length
   if (activeCount >= MAX_ACTIVE_COMMISSIONS) throw domainError('Active commission limit reached')
   const option = visitor.commissionOptions.find((entry) => entry.optionId === optionId)
-    ?? visitor.commissionOptions.find((entry) => entry.regionId === optionId && entry.optionId === 'safe')
   if (!option) throw domainError('Commission option is not available for this visitor')
 
   visitor.commission = {
@@ -278,7 +269,7 @@ export function hasSaleAction(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimi
       && visitor.buyQuotes[item.id]! <= visitor.budget))
 }
 
-function createVisitor(save: Pick<SaveGame, 'stash' | 'questsProgress'>, now: Date, random: RandomSource): Visitor {
+function createVisitor(save: Pick<SaveGame, 'stash' | 'unlockedRegionIds'>, now: Date, random: RandomSource): Visitor {
   const acceptedItemTypes = sampleDistinct(allItemTypes, 4, random)
   const interestedItemTypes = acceptedItemTypes.slice(0, 2)
   const level = randomInt(1, 7, random)
@@ -315,11 +306,11 @@ function createVisitor(save: Pick<SaveGame, 'stash' | 'questsProgress'>, now: Da
       ? percentage(item.value, 0.80, 1.10, random)
       : percentage(item.value, 0.40, 0.60, random)
   }
-  visitor.commissionOptions = unlockedCommissionOptions(save.questsProgress, visitor.power)
+  visitor.commissionOptions = unlockedCommissionOptions(save.unlockedRegionIds, visitor.power)
   return visitor
 }
 
-function normalizeVisitor(visitor: Visitor, progress: SaveGame['questsProgress']): void {
+function normalizeVisitor(visitor: Visitor, unlockedRegionIds: SaveGame['unlockedRegionIds']): void {
   if (typeof visitor.origin !== 'string' || visitor.origin.trim().length === 0) {
     visitor.origin = visitorOrigins[stableIndex(visitor.id || visitor.name, visitorOrigins.length)]!
   }
@@ -341,7 +332,7 @@ function normalizeVisitor(visitor: Visitor, progress: SaveGame['questsProgress']
     })
   }
 
-  const regeneratedOptions = unlockedCommissionOptions(progress, visitor.power, visitor.commissionOptions?.[0]?.regionId)
+  const regeneratedOptions = unlockedCommissionOptions(unlockedRegionIds, visitor.power, visitor.commissionOptions?.[0]?.regionId)
   if (!Array.isArray(visitor.commissionOptions)
     || visitor.commissionOptions.length !== 2
     || visitor.commissionOptions[0]?.optionId !== 'safe'
@@ -381,7 +372,7 @@ function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | '
   const cheapestOfferPrice = Math.min(...itemBases.map((base) => Math.round(base.value * 0.90)))
   let sellable = save.stash.find((item) => item.identified)
   if (!sellable && !itemBases.some((base) => Math.round(base.value * 0.90) <= save.gold)) {
-    // Compatibility/soft-lock recovery for legacy saves with no usable assets.
+    // Soft-lock recovery for a current save with no usable assets.
     if (save.stash.length >= save.stashLimit) {
       sellable = save.stash[0]
       if (sellable) sellable.identified = true
@@ -412,8 +403,8 @@ function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | '
   }
 }
 
-function unlockedCommissionOptions(progress: SaveGame['questsProgress'], power: number, fallbackRegionId?: string): CommissionOption[] {
-  const unlocked = quests.filter((quest) => progress.some((entry) => entry.questId === quest.id && entry.unlocked))
+function unlockedCommissionOptions(unlockedRegionIds: SaveGame['unlockedRegionIds'], power: number, fallbackRegionId?: string): CommissionOption[] {
+  const unlocked = quests.filter((quest) => unlockedRegionIds.includes(quest.id))
   const quest = unlocked.sort((a, b) => b.difficulty - a.difficulty)[0]
     ?? quests.find((candidate) => candidate.id === fallbackRegionId)
     ?? quests[0]!

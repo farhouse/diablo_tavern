@@ -8,9 +8,7 @@ export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
   const visitorId = getRouterParam(event, 'visitorId') || ''
   const body = await readVisitorMutation(event)
-  const selection = Object.prototype.hasOwnProperty.call(body, 'optionId')
-    ? requireCommissionOptionId(body.optionId)
-    : requireString(body.regionId, 'regionId')
+  const selection = requireCommissionOptionId(body.optionId)
   try {
     return await mutateSaveGameAtomic(user.id, body.requestId, visitorOperationKey('commission', visitorId, selection), (save) => assignVisitorCommission(save, visitorId, selection))
   } catch (error) {

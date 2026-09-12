@@ -16,7 +16,9 @@ export function visitorOperationKey(operation: string, ...identifiers: string[])
 }
 
 export function visitorMutationError(error: unknown, fallback: string): never {
-  if (error instanceof VisitorDomainError) throw createError({ statusCode: 400, statusMessage: error.message })
+  if (error instanceof VisitorDomainError || (error instanceof Error && error.name === 'GameDomainError')) {
+    throw createError({ statusCode: 400, statusMessage: error.message })
+  }
   if (error instanceof IdempotencyConflictError) throw createError({ statusCode: 409, statusMessage: error.message })
   if (error instanceof Error && error.message.includes('concurrently')) {
     throw createError({ statusCode: 409, statusMessage: error.message })
@@ -24,3 +26,7 @@ export function visitorMutationError(error: unknown, fallback: string): never {
   console.error('Unexpected visitor mutation failure', error)
   throw createError({ statusCode: 500, statusMessage: fallback })
 }
+
+export const readMutation = readVisitorMutation
+export const operationKey = visitorOperationKey
+export const mutationError = visitorMutationError
