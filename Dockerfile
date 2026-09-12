@@ -8,6 +8,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
+ARG NUXT_PUBLIC_BUILD_SHA=development
+ENV NUXT_PUBLIC_BUILD_SHA=$NUXT_PUBLIC_BUILD_SHA
 COPY . .
 RUN pnpm build
 

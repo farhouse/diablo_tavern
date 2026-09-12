@@ -5,3 +5,7 @@ node_modules
 coverage
 dist
 *.log
+artifacts/
+playwright-report/
+test-results/
+.multica/alta15-demo*.compose.yml

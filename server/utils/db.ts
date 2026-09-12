@@ -2,7 +2,7 @@ import { MongoClient, ObjectId, type Collection, type Db } from 'mongodb'
 import type { SaveGame, User } from '~/types/game'
 
 export type DbUser = Omit<User, '_id'> & { _id?: ObjectId }
-export type DbSaveGame = Omit<SaveGame, '_id'> & { _id?: ObjectId }
+export type DbSaveGame = Partial<Omit<SaveGame, '_id' | 'userId'>> & Pick<SaveGame, 'userId'> & { _id?: ObjectId }
 
 let client: MongoClient | undefined
 let db: Db | undefined

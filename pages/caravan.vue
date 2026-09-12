@@ -1,160 +1,168 @@
 <template>
-  <main class="page">
-    <div class="section-title">
+  <main class="page caravan-page">
+    <header class="section-title">
       <div>
         <h1>Caravan</h1>
-        <p class="muted">Expand your caravan to unlock more heroes, expeditions, and services.</p>
+        <p class="muted">Support the trading floor with more storage and patient appraisal.</p>
       </div>
-    </div>
+    </header>
 
-    <p v-if="game.error" class="error">{{ game.error }}</p>
+    <p v-if="game.error" class="page-alert page-alert--error" role="alert">{{ game.error }}</p>
+    <p v-if="notice" class="page-alert page-alert--success" role="status">{{ notice }}</p>
 
-    <section class="grid two">
-      <article class="card stack">
-        <h2>Resources</h2>
-        <div class="row"><span>Gold:</span><span>{{ game.save?.gold ?? 0 }}</span></div>
-        <div class="row"><span>Materials:</span><span class="material">{{ game.save?.materials ?? 0 }}</span></div>
-        <div class="row"><span>Caravan Level:</span><span>{{ game.save?.caravan.level ?? 0 }}</span></div>
+    <section class="caravan-status" aria-label="Caravan capacity">
+      <div><strong>2</strong><span>visitor posts</span></div>
+      <div><strong>{{ stashCap }}</strong><span>stash slots</span></div>
+      <div><strong>{{ appraiserLevel }}</strong><span>appraisal slots</span></div>
+    </section>
+
+    <section class="service-list" aria-label="Caravan services">
+      <article class="service-row">
+        <div>
+          <h2>Visitor posts</h2>
+          <p class="muted">Two travelers are served per round. Wagons now represent the floor capacity, not a hero roster.</p>
+        </div>
+        <span class="tag">2 active</span>
       </article>
 
-      <article v-if="appraiserLevel > 0" class="card stack">
-        <h2>Appraiser Queue</h2>
-        <p class="muted">{{ appraiserQueue.length }} / {{ appraiserLevel }} slots used</p>
-        <div v-for="job in appraiserQueue" :key="job.id" class="card row">
+      <article v-for="service in services" :key="service.id" class="service-row">
+        <div>
+          <h2>{{ service.label }}</h2>
+          <p class="muted">{{ service.description }}</p>
+          <p>{{ serviceStatus(service.id) }}</p>
+        </div>
+        <div class="service-action">
+          <template v-if="canUpgrade(service.id)">
+            <span>{{ upgradeCost(service.id)?.gold }}g</span>
+            <button
+              class="btn primary"
+              type="button"
+              :disabled="Boolean(upgradeDisabledReason(service.id))"
+              :aria-describedby="upgradeDisabledReason(service.id) ? `upgrade-reason-${service.id}` : undefined"
+              @click="upgrade(service.id)"
+            >
+              {{ upgrading === service.id ? 'Upgrading…' : 'Upgrade' }}
+            </button>
+            <small v-if="upgradeDisabledReason(service.id)" :id="`upgrade-reason-${service.id}`" class="error">{{ upgradeDisabledReason(service.id) }}</small>
+          </template>
+          <span v-else class="tag ok">Max level</span>
+        </div>
+      </article>
+    </section>
+
+    <section v-if="appraiserLevel > 0" class="appraiser-panel">
+      <div>
+        <h2>Appraiser queue</h2>
+        <p class="muted">{{ appraiserQueue.length }} / {{ appraiserLevel }} slots used. Identification preserves trade value.</p>
+      </div>
+      <div class="queue-list">
+        <div v-for="job in appraiserQueue" :key="job.id" class="queue-row">
           <span>{{ itemNameById(job.itemId) }}</span>
-          <span class="tag">{{ timeRemaining(job) }}</span>
+          <span class="tag">{{ timeRemaining(job.finishesAt) }}</span>
         </div>
-        <div v-if="!appraiserQueue.length" class="muted">Queue is empty.</div>
-        <button class="btn" type="button" @click="completeAppraisal">Process ready</button>
-      </article>
+        <p v-if="!appraiserQueue.length" class="muted">The queue is empty. Send an unidentified item from Stash.</p>
+      </div>
+      <button class="btn" type="button" :disabled="processing" :aria-describedby="processing ? 'appraisal-process-reason' : undefined" @click="completeAppraisal">
+        {{ processing ? 'Checking…' : 'Process ready items' }}
+      </button>
+      <small v-if="processing" id="appraisal-process-reason" class="error">Ready appraisals are being processed.</small>
     </section>
 
-    <section class="upgrade-grid">
-      <article v-for="upgrade in upgrades" :key="upgrade.id" class="card stack">
-        <h3>{{ upgrade.label }}</h3>
-        <p class="muted">{{ upgrade.description }}</p>
-        <p>Level {{ currentLevel(upgrade.id) }} / {{ maxLevel(upgrade.id) }}</p>
-        <p class="muted">{{ upgradeStatus(upgrade.id) }}</p>
-        <div v-if="canUpgrade(upgrade.id)">
-          <p>Cost: {{ upgradeCost(upgrade.id)?.gold }}g + {{ upgradeCost(upgrade.id)?.materials }}m</p>
-          <button class="btn primary" type="button" :disabled="!canAfford(upgrade.id) || upgrading === upgrade.id" @click="doUpgrade(upgrade.id)">
-            {{ upgrading === upgrade.id ? 'Upgrading...' : 'Upgrade' }}
-          </button>
-          <p v-if="!canAfford(upgrade.id)" class="error">Not enough resources</p>
-        </div>
-        <p v-else class="effect-warning">MAX LEVEL</p>
-      </article>
-    </section>
   </main>
 </template>
 
 <script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useGameStore } from '~/stores/game'
 import type { CaravanUpgradeId } from '~/types/game'
-import { getUpgradeCost, getMaxUpgradeLevel } from '~/utils/game-logic'
-import { caravanUpgradeCosts } from '~/utils/game-data'
+import { getMaxUpgradeLevel, getUpgradeCost } from '~/utils/game-logic'
 
+type ActiveService = Extract<CaravanUpgradeId, 'stashWagon' | 'appraiser'>
 const game = useGameStore()
-onMounted(() => {
-  void game.load()
-})
-
-const upgrading = ref<CaravanUpgradeId | null>(null)
-
-const upgrades = [
-  { id: 'wagons' as CaravanUpgradeId, label: 'Wagons', description: 'Increase hero roster capacity.' },
-  { id: 'scoutTable' as CaravanUpgradeId, label: 'Scout Table', description: 'Allow more simultaneous expeditions.' },
-  { id: 'stashWagon' as CaravanUpgradeId, label: 'Stash Wagon', description: 'Expand stash slots.' },
-  { id: 'infirmary' as CaravanUpgradeId, label: 'Infirmary', description: 'Reduce injury and death risk for heroes.' },
-  { id: 'appraiser' as CaravanUpgradeId, label: 'Appraiser', description: 'Identify items for free over time.' }
+const upgrading = ref<ActiveService | ''>('')
+const processing = ref(false)
+const notice = ref('')
+const now = ref(Date.now())
+let timer: ReturnType<typeof setInterval> | undefined
+const services: Array<{ id: ActiveService; label: string; description: string }> = [
+  { id: 'stashWagon', label: 'Stash wagon', description: 'Hold more merchandise between visitor rounds.' },
+  { id: 'appraiser', label: 'Appraiser', description: 'Identify goods over time without paying an instant fee.' }
 ]
-
 const appraiserLevel = computed(() => game.save?.caravan.upgrades.appraiser ?? 0)
 const appraiserQueue = computed(() => game.save?.caravan.services.appraiserQueue ?? [])
+const stashCap = computed(() => game.save?.stashLimit ?? 0)
 
-function currentLevel(id: CaravanUpgradeId) {
-  return game.save?.caravan.upgrades[id] ?? 0
-}
+onMounted(() => {
+  void game.load()
+  timer = setInterval(() => { now.value = Date.now() }, 30_000)
+})
+onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
-function maxLevel(id: CaravanUpgradeId) {
-  return getMaxUpgradeLevel(id)
-}
-
-function upgradeCost(id: CaravanUpgradeId) {
-  const lvl = currentLevel(id)
-  return getUpgradeCost(id, lvl)
-}
-
-function canUpgrade(id: CaravanUpgradeId) {
-  return currentLevel(id) < maxLevel(id)
-}
-
-function canAfford(id: CaravanUpgradeId) {
+function currentLevel(id: ActiveService) { return game.save?.caravan.upgrades[id] ?? 0 }
+function upgradeCost(id: ActiveService) { return getUpgradeCost(id, currentLevel(id)) }
+function canUpgrade(id: ActiveService) { return currentLevel(id) < getMaxUpgradeLevel(id) }
+function canAfford(id: ActiveService) {
   const cost = upgradeCost(id)
-  if (!cost || !game.save) return false
-  return game.save.gold >= cost.gold && game.save.materials >= cost.materials
+  return Boolean(cost && game.save && game.save.gold >= cost.gold)
 }
-
-function upgradeStatus(id: CaravanUpgradeId) {
-  const lvl = currentLevel(id)
-  const descs: Record<string, string[]> = {
-    wagons: ['3 heroes', '5 heroes', '8 heroes', '12 heroes'],
-    scoutTable: ['1 expedition', '2 expeditions', '3 expeditions', '4 expeditions'],
-    stashWagon: ['20 slots', '30 slots', '45 slots', '60 slots'],
-    infirmary: ['Injury below 50% HP', 'Injury below 35% HP', 'Injury below 25% HP', 'Injury below 18% HP'],
-    appraiser: ['No appraiser', '1 queue slot', '2 queue slots', '3 queue slots']
-  }
-  return descs[id]?.[lvl] ?? ''
+function upgradeDisabledReason(id: ActiveService): string {
+  if (upgrading.value) return upgrading.value === id ? 'This upgrade is being processed.' : 'Another caravan upgrade is being processed.'
+  return canAfford(id) ? '' : 'Not enough gold.'
 }
-
+function serviceStatus(id: ActiveService) {
+  const level = currentLevel(id)
+  if (id === 'stashWagon') return `Level ${level} · ${[20, 30, 45, 60][level]} slots`
+  return level ? `Level ${level} · ${level} queue slot${level === 1 ? '' : 's'}` : 'Level 0 · Appraiser unavailable'
+}
 function itemNameById(itemId: string): string {
-  const item = game.save?.stash.find(st => st.id === itemId)
-  if (!item) return 'Unknown item'
-  if (item.identified) return item.displayName
-  return `Unidentified ${capitalize(item.rarity)} ${item.baseName}`
+  const item = game.save?.stash.find((entry) => entry.id === itemId)
+  return item?.displayName || 'Unknown item'
 }
-
-function timeRemaining(job: { finishesAt: string }): string {
-  const remaining = new Date(job.finishesAt).getTime() - Date.now()
-  if (remaining <= 0) return 'Ready!'
-  const mins = Math.ceil(remaining / 60000)
-  return `${mins} min`
+function timeRemaining(finishesAt: string): string {
+  const remaining = new Date(finishesAt).getTime() - now.value
+  return remaining <= 0 ? 'Ready' : `${Math.ceil(remaining / 60000)} min`
 }
-
-function capitalize(value: string): string {
-  return value.slice(0, 1).toUpperCase() + value.slice(1)
-}
-
-async function doUpgrade(id: CaravanUpgradeId) {
+async function upgrade(id: ActiveService) {
   if (upgrading.value) return
   upgrading.value = id
+  notice.value = ''
   try {
     await game.upgradeCaravan(id)
-  } catch {
-    // handled by store
-  } finally {
-    upgrading.value = null
-  }
+    notice.value = `${services.find((service) => service.id === id)?.label} upgraded.`
+  } catch { /* server error is rendered */ } finally { upgrading.value = '' }
 }
-
 async function completeAppraisal() {
+  if (processing.value) return
+  processing.value = true
+  notice.value = ''
   try {
     await game.completeAppraisal()
-  } catch {
-    // handled by store
-  }
+    notice.value = 'Ready appraisal work processed.'
+  } catch { /* server error is rendered */ } finally { processing.value = false }
 }
 </script>
 
 <style scoped>
-.upgrade-grid {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  margin-top: 1rem;
-}
-
-.material {
-  color: #7eb8da;
-  font-weight: 500;
+.caravan-page { display: grid; gap: 1.25rem; }
+.caravan-status { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-wrap: wrap; }
+.caravan-status > div { display: grid; gap: 0.1rem; min-width: 9rem; padding: 1rem 1.25rem; }
+.caravan-status > div + div { border-left: 1px solid var(--line); }
+.caravan-status strong { color: var(--accent-2); font-size: 1.4rem; }
+.caravan-status span { color: var(--muted); font-size: 0.85rem; }
+.service-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.service-row { align-items: center; background: var(--panel); display: flex; gap: 1rem; justify-content: space-between; padding: 1rem; }
+.service-row + .service-row { border-top: 1px solid var(--line); }
+.service-row h2, .service-row p, .appraiser-panel h2, .appraiser-panel p { margin: 0; }
+.service-row > div:first-child { display: grid; gap: 0.3rem; }
+.service-action { align-items: end; display: grid; gap: 0.35rem; justify-items: end; }
+.appraiser-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0.85rem; padding: 1rem; }
+.queue-list { display: grid; gap: 0.5rem; }
+.queue-row { align-items: center; background: #14120f; border-radius: 6px; display: flex; justify-content: space-between; padding: 0.65rem; }
+@media (max-width: 600px) {
+  .caravan-status { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .caravan-status > div { min-width: 0; padding: 0.8rem; }
+  .service-row { align-items: stretch; flex-direction: column; }
+  .service-action { justify-items: stretch; }
+  .service-action .btn { justify-content: center; }
 }
 </style>

@@ -153,54 +153,29 @@ export const uniqueItems: Array<Omit<Item, 'id' | 'identified' | 'position'>> = 
   }
 ]
 
-export const caravanUpgradeCosts: Record<CaravanUpgradeId, Array<{ gold: number; materials: number }>> = {
-  wagons: [
-    { gold: 0, materials: 0 },
-    { gold: 600, materials: 20 },
-    { gold: 1800, materials: 70 },
-    { gold: 4200, materials: 180 }
-  ],
-  scoutTable: [
-    { gold: 0, materials: 0 },
-    { gold: 800, materials: 30 },
-    { gold: 2400, materials: 90 },
-    { gold: 5200, materials: 220 }
-  ],
+export const caravanUpgradeCosts: Record<CaravanUpgradeId, Array<{ gold: number }>> = {
   stashWagon: [
-    { gold: 0, materials: 0 },
-    { gold: 500, materials: 15 },
-    { gold: 1600, materials: 60 },
-    { gold: 3600, materials: 150 }
-  ],
-  infirmary: [
-    { gold: 0, materials: 0 },
-    { gold: 700, materials: 25 },
-    { gold: 2200, materials: 80 },
-    { gold: 4800, materials: 200 }
+    { gold: 0 },
+    { gold: 500 },
+    { gold: 1600 },
+    { gold: 3600 }
   ],
   appraiser: [
-    { gold: 0, materials: 0 },
-    { gold: 900, materials: 35 },
-    { gold: 2600, materials: 100 },
-    { gold: 5600, materials: 240 }
+    { gold: 0 },
+    { gold: 900 },
+    { gold: 2600 },
+    { gold: 5600 }
   ]
 }
 
 export function getUpgradeLevels(): Record<CaravanUpgradeId, { currentDescription: string; nextDescription: string }> {
   return {
-    wagons: { currentDescription: `${heroCapacities[0]} heroes`, nextDescription: `${heroCapacities[1]} heroes` },
-    scoutTable: { currentDescription: `${expeditionCapacities[0]} expedition`, nextDescription: `${expeditionCapacities[1]} expeditions` },
     stashWagon: { currentDescription: `${stashCapacities[0]} slots`, nextDescription: `${stashCapacities[1]} slots` },
-    infirmary: { currentDescription: 'No bonus', nextDescription: 'Reduced injury chance' },
     appraiser: { currentDescription: 'No appraiser', nextDescription: '1 queue slot' }
   }
 }
 
-export const heroCapacities = [3, 5, 8, 12] as const
-export const expeditionCapacities = [1, 2, 3, 4] as const
 export const stashCapacities = [20, 30, 45, 60] as const
-export const infirmaryLevels = [0.50, 0.35, 0.25, 0.18] as const
-export const deathChanceReduction = [0, 0.02, 0.04, 0.08] as const
 export const appraiserQueueSizes = [0, 1, 2, 3] as const
 
 export const itemTypeToSlots: Record<ItemType, string[]> = {

@@ -1,18 +1,16 @@
 import { requireUser } from '~/server/utils/auth'
-import { readRequiredBody, requireString } from '~/server/utils/body'
-import { getSaveGame, replaceSaveGame } from '~/server/utils/savegame'
-import { touchSave, normalizeSaveGame, startAppraisal } from '~/utils/game-logic'
+import { requireString } from '~/server/utils/body'
+import { mutateSaveGameAtomic } from '~/server/utils/savegame'
+import { mutationError, operationKey, readMutation } from '~/server/utils/visitor-api'
+import { startAppraisal } from '~/utils/game-logic'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
-  const body = await readRequiredBody(event)
+  const body = await readMutation(event)
   const itemId = requireString(body.itemId, 'itemId')
-
   try {
-    let save = normalizeSaveGame(await getSaveGame(user.id))
-    save = startAppraisal(save, itemId)
-    return replaceSaveGame(touchSave(save))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('appraise', itemId), (save) => startAppraisal(save, itemId))
   } catch (error) {
-    throw createError({ statusCode: 400, statusMessage: error instanceof Error ? error.message : 'Cannot start appraisal' })
+    mutationError(error, 'Cannot start appraisal')
   }
 })

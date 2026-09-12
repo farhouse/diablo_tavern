@@ -11,6 +11,11 @@ export default defineNuxtConfig({
       appName: 'Guild Manager ARPG'
     }
   },
+  nitro: {
+    replace: {
+      __DIABLO_BUILD_SHA__: JSON.stringify(process.env.NUXT_PUBLIC_BUILD_SHA || 'development')
+    }
+  },
   typescript: {
     strict: true
   }
