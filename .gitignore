@@ -8,3 +8,4 @@ dist
 artifacts/
 playwright-report/
 test-results/
+.multica/alta15-demo*.compose.yml

@@ -69,6 +69,24 @@ describe('responsive E2E preview launcher', () => {
     expect(deliveredSignals).toEqual(['SIGINT', 'SIGKILL'])
   })
 
+  it('cleans a surviving POSIX process group after its leader has already exited', async () => {
+    const child = createChild(9223)
+    completeChild(child, 0)
+    let groupRunning = true
+    const killProcessGroup = vi.fn((_pid, signal) => {
+      if (signal === 0 && !groupRunning) throw processMissingError()
+      if (signal === 'SIGTERM') groupRunning = false
+    })
+
+    await expect(terminateChildTree(child, 'SIGTERM', {
+      platform: 'linux',
+      timeoutMs: 10,
+      killProcessGroup
+    })).resolves.toBe(true)
+    expect(killProcessGroup).toHaveBeenCalledWith(-9223, 'SIGTERM')
+    expect(killProcessGroup).toHaveBeenCalledWith(-9223, 0)
+  })
+
   it('uses taskkill for a complete Windows child tree', async () => {
     const child = createChild(7123)
     const taskkill = vi.fn(async (_pid, force) => {
@@ -84,25 +102,42 @@ describe('responsive E2E preview launcher', () => {
       timeoutMs: 10,
       taskkill
     })).resolves.toBe(true)
-    expect(taskkill).toHaveBeenCalledWith(7123, false, 10)
+    expect(taskkill).toHaveBeenCalledWith(7123, false, 5)
   })
 
   it('bounds Windows graceful cleanup before forcing the tree', async () => {
     const child = createChild(6123)
+    let currentTime = 100
     const taskkill = vi.fn(async (_pid, force) => {
+      currentTime += 5
       if (force) completeChild(child, null, 'SIGKILL')
       return force
     })
 
     await expect(terminateChildTree(child, 'SIGTERM', {
       platform: 'win32',
-      timeoutMs: 1,
-      taskkill
+      timeoutMs: 10,
+      taskkill,
+      now: () => currentTime
     })).resolves.toBe(true)
     expect(taskkill.mock.calls).toEqual([
-      [6123, false, 1],
-      [6123, true, 1]
+      [6123, false, 5],
+      [6123, true, 5]
     ])
+  })
+
+  it('uses taskkill for surviving Windows descendants after the leader has exited', async () => {
+    const child = createChild(6223)
+    completeChild(child, 0)
+    const taskkill = vi.fn(async (_pid, force) => force)
+
+    await expect(terminateChildTree(child, 'SIGTERM', {
+      platform: 'win32',
+      timeoutMs: 10,
+      taskkill
+    })).resolves.toBe(true)
+    expect(taskkill).toHaveBeenNthCalledWith(1, 6223, false, expect.any(Number))
+    expect(taskkill).toHaveBeenNthCalledWith(2, 6223, true, expect.any(Number))
   })
 
   it('sequences build before preview and removes lifecycle listeners', async () => {
@@ -161,6 +196,27 @@ describe('responsive E2E preview launcher', () => {
 
     await expect(run).rejects.toThrow('build failed with exit code 2')
     expect(spawnNode).toHaveBeenCalledTimes(1)
+    expect(processTarget.listenerCount('SIGINT')).toBe(0)
+    expect(processTarget.listenerCount('SIGTERM')).toBe(0)
+  })
+
+  it('does not wait forever when tree termination fails without a child exit event', async () => {
+    const build = createChild(2001)
+    const processTarget = createProcessTarget()
+    const spawnNode = vi.fn(() => build)
+    const terminateTree = vi.fn(async () => false)
+    const run = runResponsivePreview(launcherEnvironment, { processTarget, spawnNode, terminateTree })
+
+    processTarget.emit('SIGTERM')
+    const outcome = await Promise.race([
+      run.then(
+        () => 'resolved',
+        error => error instanceof Error ? error.message : String(error)
+      ),
+      new Promise(resolve => setTimeout(() => resolve('timed out'), 25))
+    ])
+
+    expect(outcome).toBe('Responsive E2E process tree did not stop cleanly.')
     expect(processTarget.listenerCount('SIGINT')).toBe(0)
     expect(processTarget.listenerCount('SIGTERM')).toBe(0)
   })
