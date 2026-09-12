@@ -47,139 +47,27 @@ async function waitForProcessGroupExit(pid, timeoutMs, killProcessGroup, now) {
   return true
 }
 
-function runTaskkill(pid, force, timeoutMs) {
-  return new Promise((resolveTaskkill) => {
-    const args = ['/pid', String(pid), '/t']
-    if (force) args.push('/f')
+function waitForWindowsExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true)
+  if (timeoutMs <= 0) return Promise.resolve(false)
 
-    const taskkill = spawn('taskkill.exe', args, {
-      stdio: 'ignore',
-      windowsHide: true
-    })
+  return new Promise((resolveExit) => {
     let settled = false
     const finish = (result) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolveTaskkill(result)
+      child.removeListener('exit', onExit)
+      child.removeListener('error', onError)
+      resolveExit(result)
     }
-    const timer = setTimeout(() => {
-      taskkill.kill('SIGKILL')
-      finish(false)
-    }, timeoutMs)
+    const onExit = () => finish(true)
+    const onError = () => finish(false)
+    const timer = setTimeout(() => finish(false), timeoutMs)
 
-    taskkill.once('error', () => finish(false))
-    taskkill.once('exit', code => finish(code === 0))
+    child.once('exit', onExit)
+    child.once('error', onError)
   })
-}
-
-export function collectWindowsDescendantPids(rootPid, treeIdentity, processes) {
-  const rootExitedAt = treeIdentity.exitedAt ?? Number.POSITIVE_INFINITY
-  const childrenByParent = new Map()
-  for (const processInfo of processes) {
-    const pid = Number(processInfo.ProcessId)
-    const parentPid = Number(processInfo.ParentProcessId)
-    const createdAt = Number(processInfo.CreatedAt)
-    if (!Number.isInteger(pid) || !Number.isInteger(parentPid) || !Number.isFinite(createdAt)) continue
-    const children = childrenByParent.get(parentPid) ?? []
-    children.push({ pid, createdAt })
-    childrenByParent.set(parentPid, children)
-  }
-
-  const descendants = []
-  const visited = new Set([rootPid])
-  const pendingParents = [{ pid: rootPid, createdAt: treeIdentity.startedAt, isRoot: true }]
-  for (const parent of pendingParents) {
-    for (const childProcess of childrenByParent.get(parent.pid) ?? []) {
-      if (visited.has(childProcess.pid)) continue
-      if (childProcess.createdAt < parent.createdAt) continue
-      if (parent.isRoot && childProcess.createdAt > rootExitedAt) continue
-      visited.add(childProcess.pid)
-      descendants.push(childProcess.pid)
-      pendingParents.push({ ...childProcess, isRoot: false })
-    }
-  }
-  return descendants
-}
-
-function listWindowsDescendantPids(rootPid, treeIdentity, timeoutMs) {
-  if (timeoutMs <= 0) return Promise.resolve(null)
-
-  return new Promise((resolveDescendants) => {
-    const query = spawn('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,@{Name='CreatedAt';Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress"
-    ], {
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true
-    })
-    let output = ''
-    let settled = false
-    const finish = (result) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolveDescendants(result)
-    }
-    const timer = setTimeout(() => {
-      query.kill('SIGKILL')
-      finish(null)
-    }, timeoutMs)
-
-    query.stdout?.setEncoding('utf8')
-    query.stdout?.on('data', chunk => {
-      output += chunk
-    })
-    query.once('error', () => finish(null))
-    query.once('exit', code => {
-      if (code !== 0) return finish(null)
-      try {
-        const parsed = JSON.parse(output || '[]')
-        const processes = Array.isArray(parsed) ? parsed : [parsed]
-        finish(collectWindowsDescendantPids(rootPid, treeIdentity, processes))
-      } catch {
-        finish(null)
-      }
-    })
-  })
-}
-
-async function terminateWindowsTree(child, treePid, force, deadline, now, taskkill, findDescendants) {
-  const treeIdentity = child.treeIdentity ?? {
-    pid: treePid,
-    startedAt: 0,
-    exitedAt: child.exitCode !== null || child.signalCode !== null ? now() : undefined
-  }
-  const descendants = await findDescendants(
-    treePid,
-    treeIdentity,
-    remainingTime(deadline, now)
-  )
-  const rootBudget = remainingTime(deadline, now)
-  if (rootBudget === 0) return false
-
-  const rootStopped = await taskkill(treePid, force, rootBudget)
-  if (rootStopped) return true
-  if (descendants === null) return false
-
-  const leaderExited = child.exitCode !== null || child.signalCode !== null
-  const failedDescendants = []
-  for (const descendantPid of descendants.reverse()) {
-    const descendantBudget = remainingTime(deadline, now)
-    if (descendantBudget === 0) return false
-    if (!await taskkill(descendantPid, force, descendantBudget)) failedDescendants.push(descendantPid)
-  }
-  if (!leaderExited) return false
-  if (failedDescendants.length === 0) return true
-
-  const remainingDescendants = await findDescendants(
-    treePid,
-    treeIdentity,
-    remainingTime(deadline, now)
-  )
-  return remainingDescendants !== null && remainingDescendants.length === 0
 }
 
 export async function terminateChildTree(child, signal, options = {}) {
@@ -189,34 +77,26 @@ export async function terminateChildTree(child, signal, options = {}) {
   const platform = options.platform ?? process.platform
   const timeoutMs = options.timeoutMs ?? SHUTDOWN_TIMEOUT_MS
   const killProcessGroup = options.killProcessGroup ?? process.kill
-  const taskkill = options.taskkill ?? runTaskkill
-  const findWindowsDescendants = options.findWindowsDescendants ?? listWindowsDescendantPids
   const now = options.now ?? (() => performance.now())
   const startedAt = now()
   const gracefulDeadline = startedAt + Math.ceil(timeoutMs / 2)
   const shutdownDeadline = startedAt + timeoutMs
 
   if (platform === 'win32') {
-    const gracefulResult = await terminateWindowsTree(
-      child,
-      treePid,
-      false,
-      gracefulDeadline,
-      now,
-      taskkill,
-      findWindowsDescendants
-    )
-    if (gracefulResult) return true
-
-    return terminateWindowsTree(
-      child,
-      treePid,
-      true,
-      shutdownDeadline,
-      now,
-      taskkill,
-      findWindowsDescendants
-    )
+    // On Windows child is the Job Object supervisor, not the workload leader.
+    // ChildProcess.kill uses the already-open process handle, so no PID lookup or
+    // descendant reconstruction can race PID reuse. Closing the supervisor kills
+    // every process assigned to its KILL_ON_JOB_CLOSE job.
+    if (child.exitCode !== null || child.signalCode !== null) return true
+    const waitForExit = options.waitForWindowsExit ?? waitForWindowsExit
+    const exitResult = waitForExit(child, remainingTime(shutdownDeadline, now))
+    if (child.exitCode !== null || child.signalCode !== null) return true
+    try {
+      child.kill()
+    } catch {
+      if (child.exitCode !== null || child.signalCode !== null) return true
+    }
+    return exitResult
   }
 
   const sendSignal = (force) => {
@@ -261,12 +141,28 @@ function waitForChild(child, shutdownResult) {
   })
 }
 
-function spawnNode(args, environment) {
+export function spawnNode(args, environment, options = {}) {
+  const platform = options.platform ?? process.platform
+  const spawnProcess = options.spawnProcess ?? spawn
   const startedAt = Date.now()
-  const child = spawn(process.execPath, args, {
-    env: environment,
+  const windowsJobRunner = options.windowsJobRunner ?? resolve('scripts/windows-job-runner.ps1')
+  const command = platform === 'win32'
+    ? ['powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        windowsJobRunner
+      ]]
+    : [process.execPath, args]
+  const childEnvironment = platform === 'win32'
+    ? { ...environment, RESPONSIVE_JOB_COMMAND: JSON.stringify([process.execPath, ...args]) }
+    : environment
+  const child = spawnProcess(command[0], command[1], {
+    env: childEnvironment,
     stdio: 'inherit',
-    detached: process.platform !== 'win32',
+    detached: platform !== 'win32',
     windowsHide: true
   })
   child.treeIdentity = { pid: child.pid, startedAt }
