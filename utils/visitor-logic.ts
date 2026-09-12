@@ -240,6 +240,9 @@ export function dismissVisitor(save: SaveGame, visitorId: string, now = new Date
 }
 
 export function salvageItem(save: SaveGame, itemId: string, now = new Date()): SaveGame {
+  if (save.caravan.services.appraiserQueue.some((job) => job.itemId === itemId)) {
+    throw domainError('Item is in the appraiser queue')
+  }
   const itemIndex = save.stash.findIndex((item) => item.id === itemId)
   if (itemIndex < 0) throw domainError('Item not found in stash')
   const [item] = save.stash.splice(itemIndex, 1)

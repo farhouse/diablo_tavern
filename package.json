@@ -9,6 +9,7 @@
     "pretest": "nuxt prepare",
     "test": "vitest run",
     "test:e2e:responsive": "playwright test --config playwright.config.ts",
+    "test:e2e:persisted": "test -n \"$MONGO_TEST_URI\" && MONGO_URI=\"$MONGO_TEST_URI\" playwright test --config playwright.config.ts tests/e2e/visitor-round.pw.ts",
     "typecheck": "nuxt typecheck"
   },
   "dependencies": {

@@ -101,6 +101,7 @@ function itemName(item: Item): string {
 
 function identifyDisabledReason(item: Item): string {
   if (busyItem.value) return busyItem.value === item.id ? 'Identification is being processed.' : 'Another stash action is being processed.'
+  if (isInQueue(item.id)) return 'This item is already in the Appraiser queue.'
   const shortfall = identifyCost(item.rarity) - (game.save?.gold ?? 0)
   return shortfall > 0 ? `Need ${shortfall}g more.` : ''
 }
@@ -114,7 +115,7 @@ function appraiseDisabledReason(itemId: string): string {
 
 function salvageDisabledReason(itemId: string): string {
   if (busyItem.value) return busyItem.value === itemId ? 'Salvage is being processed.' : 'Another stash action is being processed.'
-  if (isInQueue(itemId)) return 'Remove this item from the Appraiser queue before salvaging it.'
+  if (isInQueue(itemId)) return 'The Appraiser is currently handling this item.'
   return ''
 }
 

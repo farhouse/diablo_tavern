@@ -144,6 +144,9 @@ export function identifyItem(save: SaveGame, itemId: string): SaveGame {
   const item = save.stash.find((entry) => entry.id === itemId)
   if (!item) throw gameError('Item not found in stash')
   if (item.identified) return save
+  if (save.caravan.services.appraiserQueue.some((job) => job.itemId === itemId)) {
+    throw gameError('Item is already in the appraiser queue')
+  }
   const cost = identifyCost(item.rarity)
   if (save.gold < cost) throw gameError('Not enough gold')
   save.gold -= cost

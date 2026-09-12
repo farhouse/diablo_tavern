@@ -3,7 +3,7 @@
     <form class="form card" @submit.prevent="submit">
       <div>
         <h1>Guild Manager ARPG</h1>
-        <p class="muted">Build a guild, run quests, identify loot, and push through Act I.</p>
+        <p class="muted">Welcome travelers, trade gear, commission journeys, and grow your caravan.</p>
       </div>
 
       <label class="field">

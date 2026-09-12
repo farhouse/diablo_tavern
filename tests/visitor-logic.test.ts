@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SaveGame, VisitRound } from '../types/game'
-import { createSaveGame, normalizeSaveGame } from '../utils/game-logic'
+import { createSaveGame, identifyItem, normalizeSaveGame, startAppraisal } from '../utils/game-logic'
 import { itemBases, quests } from '../utils/game-data'
 import {
   assignVisitorCommission,
@@ -151,6 +151,21 @@ describe('visitor trade and commission loop', () => {
     expect(offers).toContainEqual(expect.objectContaining({
       item: expect.objectContaining({ rarity: 'magic', identified: false })
     }))
+  })
+
+  it('keeps queued appraisal items unavailable to instant identification and salvage', () => {
+    const save = createSaveGame('queued-appraisal-invariants')
+    const item = save.stash[0]!
+    item.identified = false
+    item.rarity = 'magic'
+    save.caravan.upgrades.appraiser = 1
+
+    startAppraisal(save, item.id, new Date('2026-01-01T00:00:00.000Z'))
+
+    expect(() => identifyItem(save, item.id)).toThrow('Item is already in the appraiser queue')
+    expect(() => salvageItem(save, item.id)).toThrow('Item is in the appraiser queue')
+    expect(save.stash).toContainEqual(expect.objectContaining({ id: item.id, identified: false }))
+    expect(save.caravan.services.appraiserQueue).toContainEqual(expect.objectContaining({ itemId: item.id }))
   })
 
   it('caps later visitor quotes at acquisition cost under adversarial high rolls', () => {

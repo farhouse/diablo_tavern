@@ -24,6 +24,12 @@ test('persists arrival, trade, commission, return, claim and the next round acro
     await page.getByLabel('Invite Code').fill('e2e')
     await page.getByRole('button', { name: 'Create account' }).click()
     await page.waitForURL('**/tavern')
+    const refreshFromServer = async () => {
+      const response = page.waitForResponse((candidate) => candidate.request().method() === 'GET'
+        && new URL(candidate.url()).pathname === '/api/savegame')
+      await page.getByRole('button', { name: 'Refresh from server' }).click()
+      await response
+    }
 
     const user = await users.findOne({ email })
     expect(user).not.toBeNull()
@@ -54,7 +60,7 @@ test('persists arrival, trade, commission, return, claim and the next round acro
       }
     })
 
-    await page.getByRole('button', { name: 'Refresh from server' }).click()
+    await refreshFromServer()
     await expect(page.getByTestId(`claim-${firstVisitorId}`)).toBeVisible()
     await page.getByTestId(`claim-${firstVisitorId}`).click()
     await expect(page.getByTestId(`claim-${firstVisitorId}`)).toHaveCount(0)
@@ -72,7 +78,7 @@ test('persists arrival, trade, commission, return, claim and the next round acro
           'visitRound.slots.1.nextArrivalCheckAt': dueAt
         }
       })
-      await page.getByRole('button', { name: 'Refresh from server' }).click()
+      await refreshFromServer()
       nextRound = await saves.findOne({ userId })
       if (nextRound?.visitRound?.slots.some((slot: any) => slot.visitor)) break
     }
@@ -87,7 +93,7 @@ test('persists arrival, trade, commission, return, claim and the next round acro
     const persistedRevision = nextRound.revision
     const persistedRoundId = nextRound.visitRound.id
     const persistedVisitorIds = persistedVisitors.map((visitor: any) => visitor.id)
-    await page.reload()
+    await page.reload({ waitUntil: 'networkidle' })
     await expect(page.getByText(`Visitor round ${nextRound.visitRound.number}`, { exact: true })).toBeVisible()
     const reloaded = await saves.findOne({ userId })
     expect(reloaded?.revision).toBe(persistedRevision)
