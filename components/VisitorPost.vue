@@ -339,6 +339,7 @@ function titleCase(value: string): string {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
+  container-type: inline-size;
   display: grid;
   gap: 1rem;
   min-width: 0;
@@ -433,6 +434,11 @@ function titleCase(value: string): string {
 .journey-log li p, .journey-note { color: var(--muted); font-size: 0.82rem; margin: 0; text-wrap: pretty; }
 .journey-note { border-top: 1px solid var(--line); padding-top: 0.7rem; }
 .visitor-footer { border-top: 1px solid var(--line); padding-top: 0.85rem; }
+
+@container (max-width: 680px) {
+  .trade-columns, .trade-item, .mission-option { grid-template-columns: 1fr; }
+  .trade-item .btn, .mission-option .btn { justify-content: center; width: 100%; }
+}
 
 @media (max-width: 720px) {
   .visitor-header, .visitor-footer, .return-state { align-items: stretch; flex-direction: column; }

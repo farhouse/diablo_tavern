@@ -190,14 +190,14 @@ function arrivalLabel(timestamp?: string): string {
 </script>
 
 <style scoped>
-.tavern-page { display: grid; gap: 1.25rem; }
+.tavern-page { display: grid; gap: 1.25rem; max-width: min(100%, 1680px); }
 .tavern-heading { align-items: end; display: flex; gap: 1.5rem; justify-content: space-between; }
 .tavern-heading h1 { font-size: 2rem; letter-spacing: -0.025em; margin: 0.15rem 0 0.35rem; text-wrap: balance; }
 .tavern-heading p { margin: 0; max-width: 66ch; text-wrap: pretty; }
 .round-mark { color: var(--accent-2); font-size: 0.82rem; font-weight: 750; }
 .tavern-summary { align-items: center; display: flex; flex-wrap: wrap; gap: 0.65rem; justify-content: flex-end; }
 .tavern-summary > span { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0.55rem 0.7rem; }
-.visitor-grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.visitor-grid { align-items: start; display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .visitor-slot--empty { align-items: start; background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; display: flex; gap: 1rem; min-height: 15rem; padding: 1.1rem; }
 .visitor-slot--empty h2, .visitor-slot--empty p { margin: 0; }
 .visitor-slot--empty > div { display: grid; gap: 0.65rem; }
@@ -222,7 +222,7 @@ function arrivalLabel(timestamp?: string): string {
 
 @keyframes pulse { 50% { opacity: 0.55; } }
 
-@media (max-width: 850px) { .visitor-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .visitor-grid { grid-template-columns: 1fr; } }
 
 @media (max-width: 640px) {
   .tavern-heading { align-items: stretch; flex-direction: column; }
