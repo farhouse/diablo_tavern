@@ -123,7 +123,9 @@ func centeredSquare(around bounds: CGRect, cell: CGRect, side: CGFloat) -> CGRec
 
 let projectRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let sourceRoot = projectRoot.appendingPathComponent("sprite-work/source")
-let publicImagesRoot = projectRoot.appendingPathComponent("public/images")
+let publicImagesRoot = ProcessInfo.processInfo.environment["SPRITE_ATLAS_PUBLIC_IMAGES_ROOT"]
+  .map { URL(fileURLWithPath: $0) }
+  ?? projectRoot.appendingPathComponent("public/images")
 let outputRoot = publicImagesRoot.appendingPathComponent(".game-staging-\(UUID().uuidString)")
 let finalOutputRoot = publicImagesRoot.appendingPathComponent("game")
 let backupRoot = publicImagesRoot.appendingPathComponent(".game-backup-\(UUID().uuidString)")
@@ -131,7 +133,6 @@ let fileManager = FileManager.default
 
 defer {
   try? fileManager.removeItem(at: outputRoot)
-  try? fileManager.removeItem(at: backupRoot)
 }
 
 func copySource(_ sourceName: String, to relativeDestination: String) throws {
@@ -228,16 +229,45 @@ for relativePath in expectedFiles {
   }
 }
 
-if fileManager.fileExists(atPath: finalOutputRoot.path) {
+let hadPreviousAssets = fileManager.fileExists(atPath: finalOutputRoot.path)
+if hadPreviousAssets {
   try fileManager.moveItem(at: finalOutputRoot, to: backupRoot)
 }
 
 do {
+  if ProcessInfo.processInfo.environment["SPRITE_ATLAS_TEST_FAIL_AFTER_BACKUP"] == "1" {
+    throw NSError(
+      domain: "SpriteAtlas",
+      code: 13,
+      userInfo: [NSLocalizedDescriptionKey: "Injected replacement failure after backup"]
+    )
+  }
   try fileManager.moveItem(at: outputRoot, to: finalOutputRoot)
-  try? fileManager.removeItem(at: backupRoot)
+  if hadPreviousAssets {
+    try fileManager.removeItem(at: backupRoot)
+  }
 } catch {
-  if fileManager.fileExists(atPath: backupRoot.path) && !fileManager.fileExists(atPath: finalOutputRoot.path) {
-    try? fileManager.moveItem(at: backupRoot, to: finalOutputRoot)
+  if hadPreviousAssets {
+    guard !fileManager.fileExists(atPath: finalOutputRoot.path) else {
+      throw NSError(
+        domain: "SpriteAtlas",
+        code: 14,
+        userInfo: [NSLocalizedDescriptionKey: "Asset installation failed and the destination is occupied. Previous assets are preserved at \(backupRoot.path). Original error: \(error.localizedDescription)"]
+      )
+    }
+
+    do {
+      try fileManager.moveItem(at: backupRoot, to: finalOutputRoot)
+      guard fileManager.fileExists(atPath: finalOutputRoot.path) else {
+        throw NSError(domain: "SpriteAtlas", code: 15, userInfo: [NSLocalizedDescriptionKey: "Restored asset directory is missing"])
+      }
+    } catch let restoreError {
+      throw NSError(
+        domain: "SpriteAtlas",
+        code: 16,
+        userInfo: [NSLocalizedDescriptionKey: "Asset installation failed and rollback failed. Previous assets remain at \(backupRoot.path). Installation error: \(error.localizedDescription). Rollback error: \(restoreError.localizedDescription)"]
+      )
+    }
   }
   throw error
 }

@@ -206,6 +206,7 @@ function arrivalLabel(timestamp?: string): string {
   display: flex;
   gap: 1.5rem;
   justify-content: space-between;
+  image-rendering: pixelated;
   min-height: 15rem;
   padding: 1.5rem;
 }
