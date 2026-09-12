@@ -21,11 +21,16 @@
 
     <section v-else-if="game.save?.stash.length" class="grid three" aria-label="Stored items">
       <article v-for="item in game.save.stash" :key="item.id" class="card item stack" :class="item.rarity">
-        <div class="row">
-          <h2>{{ itemName(item) }}</h2>
-          <span class="tag">{{ item.rarity }}</span>
+        <div class="item-heading">
+          <ItemSprite :item-type="item.type" :alt="itemImageAlt(item)" />
+          <div class="stack item-heading-copy">
+            <div class="row">
+              <h2>{{ itemName(item) }}</h2>
+              <span class="tag">{{ item.rarity }}</span>
+            </div>
+            <p class="muted">{{ item.type }} · level {{ item.requiredLevel }} · {{ item.value }}g reference value</p>
+          </div>
         </div>
-        <p class="muted">{{ item.type }} · level {{ item.requiredLevel }} · {{ item.value }}g reference value</p>
         <div v-if="item.identified" class="stack affix-list">
           <span v-for="affix in item.affixes" :key="`${item.id}-${affix.stat}`">+{{ affix.value }} {{ affix.stat }}</span>
           <span v-if="!item.affixes.length" class="muted">No additional affixes.</span>
@@ -71,6 +76,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import ItemSprite from '~/components/ItemSprite.vue'
 import { useGameStore } from '~/stores/game'
 import type { Item } from '~/types/game'
 import { getAppraiserQueueSize, identifyCost } from '~/utils/game-logic'
@@ -97,6 +103,10 @@ function isInQueue(itemId: string) {
 
 function itemName(item: Item): string {
   return item.identified ? item.displayName : `Unidentified ${capitalize(item.rarity)} ${item.baseName}`
+}
+
+function itemImageAlt(item: Item): string {
+  return `${itemName(item)}, ${item.rarity} ${item.type}`
 }
 
 function identifyDisabledReason(item: Item): string {
@@ -161,6 +171,9 @@ function capitalize(value: string): string {
 .item.magic { --rarity-color: #5b8dee; }
 .item.rare { --rarity-color: #d8a849; }
 .item.unique { --rarity-color: #b87333; }
+.item-heading { align-items: center; display: flex; gap: 0.8rem; }
+.item-heading-copy { flex: 1; min-width: 0; }
+.item-heading-copy .row, .item-heading-copy p { margin: 0; }
 .affix-list { color: var(--ok); }
 .item-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .salvage-details { border-top: 1px solid var(--line); padding-top: 0.75rem; }

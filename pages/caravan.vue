@@ -18,6 +18,7 @@
 
     <section class="service-list" aria-label="Caravan services">
       <article class="service-row">
+        <CaravanUpgradeSprite upgrade-id="wagons" />
         <div>
           <h2>Visitor posts</h2>
           <p class="muted">Two travelers are served per round. Wagons now represent the floor capacity, not a hero roster.</p>
@@ -26,6 +27,7 @@
       </article>
 
       <article v-for="service in services" :key="service.id" class="service-row">
+        <CaravanUpgradeSprite :upgrade-id="service.id" />
         <div>
           <h2>{{ service.label }}</h2>
           <p class="muted">{{ service.description }}</p>
@@ -73,6 +75,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import CaravanUpgradeSprite from '~/components/CaravanUpgradeSprite.vue'
 import { useGameStore } from '~/stores/game'
 import type { CaravanUpgradeId } from '~/types/game'
 import { getMaxUpgradeLevel, getUpgradeCost } from '~/utils/game-logic'
@@ -153,7 +156,7 @@ async function completeAppraisal() {
 .service-row { align-items: center; background: var(--panel); display: flex; gap: 1rem; justify-content: space-between; padding: 1rem; }
 .service-row + .service-row { border-top: 1px solid var(--line); }
 .service-row h2, .service-row p, .appraiser-panel h2, .appraiser-panel p { margin: 0; }
-.service-row > div:first-child { display: grid; gap: 0.3rem; }
+.service-row > div:nth-child(2) { display: grid; flex: 1; gap: 0.3rem; }
 .service-action { align-items: end; display: grid; gap: 0.35rem; justify-items: end; }
 .appraiser-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0.85rem; padding: 1rem; }
 .queue-list { display: grid; gap: 0.5rem; }

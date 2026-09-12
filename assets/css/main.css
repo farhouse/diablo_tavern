@@ -42,6 +42,11 @@ a {
   text-decoration: none;
 }
 
+.pixel-sprite {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
 .shell {
   min-height: 100vh;
 }

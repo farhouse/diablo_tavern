@@ -46,6 +46,10 @@ describe('VisitorPost', () => {
     })
 
     expect(wrapper.text()).toContain('Mira')
+    expect(wrapper.get('[data-testid="visitor-sprite"]').attributes()).toMatchObject({
+      src: '/images/game/heroes/barbarian.png',
+      alt: 'Mira, Barbarian visitor'
+    })
     expect(wrapper.text()).toContain('Barbarian · level 3')
     expect(wrapper.text()).toContain('From Ashen Foothills')
     expect(wrapper.text()).toContain('Persisted equipment · routes: Blood Moor')
@@ -56,6 +60,8 @@ describe('VisitorPost', () => {
     expect(wrapper.text()).toContain('Looking for weapon')
     expect(wrapper.get('[data-testid="buy-offer-1"]').text()).toContain('Buy for 40g')
     expect(wrapper.get('[data-testid="sell-sword"]').text()).toContain('Sell for 31g')
+    expect(wrapper.get('[data-testid="offer-sprite-offer-1"]').attributes('src')).toBe('/images/game/items/weapon.png')
+    expect(wrapper.get('[data-testid="quote-sprite-sword"]').attributes('alt')).toBe('Short Sword, normal weapon')
   })
 
   it('renders persisted tavern equipment impact after a reload', () => {

@@ -2,7 +2,11 @@
   <article class="visitor-post" :class="`visitor-post--${visitor.state}`" :aria-labelledby="`visitor-${visitor.id}`">
     <header class="visitor-header">
       <div class="visitor-identity">
-        <span class="visitor-sigil" aria-hidden="true">{{ visitor.name.slice(0, 1) }}</span>
+        <HeroSprite
+          data-testid="visitor-sprite"
+          :hero-class="visitor.class"
+          :alt="`${visitor.name}, ${classLabel} visitor`"
+        />
         <div>
           <div class="visitor-title-row">
             <h2 :id="`visitor-${visitor.id}`">{{ visitor.name }}</h2>
@@ -27,8 +31,11 @@
       </div>
       <ul>
         <li v-for="item in visitor.equipmentSummary" :key="item.itemId ?? `${item.type}-${item.name}`">
-          <strong>{{ item.name }}</strong>
-          <span>{{ capitalize(item.type) }} · {{ item.powerBonus > 0 ? `+${item.powerBonus} power` : 'starting gear' }}</span>
+          <ItemSprite :item-type="item.type" :alt="`${item.name}, ${item.type}`" />
+          <span class="equipment-copy">
+            <strong>{{ item.name }}</strong>
+            <span>{{ capitalize(item.type) }} · {{ item.powerBonus > 0 ? `+${item.powerBonus} power` : 'starting gear' }}</span>
+          </span>
         </li>
       </ul>
     </section>
@@ -44,6 +51,11 @@
           <h3 :id="`offers-${visitor.id}`">On their blanket</h3>
           <div class="item-list">
             <article v-for="offer in purchasableOffers" :key="offer.id" class="trade-item">
+              <ItemSprite
+                :data-testid="`offer-sprite-${offer.id}`"
+                :item-type="offer.item.type"
+                :alt="itemImageAlt(offer.item)"
+              />
               <div>
                 <strong>{{ itemName(offer.item) }}</strong>
                 <p>{{ itemMeta(offer.item) }}</p>
@@ -69,6 +81,11 @@
           <h3 :id="`quotes-${visitor.id}`">Your quoted goods</h3>
           <div class="item-list">
             <article v-for="entry in sellableQuotes" :key="entry.item.id" class="trade-item">
+              <ItemSprite
+                :data-testid="`quote-sprite-${entry.item.id}`"
+                :item-type="entry.item.type"
+                :alt="itemImageAlt(entry.item)"
+              />
               <div>
                 <strong>{{ itemName(entry.item) }}</strong>
                 <p>{{ visitor.interestedItemTypes.includes(entry.item.type) ? 'Wanted item' : 'Accepted item' }} · {{ itemMeta(entry.item) }}</p>
@@ -205,6 +222,8 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import HeroSprite from '~/components/HeroSprite.vue'
+import ItemSprite from '~/components/ItemSprite.vue'
 import type { Item, Quest, Visitor, VisitorOffer } from '~/types/game'
 import { getVisitorJourneyMilestones, getVisitorJourneyProgress } from '~/utils/visitor-journey'
 
@@ -302,6 +321,10 @@ function itemMeta(item: Item): string {
   return `${capitalize(item.type)} · level ${item.requiredLevel} · ${capitalize(item.rarity)}`
 }
 
+function itemImageAlt(item: Item): string {
+  return `${itemName(item)}, ${item.rarity} ${item.type}`
+}
+
 function duration(milliseconds: number): string {
   const seconds = Math.ceil(milliseconds / 1000)
   const minutes = Math.floor(seconds / 60)
@@ -357,17 +380,6 @@ function titleCase(value: string): string {
 .visitor-title-row { flex-wrap: wrap; }
 .visitor-header h2, .visitor-header p, .visitor-section h3, .visitor-section p, .away-state h3, .away-state p,
 .return-state h3, .return-state p, .departed-state h3, .departed-state p, .trade-item p { margin: 0; }
-.visitor-sigil {
-  align-items: center;
-  background: var(--accent);
-  border-radius: 50%;
-  color: white;
-  display: inline-flex;
-  flex: 0 0 2.75rem;
-  font-weight: 800;
-  height: 2.75rem;
-  justify-content: center;
-}
 .visitor-ledger {
   display: grid;
   flex: 0 0 auto;
@@ -379,8 +391,10 @@ function titleCase(value: string): string {
 .visitor-equipment { align-items: start; border-block: 1px solid var(--line); display: grid; gap: 0.75rem; grid-template-columns: minmax(8rem, 0.4fr) 1fr; padding-block: 0.8rem; }
 .visitor-equipment h3, .visitor-equipment p { margin: 0; }
 .visitor-equipment ul { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; margin: 0; padding: 0; }
-.visitor-equipment li { background: #14120f; border-radius: 6px; display: grid; gap: 0.1rem; min-width: min(100%, 10rem); padding: 0.5rem 0.65rem; }
-.visitor-equipment li span { color: var(--muted); font-size: 0.78rem; }
+.visitor-equipment li { align-items: center; background: #14120f; border-radius: 6px; display: flex; gap: 0.55rem; min-width: min(100%, 12rem); padding: 0.35rem 0.55rem; }
+.visitor-equipment li :deep(.item-sprite) { height: 44px; width: 44px; }
+.equipment-copy { display: grid; gap: 0.1rem; }
+.equipment-copy > span { color: var(--muted); font-size: 0.78rem; }
 .state-chip {
   background: #14120f;
   border: 1px solid var(--line);
@@ -399,9 +413,11 @@ function titleCase(value: string): string {
   border-radius: 8px;
   display: grid;
   gap: 0.65rem;
-  grid-template-columns: minmax(0, 1fr) auto;
   padding: 0.75rem;
 }
+.trade-item { grid-template-columns: auto minmax(0, 1fr) auto; }
+.mission-option { grid-template-columns: minmax(0, 1fr) auto; }
+.trade-item :deep(.item-sprite) { height: 54px; width: 54px; }
 .trade-item p, .mission-option p { color: var(--muted); font-size: 0.85rem; }
 .action-reason { color: var(--bad) !important; grid-column: 1 / -1; }
 .empty-copy { color: var(--muted); padding: 0.65rem 0; }
@@ -436,7 +452,10 @@ function titleCase(value: string): string {
 .visitor-footer { border-top: 1px solid var(--line); padding-top: 0.85rem; }
 
 @container (max-width: 680px) {
-  .trade-columns, .trade-item, .mission-option { grid-template-columns: 1fr; }
+  .trade-columns { grid-template-columns: 1fr; }
+  .trade-item { grid-template-columns: auto minmax(0, 1fr); }
+  .trade-item .btn { grid-column: 1 / -1; }
+  .mission-option { grid-template-columns: 1fr; }
   .trade-item .btn, .mission-option .btn { justify-content: center; width: 100%; }
 }
 
@@ -445,7 +464,8 @@ function titleCase(value: string): string {
   .visitor-ledger { align-self: start; text-align: left; }
   .visitor-equipment { grid-template-columns: 1fr; }
   .trade-columns { grid-template-columns: 1fr; }
-  .trade-item, .mission-option { grid-template-columns: 1fr; }
+  .trade-item { grid-template-columns: auto minmax(0, 1fr); }
+  .mission-option { grid-template-columns: 1fr; }
   .mission-facts { grid-template-columns: 1fr 1fr; }
   .journey-heading { align-items: start; flex-direction: column; gap: 0.2rem; }
   .journey-log li { grid-template-columns: 4rem minmax(0, 1fr); }

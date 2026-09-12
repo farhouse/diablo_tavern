@@ -191,7 +191,24 @@ function arrivalLabel(timestamp?: string): string {
 </script>
 
 <style scoped>
-.tavern-page { display: grid; gap: 1.25rem; max-width: min(100%, 1680px); }
+.tavern-page {
+  display: grid;
+  gap: 1.25rem;
+  isolation: isolate;
+  max-width: min(100%, 1680px);
+  position: relative;
+}
+.tavern-page::before {
+  background:
+    linear-gradient(180deg, rgba(17, 16, 14, 0.3), rgba(17, 16, 14, 0.82)),
+    url('/images/game/tavern/background.png') center top / cover no-repeat;
+  content: '';
+  inset: 0;
+  opacity: 0.36;
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
+}
 .tavern-heading { align-items: end; display: flex; gap: 1.5rem; justify-content: space-between; }
 .tavern-heading h1 { font-size: 2rem; letter-spacing: -0.025em; margin: 0.15rem 0 0.35rem; text-wrap: balance; }
 .tavern-heading p { margin: 0; max-width: 66ch; text-wrap: pretty; }
