@@ -4,9 +4,10 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createBuildEnvironment,
   createPreviewEnvironment,
+  resolveResponsiveBuildSha,
   runResponsivePreview,
-  spawnNode,
-  terminateChildTree
+  terminateChildTree,
+  waitForProcessGroupExit
 } from '../scripts/run-responsive-preview.mjs'
 
 describe('responsive E2E preview launcher', () => {
@@ -88,96 +89,44 @@ describe('responsive E2E preview launcher', () => {
     expect(killProcessGroup).toHaveBeenCalledWith(-9223, 0)
   })
 
-  it('terminates a live Windows Job Object owner through its existing process handle', async () => {
-    const child = createChild(7123)
-    child.kill = vi.fn(() => {
-      completeChild(child, null, 'SIGTERM')
-      return true
+  it('fails fast on Windows before spawning any process', async () => {
+    const spawnNode = vi.fn()
+
+    await expect(runResponsivePreview({}, {
+      platform: 'win32',
+      spawnNode
+    })).rejects.toThrow('test:e2e:responsive is supported only on POSIX platforms')
+    expect(spawnNode).not.toHaveBeenCalled()
+  })
+
+  it('fails before resolving HEAD on the Windows Playwright entry path', () => {
+    const readHeadSha = vi.fn(() => 'unexpected-sha')
+
+    expect(() => resolveResponsiveBuildSha('win32', readHeadSha))
+      .toThrow('test:e2e:responsive is supported only on POSIX platforms')
+    expect(readHeadSha).not.toHaveBeenCalled()
+  })
+
+  it('never polls past the supplied absolute POSIX deadline', async () => {
+    let currentTime = 106
+    const observedTimes: number[] = []
+    const now = vi.fn(() => {
+      observedTimes.push(currentTime)
+      return currentTime
+    })
+    const wait = vi.fn(async (milliseconds: number) => {
+      currentTime += milliseconds
+    })
+    const killProcessGroup = vi.fn((_pid, signal) => {
+      if (signal === 0) return
     })
 
-    await expect(terminateChildTree(child, 'SIGTERM', {
-      platform: 'win32',
-      timeoutMs: 10
-    })).resolves.toBe(true)
-    expect(child.kill).toHaveBeenCalledTimes(1)
-  })
+    await expect(waitForProcessGroupExit(6423, 107, killProcessGroup, now, wait))
+      .resolves.toBe(false)
 
-  it('does not kill a reused Windows PID when its owned supervisor handle is already exited', async () => {
-    const child = createChild(6123)
-    child.kill = vi.fn(() => true)
-    completeChild(child, 0)
-
-    await expect(terminateChildTree(child, 'SIGTERM', {
-      platform: 'win32',
-      timeoutMs: 10
-    })).resolves.toBe(true)
-    expect(child.kill).not.toHaveBeenCalled()
-  })
-
-  it('does not kill after the Windows supervisor exits between shutdown setup and termination', async () => {
-    const child = createChild(6173)
-    child.kill = vi.fn(() => true)
-    const waitForWindowsExit = vi.fn(() => {
-      completeChild(child, 0)
-      return Promise.resolve(true)
-    })
-
-    await expect(terminateChildTree(child, 'SIGTERM', {
-      platform: 'win32',
-      timeoutMs: 10,
-      waitForWindowsExit
-    })).resolves.toBe(true)
-    expect(child.kill).not.toHaveBeenCalled()
-  })
-
-  it('closes the Windows job when workload leader and intermediate exited but a grandchild remains', async () => {
-    const child = createChild(6223)
-    child.kill = vi.fn(() => {
-      completeChild(child, null, 'SIGTERM')
-      return true
-    })
-    await expect(terminateChildTree(child, 'SIGTERM', {
-      platform: 'win32',
-      timeoutMs: 10
-    })).resolves.toBe(true)
-    expect(child.kill).toHaveBeenCalledTimes(1)
-  })
-
-  it('applies one total deadline while waiting for the Windows Job Object owner', async () => {
-    const child = createChild(6423)
-    child.kill = vi.fn(() => true)
-    const waitForExit = vi.fn(async (_child, timeoutMs) => timeoutMs === 7)
-
-    await expect(terminateChildTree(child, 'SIGTERM', {
-      platform: 'win32',
-      timeoutMs: 7,
-      waitForWindowsExit: waitForExit,
-      now: () => 100
-    })).resolves.toBe(true)
-    expect(waitForExit).toHaveBeenCalledWith(child, 7)
-  })
-
-  it('spawns Windows commands inside the Job Object supervisor', () => {
-    const spawnProcess = vi.fn(() => createChild(6523))
-    const environment = { TEST_VALUE: 'kept' }
-
-    spawnNode(['example.mjs', '--flag'], environment, {
-      platform: 'win32',
-      spawnProcess,
-      windowsJobRunner: 'C:\\repo\\scripts\\windows-job-runner.ps1'
-    })
-
-    expect(spawnProcess).toHaveBeenCalledWith(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', 'C:\\repo\\scripts\\windows-job-runner.ps1'],
-      expect.objectContaining({
-        env: expect.objectContaining({
-          TEST_VALUE: 'kept',
-          RESPONSIVE_JOB_COMMAND: JSON.stringify([process.execPath, 'example.mjs', '--flag'])
-        }),
-        windowsHide: true
-      })
-    )
+    expect(currentTime).toBe(107)
+    expect(Math.max(...observedTimes)).toBe(107)
+    expect(wait).toHaveBeenCalledExactlyOnceWith(1)
   })
 
   it('sequences build before preview and removes lifecycle listeners', async () => {

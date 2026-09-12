@@ -1,7 +1,11 @@
 import { defineConfig } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
+import { resolveResponsiveBuildSha } from './scripts/run-responsive-preview.mjs'
 
-const buildSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+const buildSha = resolveResponsiveBuildSha(
+  process.platform,
+  () => execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })
+)
 const baseURL = 'http://127.0.0.1:3105'
 
 process.env.PLAYWRIGHT_EXPECTED_SHA = buildSha

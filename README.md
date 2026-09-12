@@ -85,15 +85,10 @@ value. The launcher also forwards termination signals and cleans up its child
 process tree on every exit path; Playwright grants that graceful shutdown a
 bounded window before forcing termination.
 
-On Windows the launcher uses `scripts/windows-job-runner.ps1` to create the
-workload suspended, assign it to a Job Object, and enable
-`KILL_ON_JOB_CLOSE` before it can spawn descendants. This avoids PID-based
-tree discovery and still owns grandchildren after their parents exit. The
-cross-platform unit suite runs everywhere; the Windows-only integration test
-in `tests/windows-job-runner.integration.test.ts` exercises the native Job
-Object path automatically when `pnpm test` runs on a Windows host. This change
-was developed without a Windows runner, so that native integration remains to
-be executed there before treating Windows support as independently verified.
+This E2E launcher is POSIX-only because its cleanup contract depends on process
+groups. On Windows, `pnpm test:e2e:responsive` fails before starting the build or
+preview and reports the unsupported platform explicitly. Run it from Linux or
+macOS (including a Linux CI runner) instead.
 
 Install Chromium once with `pnpm exec playwright install chromium` when Playwright's
 bundled browser is absent. To use a system Chromium build instead, set

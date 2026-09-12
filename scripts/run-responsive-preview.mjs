@@ -24,8 +24,15 @@ function delay(milliseconds) {
   return new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds))
 }
 
-function remainingTime(deadline, now) {
-  return Math.max(0, deadline - now())
+function assertPosixPlatform(platform) {
+  if (platform === 'win32') {
+    throw new Error('test:e2e:responsive is supported only on POSIX platforms; Windows is not supported.')
+  }
+}
+
+export function resolveResponsiveBuildSha(platform, readHeadSha) {
+  assertPosixPlatform(platform)
+  return readHeadSha().trim()
 }
 
 function processGroupIsRunning(pid, killProcessGroup) {
@@ -38,36 +45,13 @@ function processGroupIsRunning(pid, killProcessGroup) {
   }
 }
 
-async function waitForProcessGroupExit(pid, timeoutMs, killProcessGroup, now) {
-  const deadline = now() + timeoutMs
+export async function waitForProcessGroupExit(pid, deadline, killProcessGroup, now, wait) {
   while (processGroupIsRunning(pid, killProcessGroup)) {
-    if (now() >= deadline) return false
-    await delay(Math.min(25, Math.max(1, deadline - now())))
+    const remainingMs = deadline - now()
+    if (remainingMs <= 0) return false
+    await wait(Math.min(25, remainingMs))
   }
   return true
-}
-
-function waitForWindowsExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true)
-  if (timeoutMs <= 0) return Promise.resolve(false)
-
-  return new Promise((resolveExit) => {
-    let settled = false
-    const finish = (result) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      child.removeListener('exit', onExit)
-      child.removeListener('error', onError)
-      resolveExit(result)
-    }
-    const onExit = () => finish(true)
-    const onError = () => finish(false)
-    const timer = setTimeout(() => finish(false), timeoutMs)
-
-    child.once('exit', onExit)
-    child.once('error', onError)
-  })
 }
 
 export async function terminateChildTree(child, signal, options = {}) {
@@ -78,26 +62,11 @@ export async function terminateChildTree(child, signal, options = {}) {
   const timeoutMs = options.timeoutMs ?? SHUTDOWN_TIMEOUT_MS
   const killProcessGroup = options.killProcessGroup ?? process.kill
   const now = options.now ?? (() => performance.now())
+  const wait = options.wait ?? delay
+  assertPosixPlatform(platform)
   const startedAt = now()
   const gracefulDeadline = startedAt + Math.ceil(timeoutMs / 2)
   const shutdownDeadline = startedAt + timeoutMs
-
-  if (platform === 'win32') {
-    // On Windows child is the Job Object supervisor, not the workload leader.
-    // ChildProcess.kill uses the already-open process handle, so no PID lookup or
-    // descendant reconstruction can race PID reuse. Closing the supervisor kills
-    // every process assigned to its KILL_ON_JOB_CLOSE job.
-    if (child.exitCode !== null || child.signalCode !== null) return true
-    const waitForExit = options.waitForWindowsExit ?? waitForWindowsExit
-    const exitResult = waitForExit(child, remainingTime(shutdownDeadline, now))
-    if (child.exitCode !== null || child.signalCode !== null) return true
-    try {
-      child.kill()
-    } catch {
-      if (child.exitCode !== null || child.signalCode !== null) return true
-    }
-    return exitResult
-  }
 
   const sendSignal = (force) => {
     try {
@@ -110,10 +79,10 @@ export async function terminateChildTree(child, signal, options = {}) {
   }
 
   sendSignal(false)
-  if (await waitForProcessGroupExit(treePid, remainingTime(gracefulDeadline, now), killProcessGroup, now)) return true
+  if (await waitForProcessGroupExit(treePid, gracefulDeadline, killProcessGroup, now, wait)) return true
 
   sendSignal(true)
-  return waitForProcessGroupExit(treePid, remainingTime(shutdownDeadline, now), killProcessGroup, now)
+  return waitForProcessGroupExit(treePid, shutdownDeadline, killProcessGroup, now, wait)
 }
 
 function waitForChild(child, shutdownResult) {
@@ -127,10 +96,7 @@ function waitForChild(child, shutdownResult) {
       callback(value)
     }
     const onError = error => finish(rejectChild, error)
-    const onExit = (code, signal) => {
-      if (child.treeIdentity) child.treeIdentity.exitedAt ??= Date.now()
-      finish(resolveChild, { type: 'exit', code, signal })
-    }
+    const onExit = (code, signal) => finish(resolveChild, { type: 'exit', code, signal })
 
     child.once('error', onError)
     child.once('exit', onExit)
@@ -144,37 +110,25 @@ function waitForChild(child, shutdownResult) {
 export function spawnNode(args, environment, options = {}) {
   const platform = options.platform ?? process.platform
   const spawnProcess = options.spawnProcess ?? spawn
-  const startedAt = Date.now()
-  const windowsJobRunner = options.windowsJobRunner ?? resolve('scripts/windows-job-runner.ps1')
-  const command = platform === 'win32'
-    ? ['powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        windowsJobRunner
-      ]]
-    : [process.execPath, args]
-  const childEnvironment = platform === 'win32'
-    ? { ...environment, RESPONSIVE_JOB_COMMAND: JSON.stringify([process.execPath, ...args]) }
-    : environment
-  const child = spawnProcess(command[0], command[1], {
-    env: childEnvironment,
+  assertPosixPlatform(platform)
+  const child = spawnProcess(process.execPath, args, {
+    env: environment,
     stdio: 'inherit',
-    detached: platform !== 'win32',
+    detached: true,
     windowsHide: true
   })
-  child.treeIdentity = { pid: child.pid, startedAt }
   return child
 }
 
 export async function runResponsivePreview(environment = process.env, dependencies = {}) {
+  const platform = dependencies.platform ?? process.platform
   const expectedSha = environment.PLAYWRIGHT_EXPECTED_SHA
   const packageManagerCli = environment.npm_execpath
   const processTarget = dependencies.processTarget ?? process
   const startNode = dependencies.spawnNode ?? spawnNode
   const terminateTree = dependencies.terminateTree ?? terminateChildTree
+
+  assertPosixPlatform(platform)
 
   if (!expectedSha) {
     throw new Error('PLAYWRIGHT_EXPECTED_SHA is required.')
