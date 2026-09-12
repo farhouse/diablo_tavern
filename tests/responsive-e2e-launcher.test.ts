@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  collectWindowsDescendantPids,
   createBuildEnvironment,
   createPreviewEnvironment,
   runResponsivePreview,
@@ -89,7 +90,7 @@ describe('responsive E2E preview launcher', () => {
 
   it('uses taskkill for a complete Windows child tree', async () => {
     const child = createChild(7123)
-    const taskkill = vi.fn(async (_pid, force) => {
+    const taskkill = vi.fn(async (_pid, force, _timeoutMs) => {
       if (!force) {
         child.signalCode = 'SIGTERM'
         child.emit('exit', null, 'SIGTERM')
@@ -100,9 +101,12 @@ describe('responsive E2E preview launcher', () => {
     await expect(terminateChildTree(child, 'SIGTERM', {
       platform: 'win32',
       timeoutMs: 10,
-      taskkill
+      taskkill,
+      findWindowsDescendants: vi.fn(async () => [])
     })).resolves.toBe(true)
-    expect(taskkill).toHaveBeenCalledWith(7123, false, 5)
+    expect(taskkill).toHaveBeenCalledWith(7123, false, expect.any(Number))
+    expect(taskkill.mock.calls[0]![2]).toBeGreaterThan(0)
+    expect(taskkill.mock.calls[0]![2]).toBeLessThanOrEqual(5)
   })
 
   it('bounds Windows graceful cleanup before forcing the tree', async () => {
@@ -118,6 +122,7 @@ describe('responsive E2E preview launcher', () => {
       platform: 'win32',
       timeoutMs: 10,
       taskkill,
+      findWindowsDescendants: vi.fn(async () => []),
       now: () => currentTime
     })).resolves.toBe(true)
     expect(taskkill.mock.calls).toEqual([
@@ -129,15 +134,69 @@ describe('responsive E2E preview launcher', () => {
   it('uses taskkill for surviving Windows descendants after the leader has exited', async () => {
     const child = createChild(6223)
     completeChild(child, 0)
-    const taskkill = vi.fn(async (_pid, force) => force)
+    const taskkill = vi.fn(async pid => pid !== 6223)
+    const findWindowsDescendants = vi.fn(async () => [6224, 6225])
 
     await expect(terminateChildTree(child, 'SIGTERM', {
       platform: 'win32',
       timeoutMs: 10,
-      taskkill
+      taskkill,
+      findWindowsDescendants
     })).resolves.toBe(true)
     expect(taskkill).toHaveBeenNthCalledWith(1, 6223, false, expect.any(Number))
-    expect(taskkill).toHaveBeenNthCalledWith(2, 6223, true, expect.any(Number))
+    expect(taskkill).toHaveBeenNthCalledWith(2, 6225, false, expect.any(Number))
+    expect(taskkill).toHaveBeenNthCalledWith(3, 6224, false, expect.any(Number))
+  })
+
+  it('rejects reused Windows PIDs and terminates traversal when the process graph cycles', () => {
+    const descendants = collectWindowsDescendantPids(7000, {
+      startedAt: 100,
+      exitedAt: 200
+    }, [
+      { ProcessId: 7001, ParentProcessId: 7000, CreatedAt: 150 },
+      { ProcessId: 7002, ParentProcessId: 7001, CreatedAt: 160 },
+      { ProcessId: 7001, ParentProcessId: 7002, CreatedAt: 150 },
+      { ProcessId: 7003, ParentProcessId: 7000, CreatedAt: 250 },
+      { ProcessId: 7004, ParentProcessId: 7001, CreatedAt: 140 }
+    ])
+
+    expect(descendants).toEqual([7001, 7002])
+  })
+
+  it('accepts a Windows descendant that disappears before taskkill completes', async () => {
+    const child = createChild(6323)
+    completeChild(child, 0)
+    const taskkill = vi.fn(async () => false)
+    const findWindowsDescendants = vi.fn()
+      .mockResolvedValueOnce([6324])
+      .mockResolvedValueOnce([])
+
+    await expect(terminateChildTree(child, 'SIGTERM', {
+      platform: 'win32',
+      timeoutMs: 10,
+      taskkill,
+      findWindowsDescendants
+    })).resolves.toBe(true)
+    expect(taskkill).toHaveBeenCalledWith(6324, false, expect.any(Number))
+  })
+
+  it('forces a new Windows descendant discovered during cleanup revalidation', async () => {
+    const child = createChild(6423)
+    completeChild(child, 0)
+    const taskkill = vi.fn(async (pid, force) => pid !== 6423 && force)
+    const findWindowsDescendants = vi.fn()
+      .mockResolvedValueOnce([6424])
+      .mockResolvedValueOnce([6425])
+      .mockResolvedValueOnce([6425])
+
+    await expect(terminateChildTree(child, 'SIGTERM', {
+      platform: 'win32',
+      timeoutMs: 10,
+      taskkill,
+      findWindowsDescendants
+    })).resolves.toBe(true)
+    expect(taskkill).toHaveBeenCalledWith(6424, false, expect.any(Number))
+    expect(taskkill).toHaveBeenCalledWith(6425, true, expect.any(Number))
   })
 
   it('sequences build before preview and removes lifecycle listeners', async () => {
