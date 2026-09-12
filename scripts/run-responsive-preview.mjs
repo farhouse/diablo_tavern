@@ -38,11 +38,11 @@ function processGroupIsRunning(pid, killProcessGroup) {
   }
 }
 
-async function waitForProcessGroupExit(pid, timeoutMs, killProcessGroup) {
-  const deadline = Date.now() + timeoutMs
+async function waitForProcessGroupExit(pid, timeoutMs, killProcessGroup, now) {
+  const deadline = now() + timeoutMs
   while (processGroupIsRunning(pid, killProcessGroup)) {
-    if (Date.now() >= deadline) return false
-    await delay(Math.min(25, Math.max(1, deadline - Date.now())))
+    if (now() >= deadline) return false
+    await delay(Math.min(25, Math.max(1, deadline - now())))
   }
   return true
 }
@@ -230,10 +230,10 @@ export async function terminateChildTree(child, signal, options = {}) {
   }
 
   sendSignal(false)
-  if (await waitForProcessGroupExit(treePid, remainingTime(gracefulDeadline, now), killProcessGroup)) return true
+  if (await waitForProcessGroupExit(treePid, remainingTime(gracefulDeadline, now), killProcessGroup, now)) return true
 
   sendSignal(true)
-  return waitForProcessGroupExit(treePid, remainingTime(shutdownDeadline, now), killProcessGroup)
+  return waitForProcessGroupExit(treePid, remainingTime(shutdownDeadline, now), killProcessGroup, now)
 }
 
 function waitForChild(child, shutdownResult) {
