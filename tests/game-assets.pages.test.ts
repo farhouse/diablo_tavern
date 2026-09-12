@@ -52,7 +52,7 @@ describe('game assets in active pages', () => {
     expect(wrapper.find('img[src="/images/game/caravan/appraiser.png"]').exists()).toBe(true)
     expect(wrapper.find('img[src*="scout-table"]').exists()).toBe(false)
     expect(wrapper.find('img[src*="infirmary"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('Outside this MVP')
+    expect(wrapper.text()).not.toContain('Outside this MVP')
 
     wrapper.unmount()
   })
