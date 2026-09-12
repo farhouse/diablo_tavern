@@ -39,7 +39,30 @@ function waitForExit(child, timeoutMs) {
   })
 }
 
-function runTaskkill(pid, force) {
+function delay(milliseconds) {
+  return new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds))
+}
+
+function processGroupIsRunning(pid, killProcessGroup) {
+  try {
+    killProcessGroup(-pid, 0)
+    return true
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH') return false
+    return true
+  }
+}
+
+async function waitForProcessGroupExit(pid, timeoutMs, killProcessGroup) {
+  const deadline = Date.now() + timeoutMs
+  while (processGroupIsRunning(pid, killProcessGroup)) {
+    if (Date.now() >= deadline) return false
+    await delay(Math.min(25, Math.max(1, deadline - Date.now())))
+  }
+  return true
+}
+
+function runTaskkill(pid, force, timeoutMs) {
   return new Promise((resolveTaskkill) => {
     const args = ['/pid', String(pid), '/t']
     if (force) args.push('/f')
@@ -48,8 +71,20 @@ function runTaskkill(pid, force) {
       stdio: 'ignore',
       windowsHide: true
     })
-    taskkill.once('error', () => resolveTaskkill(false))
-    taskkill.once('exit', code => resolveTaskkill(code === 0))
+    let settled = false
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolveTaskkill(result)
+    }
+    const timer = setTimeout(() => {
+      taskkill.kill('SIGKILL')
+      finish(false)
+    }, timeoutMs)
+
+    taskkill.once('error', () => finish(false))
+    taskkill.once('exit', code => finish(code === 0))
   })
 }
 
@@ -61,10 +96,16 @@ export async function terminateChildTree(child, signal, options = {}) {
   const killProcessGroup = options.killProcessGroup ?? process.kill
   const taskkill = options.taskkill ?? runTaskkill
 
-  const sendSignal = async (force) => {
-    try {
-      if (platform === 'win32') return await taskkill(child.pid, force)
+  if (platform === 'win32') {
+    const gracefulResult = await taskkill(child.pid, false, timeoutMs)
+    if (gracefulResult && await waitForExit(child, timeoutMs)) return true
 
+    const forcedResult = await taskkill(child.pid, true, timeoutMs)
+    return forcedResult && await waitForExit(child, timeoutMs)
+  }
+
+  const sendSignal = (force) => {
+    try {
       killProcessGroup(-child.pid, force ? 'SIGKILL' : signal)
       return true
     } catch (error) {
@@ -73,11 +114,11 @@ export async function terminateChildTree(child, signal, options = {}) {
     }
   }
 
-  await sendSignal(false)
-  if (await waitForExit(child, timeoutMs)) return true
+  sendSignal(false)
+  if (await waitForProcessGroupExit(child.pid, timeoutMs, killProcessGroup)) return true
 
-  await sendSignal(true)
-  return waitForExit(child, timeoutMs)
+  sendSignal(true)
+  return waitForProcessGroupExit(child.pid, timeoutMs, killProcessGroup)
 }
 
 function waitForChild(child) {
@@ -96,9 +137,12 @@ function spawnNode(args, environment) {
   })
 }
 
-export async function runResponsivePreview(environment = process.env) {
+export async function runResponsivePreview(environment = process.env, dependencies = {}) {
   const expectedSha = environment.PLAYWRIGHT_EXPECTED_SHA
   const packageManagerCli = environment.npm_execpath
+  const processTarget = dependencies.processTarget ?? process
+  const startNode = dependencies.spawnNode ?? spawnNode
+  const terminateTree = dependencies.terminateTree ?? terminateChildTree
 
   if (!expectedSha) {
     throw new Error('PLAYWRIGHT_EXPECTED_SHA is required.')
@@ -113,17 +157,17 @@ export async function runResponsivePreview(environment = process.env) {
 
   const forwardSignal = (signal) => {
     shutdownSignal = signal
-    process.exitCode = signal === 'SIGINT' ? 130 : 143
-    shutdownPromise ??= terminateChildTree(activeChild, signal)
+    processTarget.exitCode = signal === 'SIGINT' ? 130 : 143
+    shutdownPromise ??= terminateTree(activeChild, signal)
   }
   const forwardSigint = () => forwardSignal('SIGINT')
   const forwardSigterm = () => forwardSignal('SIGTERM')
 
-  process.once('SIGINT', forwardSigint)
-  process.once('SIGTERM', forwardSigterm)
+  processTarget.once('SIGINT', forwardSigint)
+  processTarget.once('SIGTERM', forwardSigterm)
 
   try {
-    activeChild = spawnNode(
+    activeChild = startNode(
       [packageManagerCli, 'build'],
       createBuildEnvironment(environment, expectedSha)
     )
@@ -133,7 +177,7 @@ export async function runResponsivePreview(environment = process.env) {
       throw new Error(`Responsive E2E build failed with exit code ${buildResult.code ?? 'unknown'}.`)
     }
 
-    activeChild = spawnNode(
+    activeChild = startNode(
       [resolve('.output/server/index.mjs')],
       createPreviewEnvironment(environment, expectedSha)
     )
@@ -142,9 +186,10 @@ export async function runResponsivePreview(environment = process.env) {
       throw new Error(`Responsive E2E preview exited with code ${previewResult.code ?? 'unknown'}.`)
     }
   } finally {
-    await (shutdownPromise ?? terminateChildTree(activeChild, 'SIGTERM'))
-    process.removeListener('SIGINT', forwardSigint)
-    process.removeListener('SIGTERM', forwardSigterm)
+    const cleaned = await (shutdownPromise ?? terminateTree(activeChild, 'SIGTERM'))
+    processTarget.removeListener('SIGINT', forwardSigint)
+    processTarget.removeListener('SIGTERM', forwardSigterm)
+    if (!cleaned) throw new Error('Responsive E2E process tree did not stop cleanly.')
   }
 }
 
