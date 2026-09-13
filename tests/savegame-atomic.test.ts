@@ -54,8 +54,8 @@ describe('atomic save mutation', () => {
       save.gold += 100
       return save
     })
-    const first = await mutateSaveGameAtomic('atomic-user', 'request-1', 'buy:visitor-1:offer-1', mutate)
-    const repeated = await mutateSaveGameAtomic('atomic-user', 'request-1', 'buy:visitor-1:offer-1', mutate)
+    const first = await mutateSaveGameAtomic('atomic-user', 'request-1', 'buy:visitor-1:offer-1', 0, mutate)
+    const repeated = await mutateSaveGameAtomic('atomic-user', 'request-1', 'buy:visitor-1:offer-1', 0, mutate)
 
     expect(first.gold).toBe(550)
     expect(repeated.gold).toBe(550)
@@ -66,11 +66,11 @@ describe('atomic save mutation', () => {
 
   it('rejects reuse of a persisted request id for a different command', async () => {
     const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
-    await mutateSaveGameAtomic('atomic-user', 'request-reused', 'buy:visitor-1:offer-1', (save) => {
+    await mutateSaveGameAtomic('atomic-user', 'request-reused', 'buy:visitor-1:offer-1', 0, (save) => {
       save.gold -= 10
     })
 
-    await expect(mutateSaveGameAtomic('atomic-user', 'request-reused', 'sell:visitor-2:item-1', (save) => {
+    await expect(mutateSaveGameAtomic('atomic-user', 'request-reused', 'sell:visitor-2:item-1', 0, (save) => {
       save.gold += 500
     })).rejects.toThrow('requestId was already used for a different operation')
     expect(document!.gold).toBe(440)
@@ -79,7 +79,7 @@ describe('atomic save mutation', () => {
   it('retries a compare-and-swap conflict without applying a partial result', async () => {
     const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
     forcedConflict = true
-    const result = await mutateSaveGameAtomic('atomic-user', 'request-2', 'test:request-2', (save) => {
+    const result = await mutateSaveGameAtomic('atomic-user', 'request-2', 'test:request-2', 0, (save) => {
       save.gold -= 50
       return save
     })
@@ -91,11 +91,11 @@ describe('atomic save mutation', () => {
   it('serializes concurrent mutations against the save revision', async () => {
     const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
     const [first, second] = await Promise.all([
-      mutateSaveGameAtomic('atomic-user', 'concurrent-1', 'test:concurrent-1', (save) => {
+      mutateSaveGameAtomic('atomic-user', 'concurrent-1', 'test:concurrent-1', 0, (save) => {
         save.gold -= 20
         return save
       }),
-      mutateSaveGameAtomic('atomic-user', 'concurrent-2', 'test:concurrent-2', (save) => {
+      mutateSaveGameAtomic('atomic-user', 'concurrent-2', 'test:concurrent-2', 0, (save) => {
         save.gold -= 30
         return save
       })
@@ -110,11 +110,11 @@ describe('atomic save mutation', () => {
     const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
     document = undefined
     await Promise.all([
-      mutateSaveGameAtomic('new-user', 'new-1', 'test:new-1', (save) => {
+      mutateSaveGameAtomic('new-user', 'new-1', 'test:new-1', 0, (save) => {
         save.gold -= 20
         return save
       }),
-      mutateSaveGameAtomic('new-user', 'new-2', 'test:new-2', (save) => {
+      mutateSaveGameAtomic('new-user', 'new-2', 'test:new-2', 0, (save) => {
         save.gold -= 30
         return save
       })
@@ -141,7 +141,7 @@ describe('atomic save mutation', () => {
     expect(collection.replaceOne).toHaveBeenCalledTimes(1)
 
     const mutate = vi.fn()
-    await mutateSaveGameAtomic('atomic-user', 'legacy-request', 'new-fingerprint', mutate)
+    await mutateSaveGameAtomic('atomic-user', 'legacy-request', 'new-fingerprint', 0, mutate)
     expect(mutate).toHaveBeenCalledOnce()
   })
 
@@ -151,11 +151,11 @@ describe('atomic save mutation', () => {
     const visitorId = visitors(document!)[0]!.id
     const operation = `dismiss:${visitorId}`
 
-    const first = await mutateSaveGameAtomic('atomic-user', 'dismiss-once', operation, (save) => {
+    const first = await mutateSaveGameAtomic('atomic-user', 'dismiss-once', operation, 0, (save) => {
       dismissVisitor(save, visitorId, new Date('2030-01-01T00:00:00.000Z'))
     })
     const scheduledAt = first.visitRound.slots.find((slot) => !slot.visitor)!.nextArrivalCheckAt
-    const repeated = await mutateSaveGameAtomic('atomic-user', 'dismiss-once', operation, (save) => {
+    const repeated = await mutateSaveGameAtomic('atomic-user', 'dismiss-once', operation, 0, (save) => {
       dismissVisitor(save, visitorId, new Date('2030-01-01T00:00:00.000Z'))
     })
 

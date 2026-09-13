@@ -10,7 +10,13 @@ export default defineEventHandler(async (event) => {
   const body = await readVisitorMutation(event)
   const itemId = requireString(body.itemId, 'itemId')
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, visitorOperationKey('sell', visitorId, itemId), (save) => sellToVisitor(save, visitorId, itemId, body.requestId))
+    return await mutateSaveGameAtomic(
+      user.id,
+      body.requestId,
+      visitorOperationKey('sell', visitorId, itemId),
+      body.expectedRevision,
+      (save) => sellToVisitor(save, visitorId, itemId, body.requestId)
+    )
   } catch (error) {
     visitorMutationError(error, 'Cannot sell item')
   }

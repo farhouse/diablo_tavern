@@ -2,7 +2,7 @@ import type { AppraisalJob, CaravanUpgradeId, ItemRarity, SaveGame } from '~/typ
 import { appraiserQueueSizes, caravanUpgradeCosts, quests, stashCapacities } from '~/utils/game-data'
 import { createStarterItems, createVisitRound, normalizeVisitorDetails, refreshVisitRound } from '~/utils/visitor-logic'
 
-export const SAVE_SCHEMA_VERSION = 2
+export const SAVE_SCHEMA_VERSION = 3
 export const LEGACY_SAVE_FIELDS = [
   'materials', 'heroes', 'pendingLoot', 'questsProgress', 'activeQuestRun',
   'lastQuestRun', 'activeExpedition', 'activeExpeditions', 'lastExpeditionRun', 'expeditionHistory'

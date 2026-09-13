@@ -8,7 +8,13 @@ export default defineEventHandler(async (event) => {
   const visitorId = getRouterParam(event, 'visitorId') || ''
   const body = await readVisitorMutation(event)
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, visitorOperationKey('claim', visitorId), (save) => claimVisitorCommission(save, visitorId))
+    return await mutateSaveGameAtomic(
+      user.id,
+      body.requestId,
+      visitorOperationKey('claim', visitorId),
+      body.expectedRevision,
+      (save) => claimVisitorCommission(save, visitorId)
+    )
   } catch (error) {
     visitorMutationError(error, 'Cannot claim commission')
   }

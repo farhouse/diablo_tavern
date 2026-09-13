@@ -35,7 +35,7 @@ test('persists arrival, trade, commission, return, claim and the next round acro
     expect(user).not.toBeNull()
     const userId = String(user!._id)
     const initial = await saves.findOne({ userId })
-    expect(initial?.schemaVersion).toBe(2)
+    expect(initial?.schemaVersion).toBe(3)
     expect(initial?.visitRound?.number).toBe(1)
 
     const firstPost = page.locator('.visitor-post').first()

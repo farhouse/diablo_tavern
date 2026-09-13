@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:e2e:responsive": "playwright test --config playwright.config.ts",
     "test:e2e:persisted": "test -n \"$MONGO_TEST_URI\" && MONGO_URI=\"$MONGO_TEST_URI\" playwright test --config playwright.config.ts tests/e2e/visitor-round.pw.ts",
+    "contract:validate": "node scripts/validate-v2-etapa0-3.mjs",
     "typecheck": "nuxt typecheck"
   },
   "dependencies": {
@@ -28,6 +29,8 @@
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.5.0",
     "dotenv": "^17.4.2",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "happy-dom": "^20.14.3",
     "typescript": "^5.8.3",
     "vitest": "^3.1.3",

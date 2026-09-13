@@ -39,6 +39,7 @@ export async function mutateSaveGameAtomic(
   userId: string,
   requestId: string,
   operationKey: string,
+  expectedRevision: number,
   mutate: (save: SaveGame) => SaveGame | void
 ): Promise<SaveGame> {
   if (!requestId || requestId.length > 128) throw new Error('A valid requestId is required')
@@ -69,6 +70,14 @@ export async function mutateSaveGameAtomic(
     }
     if (current.processedRequestIds.includes(requestId)) return current
 
+    if (expectedRevision !== current.revision) {
+      if (attempt < 4) {
+        expectedRevision = current.revision
+        continue
+      }
+      throw new RevisionConflictError('Save changed concurrently; refresh and retry with current revision')
+    }
+
     const currentRevision = current.revision
     const draft = structuredClone(current)
     const changed = mutate(draft) ?? draft
@@ -93,6 +102,10 @@ export async function mutateSaveGameAtomic(
 
 export class IdempotencyConflictError extends Error {
   override name = 'IdempotencyConflictError'
+}
+
+export class RevisionConflictError extends Error {
+  override name = 'RevisionConflictError'
 }
 
 export function serializeSave(save: SaveGame | DbSaveGame): SaveGame {

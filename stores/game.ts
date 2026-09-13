@@ -55,7 +55,7 @@ export const useGameStore = defineStore('game', {
     isVisitorMutationPending(visitorId: string): boolean {
       return Object.keys(this.visitorMutations).some((key) => key.includes(`:${visitorId}:`) && this.visitorMutations[key])
     },
-    async runVisitorMutation(
+  async runVisitorMutation(
       operation: 'buy' | 'sell' | 'commission' | 'claim' | 'dismiss',
       visitorId: string,
       target = '',
@@ -64,13 +64,14 @@ export const useGameStore = defineStore('game', {
       const key = `${operation}:${visitorId}:${target}`
       if (this.visitorMutations[key] || this.isVisitorMutationPending(visitorId)) return
       const requestId = this.visitorRequestIds[key] || createRequestId()
+      const expectedRevision = this.save?.revision ?? 0
       this.visitorRequestIds[key] = requestId
       this.visitorMutations[key] = true
       this.error = ''
       try {
         const save = await this.api<SaveGame>(`/api/visitors/${visitorId}/${operation}`, {
           method: 'POST',
-          body: { requestId, ...body }
+          body: { requestId, expectedRevision, ...body }
         })
         this.applySave(save)
         delete this.visitorRequestIds[key]
@@ -90,11 +91,12 @@ export const useGameStore = defineStore('game', {
     async runSaveMutation(key: string, url: string, body: Record<string, string> = {}) {
       if (this.saveMutations[key]) return
       const requestId = this.saveRequestIds[key] || createRequestId()
+      const expectedRevision = this.save?.revision ?? 0
       this.saveRequestIds[key] = requestId
       this.saveMutations[key] = true
       this.error = ''
       try {
-        this.applySave(await this.api<SaveGame>(url, { method: 'POST', body: { requestId, ...body } }))
+        this.applySave(await this.api<SaveGame>(url, { method: 'POST', body: { requestId, expectedRevision, ...body } }))
         delete this.saveRequestIds[key]
       } finally {
         delete this.saveMutations[key]

@@ -35,8 +35,8 @@ suite('save aggregate with real MongoDB', () => {
     const mutate = (save: SaveGame) => { save.gold += 37 }
 
     const [first, retry] = await Promise.all([
-      mutateSaveGameAtomic(userIds[0]!, 'mongo-request-1', operationKey, mutate),
-      mutateSaveGameAtomic(userIds[0]!, 'mongo-request-1', operationKey, mutate)
+      mutateSaveGameAtomic(userIds[0]!, 'mongo-request-1', operationKey, 0, mutate),
+      mutateSaveGameAtomic(userIds[0]!, 'mongo-request-1', operationKey, 0, mutate)
     ])
     const reloaded = await getSaveGame(userIds[0]!)
 
@@ -62,7 +62,7 @@ suite('save aggregate with real MongoDB', () => {
     const persisted = await collection.findOne({ userId: userIds[1] })
 
     expect(recreated.gold).toBe(450)
-    expect(recreated.schemaVersion).toBe(2)
+    expect(recreated.schemaVersion).toBe(3)
     expect(recreated).not.toHaveProperty('heroes')
     expect(persisted).not.toHaveProperty('heroes')
     expect(persisted).not.toHaveProperty('activeExpeditions')

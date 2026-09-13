@@ -138,7 +138,7 @@ const visitor = (id: string, name: string) => ({
   arrivedAt: '2026-09-10T20:00:00.000Z'
 })
 const responsiveSave = {
-  schemaVersion: 2, userId: 'responsive-e2e', gold: 450,
+  schemaVersion: 3, userId: 'responsive-e2e', gold: 450,
   caravan: { level: 0, upgrades: { stashWagon: 0, appraiser: 0 }, services: { appraiserQueue: [] } },
   stashLimit: 20, stash: [item], unlockedRegionIds: ['blood-moor'],
   visitRound: {

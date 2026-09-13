@@ -8,7 +8,13 @@ export default defineEventHandler(async (event) => {
   const visitorId = getRouterParam(event, 'visitorId') || ''
   const body = await readVisitorMutation(event)
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, visitorOperationKey('dismiss', visitorId), (save) => dismissVisitor(save, visitorId))
+    return await mutateSaveGameAtomic(
+      user.id,
+      body.requestId,
+      visitorOperationKey('dismiss', visitorId),
+      body.expectedRevision,
+      (save) => dismissVisitor(save, visitorId)
+    )
   } catch (error) {
     visitorMutationError(error, 'Cannot dismiss visitor')
   }

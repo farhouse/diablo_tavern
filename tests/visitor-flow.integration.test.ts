@@ -352,12 +352,12 @@ describe('visitor HTTP/store/UI journey', () => {
 
     await expect(commissionHandler({
       context: { params: { visitorId: visitors(persistedSave)[0]!.id } },
-      body: { requestId: 'invalid-option-request', optionId: 'blood-moor' }
+      body: { requestId: 'invalid-option-request', expectedRevision: 0, optionId: 'blood-moor' }
     } as never)).rejects.toMatchObject({ statusCode: 400 })
 
     await expect(commissionHandler({
       context: { params: { visitorId: visitors(persistedSave)[0]!.id } },
-      body: { requestId: 'invalid-option-type', optionId: 42, regionId: 'blood-moor' }
+      body: { requestId: 'invalid-option-type', expectedRevision: 0, optionId: 42, regionId: 'blood-moor' }
     } as never)).rejects.toMatchObject({ statusCode: 400 })
   })
 })
