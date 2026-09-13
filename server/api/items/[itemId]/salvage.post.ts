@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const itemId = getRouterParam(event, 'itemId') || ''
   const body = await readMutation(event)
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('salvage', itemId), body.expectedRevision, (save) => salvageItem(save, itemId))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('salvage', itemId), body.expectedRevision, body, (save) => salvageItem(save, itemId))
   } catch (error) {
     mutationError(error, 'Cannot salvage item')
   }

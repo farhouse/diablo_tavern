@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
   const upgradeId = requireString(body.upgradeId, 'upgradeId') as CaravanUpgradeId
   if (!validUpgrades.includes(upgradeId)) throw createError({ statusCode: 400, statusMessage: 'Invalid upgrade' })
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('upgrade', upgradeId), body.expectedRevision, (save) => upgradeCaravan(save, upgradeId))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('upgrade', upgradeId), body.expectedRevision, body, (save) => upgradeCaravan(save, upgradeId))
   } catch (error) {
     mutationError(error, 'Cannot upgrade')
   }

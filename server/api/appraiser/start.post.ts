@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   const body = await readMutation(event)
   const itemId = requireString(body.itemId, 'itemId')
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('appraise', itemId), body.expectedRevision, (save) => startAppraisal(save, itemId))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('appraise', itemId), body.expectedRevision, body, (save) => startAppraisal(save, itemId))
   } catch (error) {
     mutationError(error, 'Cannot start appraisal')
   }
