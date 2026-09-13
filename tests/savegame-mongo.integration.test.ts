@@ -164,10 +164,29 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(retained.visitHistory.flatMap((round) => round.slots).some((slot) => slot.visitor?.id === visitor.id)).toBe(false)
     expect(retained.expeditionsById['retained-expedition']?.itemIds).toEqual([itemId])
 
-    await transitionItemAtomic(userIds[13]!, 'return-retained', 1, { operation: 'return', itemId, targetId: 'retained-expedition' })
+    vi.doMock('../server/utils/auth', () => ({
+      requireUser: async () => ({ id: userIds[13]!, email: 'retained@example.test' })
+    }))
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { default: getGameHandler } = await import('../server/api/v2/game.get')
+    const retainedView = await getGameHandler({} as never)
+    expect(retainedView.visitors).toContainEqual(expect.objectContaining({
+      visitorId: visitor.id,
+      state: 'departed',
+      lastExpeditionId: 'retained-expedition'
+    }))
+    expect(retainedView.expeditions).toContainEqual(expect.objectContaining({
+      expeditionId: 'retained-expedition', visitorId: visitor.id
+    }))
+
+    const revisionBeforeReturn = (await getPersistedGameV3(userIds[13]!)).revision
+    await transitionItemAtomic(userIds[13]!, 'return-retained', revisionBeforeReturn, { operation: 'return', itemId, targetId: 'retained-expedition' })
     const returned = await getPersistedGameV3(userIds[13]!)
     expect(returned.stash).toContain(itemId)
     expect(returned.expeditionsById['retained-expedition']).toBeUndefined()
+    const returnedView = await getGameHandler({} as never)
+    expect(returnedView.expeditions).not.toContainEqual(expect.objectContaining({ expeditionId: 'retained-expedition' }))
+    expect(returnedView.visitors).not.toContainEqual(expect.objectContaining({ visitorId: visitor.id }))
   })
 
   it('recovers the committed response after the repository driver throws', async () => {

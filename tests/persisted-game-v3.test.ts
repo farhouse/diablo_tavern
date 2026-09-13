@@ -351,6 +351,19 @@ describe('PersistedGameV3 invariants', () => {
     expect(rebuilt.visitHistory.flatMap((round) => round.slots).some((slot) => slot.visitor?.id === visitor.id)).toBe(false)
     expect(rebuilt.expeditionsById['retained-contract']?.itemIds).toEqual([itemId])
     expect(isPersistedCanonical(rebuilt)).toBe(true)
+
+    const retainedView = mapPersistedGameToGameView(rebuilt, new Date(rebuilt.updatedAt))
+    expect(retainedView.visitors).toContainEqual(expect.objectContaining({
+      visitorId: visitor.id,
+      state: 'departed',
+      lastExpeditionId: 'retained-contract'
+    }))
+    expect(retainedView.items).toContainEqual(expect.objectContaining({
+      itemId,
+      custody: expect.objectContaining({
+        kind: 'expedition', expeditionId: 'retained-contract', visitorId: visitor.id
+      })
+    }))
   })
 
   it('deeply strips private rolls from compatibility responses', () => {
