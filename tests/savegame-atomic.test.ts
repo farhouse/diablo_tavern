@@ -118,6 +118,7 @@ describe('atomic persisted-game mutation', () => {
       ...visitor.commissionOptions[0]!, id: 'contract-a', status: 'active',
       startedAt: initial.updatedAt, finishesAt: initial.updatedAt, outcomeRoll: 0.5
     }
+    visitor.state = 'commissioned'
     initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: visitor.commission.id, startsAt: initial.updatedAt } }
     initial.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: visitor.commission.id, startsAt: initial.updatedAt } }
     document = initial
@@ -143,6 +144,7 @@ describe('atomic persisted-game mutation', () => {
       ...visitor.commissionOptions[0]!, id: 'contract-a', status: 'active',
       startedAt: initial.updatedAt, finishesAt: initial.updatedAt, outcomeRoll: 0.5
     }
+    visitor.state = 'commissioned'
     initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: visitor.commission.id, startsAt: initial.updatedAt } }
     document = initial
     await transitionItemAtomic('atomic-user', 'loan-authoritative', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
@@ -275,9 +277,11 @@ describe('atomic persisted-game mutation', () => {
       })
     }
     persisted.revision = 510
+    const recentResponse = structuredClone(replayResponse)
+    recentResponse.revision = 2
     persisted.requestRecords.push(
-      { requestId: 'expired', operationKey: 'expired', businessKey: 'expired', commandHash: 'b'.repeat(64), response: replayResponse as never, revision: 1, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
-      { requestId: 'recent', operationKey: 'recent', businessKey: 'recent', commandHash: 'c'.repeat(64), response: replayResponse as never, revision: 1, createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z' }
+      { requestId: 'historic-request-0', operationKey: 'historic:0', businessKey: 'historic:0', commandHash: 'a'.repeat(64), response: replayResponse as never, revision: 1, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
+      { requestId: 'historic-request-1', operationKey: 'historic:1', businessKey: 'historic:1', commandHash: 'a'.repeat(64), response: recentResponse as never, revision: 2, createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z' }
     )
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-13T00:00:00.000Z'))
@@ -287,7 +291,7 @@ describe('atomic persisted-game mutation', () => {
       vi.useRealTimers()
     }
     expect((document as PersistedGameV3).ledger).toHaveLength(511)
-    expect((document as PersistedGameV3).requestRecords.map((entry) => entry.requestId)).toEqual(['recent', 'fresh'])
+    expect((document as PersistedGameV3).requestRecords.map((entry) => entry.requestId)).toEqual(['historic-request-1', 'fresh'])
   })
 
   it('resets schema 2 with CAS while preserving only user identity', async () => {

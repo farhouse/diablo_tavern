@@ -221,6 +221,7 @@ function addExpedition(game: PersistedGameV3, id: string): void {
     ...visitor.commissionOptions[0]!, id: `contract-${id}`, status: 'active',
     startedAt: game.updatedAt, finishesAt: game.updatedAt, outcomeRoll: 0.5
   }
+  if (visitor?.commission) visitor.state = 'commissioned'
   const contractId = visitor?.commission?.id ?? `contract-${id}`
   game.expeditionsById[id] = {
     id, itemIds: [], projection: { kind: 'expedition', visitorId, contractId, startsAt: game.updatedAt }
