@@ -75,6 +75,20 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
       }))
     }]
   }))
+  const projectedVisitorIds = new Set((visitors as Array<{ visitorId: string }>).map((visitor) => visitor.visitorId))
+  for (const expedition of Object.values(game.expeditionsById)) {
+    const target = expedition.projection
+    if (target?.kind !== 'expedition' || projectedVisitorIds.has(target.visitorId)) continue
+    visitors.push({
+      visitorId: target.visitorId,
+      name: { key: `visitor.${target.visitorId}`, fallback: 'Visitante archivado' },
+      state: 'departed',
+      departedAt: game.updatedAt,
+      lastExpeditionId: expedition.id,
+      actions: []
+    })
+    projectedVisitorIds.add(target.visitorId)
+  }
   const transitions = collectTransitions(game).filter((timestamp) => Date.parse(timestamp) > now.getTime()).sort()
   const expeditions = Object.values(game.expeditionsById).flatMap((container) => {
     const target = container.projection
