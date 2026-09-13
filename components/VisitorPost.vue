@@ -372,8 +372,30 @@ function titleCase(value: string): string {
 }
 .visitor-header, .visitor-footer, .return-state { justify-content: space-between; }
 .visitor-title-row { flex-wrap: wrap; }
+.visitor-identity,
+.visitor-identity > div,
+.visitor-title-row,
+.trade-item > div,
+.mission-option > div,
+.journey-log li > div {
+  min-width: 0;
+}
+.visitor-title-row h2,
+.equipment-copy strong,
 .visitor-header h2, .visitor-header p, .visitor-section h3, .visitor-section p, .away-state h3, .away-state p,
 .return-state h3, .return-state p, .departed-state h3, .departed-state p, .trade-item p { margin: 0; }
+.equipment-copy strong,
+.trade-item strong,
+.trade-item p,
+.trade-item .btn,
+.mission-consequences,
+.mission-consequences li,
+.journey-log li p,
+.journey-note,
+.mission-facts dd {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .visitor-ledger {
   display: grid;
   flex: 0 0 auto;
