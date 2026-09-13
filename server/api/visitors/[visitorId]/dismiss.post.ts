@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
       visitorOperationKey('dismiss', visitorId),
       body.expectedRevision,
       body,
-      (save) => dismissVisitor(save, visitorId)
+      (save, deps) => dismissVisitor(save, visitorId, deps.now(), deps.random)
     )
   } catch (error) {
     visitorMutationError(error, 'Cannot dismiss visitor')

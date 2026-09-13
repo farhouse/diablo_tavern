@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
       visitorOperationKey('buy', visitorId, offerId),
       body.expectedRevision,
       body,
-      (save) => buyFromVisitor(save, visitorId, offerId, body.requestId)
+      (save, deps) => buyFromVisitor(save, visitorId, offerId, body.requestId, deps.now())
     )
   } catch (error) {
     visitorMutationError(error, 'Cannot buy item')

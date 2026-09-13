@@ -22,7 +22,7 @@ export function createSaveGame(userId: string, nowDate = new Date(), random = Ma
       services: { appraiserQueue: [] }
     },
     stashLimit: stashCapacities[0],
-    stash: createStarterItems(),
+    stash: createStarterItems(random),
     unlockedRegionIds: [quests[0]?.id ?? 'blood-moor'],
     visitRound: undefined as never,
     visitHistory: [],
@@ -102,7 +102,7 @@ export function upgradeCaravan(save: SaveGame, upgradeId: CaravanUpgradeId): Sav
   return touchSave(save)
 }
 
-export function startAppraisal(save: SaveGame, itemId: string, now = new Date()): SaveGame {
+export function startAppraisal(save: SaveGame, itemId: string, now = new Date(), uuid = randomId): SaveGame {
   save = normalizeSaveGame(save)
   const queueSize = getAppraiserQueueSize(save)
   if (queueSize <= 0) throw gameError('Appraiser not available. Upgrade your caravan.')
@@ -115,7 +115,7 @@ export function startAppraisal(save: SaveGame, itemId: string, now = new Date())
   const durationMinutes = item.rarity === 'magic' ? 5 : item.rarity === 'rare' ? 15 : item.rarity === 'unique' ? 30 : 0
   if (durationMinutes <= 0) throw gameError('Item does not need appraisal')
   const job: AppraisalJob = {
-    id: randomId(),
+    id: uuid(),
     itemId,
     startedAt: now.toISOString(),
     finishesAt: new Date(now.getTime() + durationMinutes * 60_000).toISOString()

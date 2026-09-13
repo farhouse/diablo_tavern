@@ -120,6 +120,7 @@ describe('atomic persisted-game mutation', () => {
         revision: index + 1, goldDelta: 0, itemChanges: []
       })
     }
+    persisted.revision = 510
     persisted.requestRecords.push(
       { requestId: 'expired', operationKey: 'expired', businessKey: 'expired', commandHash: 'b'.repeat(64), response: {} as never, revision: 1, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
       { requestId: 'recent', operationKey: 'recent', businessKey: 'recent', commandHash: 'c'.repeat(64), response: {} as never, revision: 1, createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z' }
@@ -127,7 +128,7 @@ describe('atomic persisted-game mutation', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-13T00:00:00.000Z'))
     try {
-      await mutateSaveGameAtomic('atomic-user', 'fresh', 'fresh:key', 0, {}, () => {})
+      await mutateSaveGameAtomic('atomic-user', 'fresh', 'fresh:key', 510, {}, () => {})
     } finally {
       vi.useRealTimers()
     }

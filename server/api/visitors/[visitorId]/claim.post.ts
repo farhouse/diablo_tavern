@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
       visitorOperationKey('claim', visitorId),
       body.expectedRevision,
       body,
-      (save) => claimVisitorCommission(save, visitorId)
+      (save, deps) => claimVisitorCommission(save, visitorId, deps.now(), deps.random)
     )
   } catch (error) {
     visitorMutationError(error, 'Cannot claim commission')

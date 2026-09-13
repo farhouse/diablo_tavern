@@ -7,7 +7,7 @@ export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
   const body = await readMutation(event)
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('appraise-complete'), body.expectedRevision, body, (save) => completeAppraisalQueue(save))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('appraise-complete'), body.expectedRevision, body, (save, deps) => completeAppraisalQueue(save, deps.now()))
   } catch (error) {
     mutationError(error, 'Cannot complete appraisal')
   }

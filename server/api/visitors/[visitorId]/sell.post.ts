@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
       visitorOperationKey('sell', visitorId, itemId),
       body.expectedRevision,
       body,
-      (save) => sellToVisitor(save, visitorId, itemId, body.requestId)
+      (save, deps) => sellToVisitor(save, visitorId, itemId, body.requestId, deps.now())
     )
   } catch (error) {
     visitorMutationError(error, 'Cannot sell item')

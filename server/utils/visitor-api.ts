@@ -1,5 +1,4 @@
 import type { H3Event } from 'h3'
-import { createHash } from 'node:crypto'
 import { readRequiredBody, requireString } from '~/server/utils/body'
 import { VisitorDomainError } from '~/utils/visitor-logic'
 import { BusinessKeyConflictError, IdempotencyConflictError, RevisionConflictError } from '~/server/utils/savegame'
@@ -19,7 +18,7 @@ export async function readVisitorMutation(event: H3Event): Promise<MutationReque
 }
 
 export function visitorOperationKey(operation: string, ...identifiers: string[]): string {
-  return createHash('sha256').update(JSON.stringify([operation, ...identifiers])).digest('hex')
+  return JSON.stringify([operation, ...identifiers])
 }
 
 function requireExpectedRevision(value: unknown): number {

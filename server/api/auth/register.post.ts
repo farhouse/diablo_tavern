@@ -2,6 +2,7 @@ import { createAccessToken, createRefreshToken, hashPassword, hashRefreshToken, 
 import { type DbSaveGame, saveGamesCollection, usersCollection } from '~/server/utils/db'
 import { readRequiredBody, requireString } from '~/server/utils/body'
 import { createPersistedGameV3 } from '~/server/utils/savegame'
+import { resolveServerRuntimeConfig } from '~/server/utils/runtime-config'
 
 export default defineEventHandler(async (event) => {
   const body = await readRequiredBody(event)
@@ -9,8 +10,8 @@ export default defineEventHandler(async (event) => {
   const password = requireString(body.password, 'password')
   if (password.length < 6) throw createError({ statusCode: 400, statusMessage: 'Password must be at least 6 characters' })
 
-  const config = useRuntimeConfig()
-  const inviteCode = config.inviteCode as string | undefined
+  const config = resolveServerRuntimeConfig(useRuntimeConfig())
+  const inviteCode = config.inviteCode
   if (inviteCode) {
     const providedCode = requireString(body.inviteCode, 'inviteCode')
     if (providedCode !== inviteCode) {

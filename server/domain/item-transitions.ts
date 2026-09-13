@@ -33,6 +33,7 @@ export function applyItemTransition(
   if (!command.targetId) throw transitionError('A targetId is required')
 
   const game = structuredClone(current)
+  removeFromCustodyContainers(game, command.itemId)
   let to: PersistedItemPlacement
   let goldDelta = 0
   const materialDeltas: Record<string, number> = {}
@@ -46,6 +47,7 @@ export function applyItemTransition(
     game.stash = game.stash.filter((itemId) => itemId !== command.itemId)
     switch (command.operation) {
       case 'sell':
+        if (!hasVisitor(game, command.targetId)) throw transitionError('Target visitor does not exist')
         to = { ownerKind: 'visitor', ownerId: command.targetId, custodyKind: 'visitor', custodyId: command.targetId }
         goldDelta = Math.max(0, item.value)
         game.gold += goldDelta
@@ -72,8 +74,38 @@ export function applyItemTransition(
   }
 
   game.itemPlacements[command.itemId] = to
+  addToCustodyContainer(game, command.itemId, to)
   if (effectiveCapacityUsed(game) > game.stashLimit) throw transitionError('Caravan capacity exceeded')
   return { game, effect: { goldDelta, materialDeltas, from: structuredClone(from), to: structuredClone(to) } }
+}
+
+function hasVisitor(game: PersistedGameV3, visitorId: string): boolean {
+  return [game.visitRound, ...game.visitHistory].some((round) =>
+    round.slots.some((slot) => slot.visitor?.id === visitorId)
+  )
+}
+
+function removeFromCustodyContainers(game: PersistedGameV3, itemId: string): void {
+  for (const containers of [game.expeditionsById, game.recoveriesById, game.settlementsById, game.serviceJobsById]) {
+    for (const [id, container] of Object.entries(containers)) {
+      container.itemIds = container.itemIds.filter((candidate) => candidate !== itemId)
+      if (container.itemIds.length === 0) delete containers[id]
+    }
+  }
+}
+
+function addToCustodyContainer(game: PersistedGameV3, itemId: string, placement: PersistedItemPlacement): void {
+  const maps = {
+    expedition: game.expeditionsById,
+    recovery: game.recoveriesById,
+    settlement: game.settlementsById,
+    service: game.serviceJobsById
+  }
+  if (!(placement.custodyKind in maps)) return
+  const containers = maps[placement.custodyKind as keyof typeof maps]
+  const id = placement.custodyId!
+  const existing = containers[id]
+  containers[id] = { id, itemIds: [...(existing?.itemIds ?? []), itemId] }
 }
 
 function requireAvailableInStash(placement: PersistedItemPlacement): void {

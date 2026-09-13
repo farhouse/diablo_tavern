@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
       visitorOperationKey('commission', visitorId, selection),
       body.expectedRevision,
       body,
-      (save) => assignVisitorCommission(save, visitorId, selection)
+      (save, deps) => assignVisitorCommission(save, visitorId, selection, deps.random, deps.now())
     )
   } catch (error) {
     visitorMutationError(error, 'Cannot assign commission')

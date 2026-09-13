@@ -4,6 +4,7 @@ import { ObjectId, type Filter } from 'mongodb'
 import type { H3Event } from 'h3'
 import type { PublicUser, User } from '~/types/game'
 import { type DbUser, usersCollection } from '~/server/utils/db'
+import { resolveServerRuntimeConfig } from '~/server/utils/runtime-config'
 
 const ACCESS_EXPIRES_IN = '20m'
 const REFRESH_EXPIRES_IN = '14d'
@@ -43,7 +44,7 @@ export async function requireUser(event: H3Event): Promise<PublicUser> {
   if (!token) throw createError({ statusCode: 401, statusMessage: 'Missing access token' })
 
   try {
-    const config = useRuntimeConfig()
+    const config = resolveServerRuntimeConfig(useRuntimeConfig())
     const payload = jwt.verify(token, config.jwtSecret) as TokenPayload
     return { id: payload.sub, email: payload.email }
   } catch {
@@ -66,7 +67,7 @@ export function publicUser(user: User): PublicUser {
 }
 
 function signToken(user: User, expiresIn: string): string {
-  const config = useRuntimeConfig()
+  const config = resolveServerRuntimeConfig(useRuntimeConfig())
   const options: jwt.SignOptions = {
     expiresIn: expiresIn as jwt.SignOptions['expiresIn'],
     subject: String(user._id)

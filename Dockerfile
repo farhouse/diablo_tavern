@@ -16,6 +16,7 @@ RUN pnpm build
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=build /app/.output /app/.output
+COPY --chown=node:node --from=build /app/.output /app/.output
+USER node
 EXPOSE 3000
 CMD ["node", ".output/server/index.mjs"]

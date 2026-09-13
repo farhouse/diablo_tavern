@@ -597,7 +597,7 @@ function roundTo(value: number, places: number): number {
 }
 
 function randomId(random: RandomSource): string {
-  return `${Date.now().toString(36)}-${Math.floor(clampRandom(random()) * 0xFFFFFFFF).toString(36).padStart(7, '0')}`
+  return `rng-${Math.floor(clampRandom(random()) * Number.MAX_SAFE_INTEGER).toString(36).padStart(11, '0')}`
 }
 
 function touch(save: SaveGame, now: Date): SaveGame {

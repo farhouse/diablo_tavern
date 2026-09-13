@@ -58,15 +58,21 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     ['sell', 'dismantle', userIds[4]!],
     ['service', 'loan', userIds[5]!]
   ])('allows one Mongo CAS winner for %s versus %s', async (firstName, secondName, userId) => {
-    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3(userId)
+    const itemId = initial.stash[0]!
+    const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing-visitor'
+    const targetFor = (operation: string) => operation === 'sell' ? visitorId : `${operation}-target`
     const results = await Promise.allSettled([
-      mutateSaveGameAtomic(userId, `${firstName}-request`, `${firstName}:item`, 0, { operation: firstName }, (save) => { save.gold -= 1 }),
-      mutateSaveGameAtomic(userId, `${secondName}-request`, `${secondName}:item`, 0, { operation: secondName }, (save) => { save.gold -= 2 })
+      transitionItemAtomic(userId, `${firstName}-request`, 0, { operation: firstName as never, itemId, targetId: targetFor(firstName) }),
+      transitionItemAtomic(userId, `${secondName}-request`, 0, { operation: secondName as never, itemId, targetId: targetFor(secondName) })
     ])
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
     const persisted = await collection.findOne({ userId })
     expect(persisted?.ledger).toHaveLength(1)
     expect(persisted?.revision).toBe(1)
+    expect(persisted?.ledger[0].itemChanges).toHaveLength(1)
+    expect(persisted?.itemPlacements[itemId]).not.toMatchObject({ custodyKind: 'stash' })
   })
 
   it('resets schema 2 without importing its economy and keeps the unique index', async () => {

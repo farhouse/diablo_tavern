@@ -31,9 +31,40 @@ export async function getGameView(userId: string, now = new Date()): Promise<Gam
 export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date()): GameView {
   const items = Object.entries(game.itemsById).flatMap(([itemId, item]) => {
     const placement = game.itemPlacements[itemId]
-    if (!placement || placement.ownerKind !== 'caravan' || placement.custodyKind === 'tombstone') return []
+    if (!placement || placement.custodyKind === 'tombstone') return []
     return [mapItem(item, placement)]
   })
+  const visitors: unknown[] = [game.visitRound, ...game.visitHistory].flatMap<unknown>((round) => round.slots.flatMap<unknown>((slot) => {
+    const visitor = slot.visitor
+    if (!visitor) return []
+    const base = {
+      visitorId: visitor.id,
+      name: { key: `visitor.${visitor.id}`, fallback: visitor.name },
+      actions: []
+    }
+    if (visitor.state === 'departed') {
+      return [{ ...base, state: 'departed', departedAt: visitor.departedAt ?? game.updatedAt, lastExpeditionId: visitor.commission?.id ?? `legacy-${visitor.id}` }]
+    }
+    if (visitor.state === 'commissioned' || visitor.state === 'returned') {
+      return [{ ...base, state: 'contracted', contractId: visitor.commission?.id ?? `legacy-${visitor.id}` }]
+    }
+    return [{
+      ...base,
+      state: 'available',
+      departureSignal: 'possible',
+      contractOptions: visitor.commissionOptions.map((option) => ({
+        optionId: option.optionId,
+        label: { key: `contract.${option.optionId}`, fallback: option.title },
+        description: { key: `contract.${option.optionId}.description`, fallback: option.failureConsequence },
+        durationSeconds: Math.max(1, Math.ceil(option.durationMs / 1000)),
+        caravanGoldShareBps: option.optionId === 'safe' ? 2500 : 4000,
+        lootPriority: 'caravan_first',
+        retreatThreshold: option.optionId === 'safe' ? 10 : null,
+        loanFeeGold: 0,
+        consequences: []
+      }))
+    }]
+  }))
   const transitions = collectTransitions(game).filter((timestamp) => Date.parse(timestamp) > now.getTime()).sort()
   const view: GameView = {
     contractVersion: 'v2-etapa0-3',
@@ -48,7 +79,7 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
       reserved: 0,
       blockers: []
     },
-    visitors: [],
+    visitors,
     expeditions: [],
     settlements: [],
     recoveries: [],
@@ -80,10 +111,10 @@ function mapItem(item: Item, placement: PersistedItemPlacement): Record<string, 
     slot: item.type === 'weapon' ? 'weapon' : ['ring', 'amulet', 'charm'].includes(item.type) ? 'accessory' : 'armor',
     rarity: item.rarity === 'normal' ? 'common' : item.rarity === 'unique' ? 'legendary' : item.rarity,
     level: Math.max(1, item.requiredLevel),
-    owner: { kind: 'caravan' },
-    custody: placement.custodyKind === 'service'
-      ? { kind: 'service', jobId: placement.custodyId }
-      : { kind: 'stash' },
+    owner: placement.ownerKind === 'visitor'
+      ? { kind: 'visitor', visitorId: placement.ownerId }
+      : { kind: 'caravan' },
+    custody: mapCustody(placement),
     actions: []
   }
   if (!item.identified) return { ...base, identification: 'unidentified' }
@@ -96,6 +127,17 @@ function mapItem(item: Item, placement: PersistedItemPlacement): Record<string, 
       valueText: { key: `affix.${affix.stat}.value`, fallback: String(affix.value) }
     })),
     activeImprint: null
+  }
+}
+
+function mapCustody(placement: PersistedItemPlacement): Record<string, unknown> {
+  switch (placement.custodyKind) {
+    case 'visitor': return { kind: 'visitor', visitorId: placement.custodyId }
+    case 'service': return { kind: 'service', jobId: placement.custodyId }
+    case 'expedition': return { kind: 'expedition', expeditionId: placement.custodyId, visitorId: placement.ownerId ?? placement.custodyId }
+    case 'settlement': return { kind: 'settlement', settlementId: placement.custodyId }
+    case 'recovery': return { kind: 'recovery', recoveryId: placement.custodyId }
+    default: return { kind: 'stash' }
   }
 }
 

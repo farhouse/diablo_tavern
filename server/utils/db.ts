@@ -1,5 +1,6 @@
 import { MongoClient, ObjectId, type Collection, type Db } from 'mongodb'
 import type { User } from '~/types/game'
+import { resolveServerRuntimeConfig } from '~/server/utils/runtime-config'
 
 export type DbUser = Omit<User, '_id'> & { _id?: ObjectId }
 export type DbSaveGame = { userId: string; _id?: ObjectId; [key: string]: unknown }
@@ -10,7 +11,7 @@ let db: Db | undefined
 export async function getDb(): Promise<Db> {
   if (db) return db
 
-  const config = useRuntimeConfig()
+  const config = resolveServerRuntimeConfig(useRuntimeConfig())
   validateDatabaseConfig(config)
   client = client || new MongoClient(config.mongoUri)
   await client.connect()

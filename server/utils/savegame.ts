@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { Item, SaveGame, VisitRound, Visitor, VisitorCommission, VisitorOffer, VisitorSlot } from '~/types/game'
 import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
 import { refreshVisitRound } from '~/utils/visitor-logic'
+import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -50,6 +51,11 @@ export interface PersistedLedgerEntry {
   itemChanges: Array<{ itemId: string; from?: PersistedItemPlacement; to: PersistedItemPlacement }>
 }
 
+export interface PersistedCustodyContainer {
+  id: string
+  itemIds: string[]
+}
+
 type PersistedVisitorOffer = Omit<VisitorOffer, 'item'> & { itemId: string }
 type PersistedVisitorCommission = Omit<VisitorCommission, 'rewardItem'> & { rewardItemId?: string }
 type PersistedVisitor = Omit<Visitor, 'offers' | 'commission'> & {
@@ -75,6 +81,10 @@ export interface PersistedGameV3 {
   updatedAt: string
   itemsById: Record<string, Item>
   itemPlacements: Record<string, PersistedItemPlacement>
+  expeditionsById: Record<string, PersistedCustodyContainer>
+  recoveriesById: Record<string, PersistedCustodyContainer>
+  settlementsById: Record<string, PersistedCustodyContainer>
+  serviceJobsById: Record<string, PersistedCustodyContainer>
   requestRecords: PersistedRequestRecord[]
   businessKeys: Record<string, string>
   ledger: PersistedLedgerEntry[]
@@ -138,9 +148,28 @@ export async function getPersistedGameV3(userId: string, dependencies = defaultD
 }
 
 export async function getSaveGame(userId: string, dependencies = defaultDependencies): Promise<SaveGame> {
-  const compatibility = hydratePersistedGame(await getPersistedGameV3(userId, dependencies))
-  refreshVisitRound(compatibility, dependencies.now(), dependencies.random)
-  return toGameView(compatibility)
+  for (let attempt = 0; attempt < MAX_MUTATE_ATTEMPTS; attempt += 1) {
+    const compatibility = hydratePersistedGame(await getPersistedGameV3(userId, dependencies))
+    const now = dependencies.now()
+    const reconciled = structuredClone(compatibility)
+    refreshVisitRound(reconciled, now, dependencies.random)
+    if (JSON.stringify(reconciled) === JSON.stringify(compatibility)) return toGameView(compatibility)
+
+    try {
+      return await mutateSaveGameAtomic(
+        userId,
+        `reconcile:${compatibility.revision}:${now.toISOString()}`,
+        JSON.stringify(['reconcile', compatibility.revision]),
+        compatibility.revision,
+        { asOf: now.toISOString() },
+        (save, deps) => refreshVisitRound(save, now, deps.random),
+        dependencies
+      )
+    } catch (error) {
+      if (!(error instanceof RevisionConflictError)) throw error
+    }
+  }
+  throw new RevisionConflictError('Save changed concurrently while reconciling time transitions')
 }
 
 export function mutateSaveGameAtomic(
@@ -148,7 +177,7 @@ export function mutateSaveGameAtomic(
   requestId: string,
   operationKey: string,
   expectedRevision: number,
-  mutate: (save: SaveGame) => SaveGame | void
+  mutate: (save: SaveGame, dependencies: PersistenceDependencies) => SaveGame | void
 ): Promise<SaveGame>
 export function mutateSaveGameAtomic(
   userId: string,
@@ -156,7 +185,7 @@ export function mutateSaveGameAtomic(
   operationKey: string,
   expectedRevision: number,
   command: unknown,
-  mutate: (save: SaveGame) => SaveGame | void,
+  mutate: (save: SaveGame, dependencies: PersistenceDependencies) => SaveGame | void,
   dependencies?: PersistenceDependencies
 ): Promise<SaveGame>
 export async function mutateSaveGameAtomic(
@@ -164,8 +193,8 @@ export async function mutateSaveGameAtomic(
   requestId: string,
   operationKey: string,
   expectedRevision: number,
-  commandOrMutate: unknown | ((save: SaveGame) => SaveGame | void),
-  maybeMutate?: (save: SaveGame) => SaveGame | void,
+  commandOrMutate: unknown | ((save: SaveGame, dependencies: PersistenceDependencies) => SaveGame | void),
+  maybeMutate?: (save: SaveGame, dependencies: PersistenceDependencies) => SaveGame | void,
   dependencies = defaultDependencies
 ): Promise<SaveGame> {
   if (!requestId || requestId.length > 128) throw new Error('A valid requestId is required')
@@ -175,8 +204,10 @@ export async function mutateSaveGameAtomic(
   }
 
   const saves = await saveGamesCollection()
-  const businessKey = operationKey
-  const mutate = maybeMutate ?? (commandOrMutate as (save: SaveGame) => SaveGame | void)
+  const businessKey = isRepeatableOperation(operationKey)
+    ? `${operationKey}:revision:${expectedRevision}`
+    : operationKey
+  const mutate = maybeMutate ?? (commandOrMutate as (save: SaveGame, dependencies: PersistenceDependencies) => SaveGame | void)
   const command = maybeMutate ? commandOrMutate : { operationKey }
   const requestHash = hashCommand(operationKey, command)
 
@@ -219,7 +250,7 @@ export async function mutateSaveGameAtomic(
 
     const nextRevision = currentView.revision + 1
     const draft = normalizeSaveGame(structuredClone(currentView), { refreshVisitors: false })
-    const mutated = mutate(draft) ?? draft
+    const mutated = mutate(draft, dependencies) ?? draft
     mutated.revision = nextRevision
     mutated.updatedAt = dependencies.now().toISOString()
     const validated = normalizeSaveGame(mutated, { refreshVisitors: false })
@@ -263,6 +294,9 @@ export async function mutateSaveGameAtomic(
       }],
       schemaVersion: SAVE_SCHEMA_VERSION
     }
+    if (!isPersistedCanonical(nextPersisted)) {
+      throw new PersistedGameCorruptError('Mutation produced an invalid PersistedGameV3 document')
+    }
 
     const replaceResult = await saves.replaceOne(
       {
@@ -300,6 +334,55 @@ export class PersistedGameCorruptError extends Error {
   override name = 'PersistedGameCorruptError'
 }
 
+export async function transitionItemAtomic(
+  userId: string,
+  requestId: string,
+  expectedRevision: number,
+  command: ItemTransitionCommand,
+  dependencies = defaultDependencies
+): Promise<PersistedGameV3> {
+  const saves = await saveGamesCollection()
+  const current = await getPersistedGameV3(userId, dependencies)
+  const operationKey = JSON.stringify(['item-transition', command.operation, command.itemId])
+  const businessKey = operationKey
+  const commandHash = hashCommand(operationKey, command)
+  const replay = current.requestRecords.find((record) => record.requestId === requestId)
+  if (replay) {
+    if (replay.commandHash !== commandHash) throw new IdempotencyConflictError('requestId was already used for a different command')
+    return current
+  }
+  if (current.businessKeys[businessKey]) throw new BusinessKeyConflictError('item transition was already committed')
+  if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
+
+  const { game: transitioned } = applyItemTransition(current, command)
+  const now = dependencies.now().toISOString()
+  transitioned.revision = expectedRevision + 1
+  transitioned.updatedAt = now
+  const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
+  transitioned.requestRecords = [...current.requestRecords, {
+    requestId, operationKey, businessKey, commandHash, response,
+    revision: transitioned.revision, createdAt: now, updatedAt: now
+  }]
+  transitioned.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
+  transitioned.ledger = [...current.ledger, {
+    at: now, requestId, operationKey, commandHash, businessKey,
+    revision: transitioned.revision,
+    goldDelta: transitioned.gold - current.gold,
+    itemChanges: itemPlacementChanges(current, transitioned)
+  }]
+  if (!isPersistedCanonical(transitioned)) throw new PersistedGameCorruptError('Item transition produced an invalid aggregate')
+
+  const result = await saves.replaceOne(
+    { userId, revision: expectedRevision } as Filter<DbSaveGame>,
+    transitioned as unknown as DbSaveGame
+  )
+  if (result.modifiedCount === 1) return transitioned
+  const winner = await getPersistedGameV3(userId, dependencies)
+  const winnerReplay = winner.requestRecords.find((record) => record.requestId === requestId)
+  if (winnerReplay?.commandHash === commandHash) return winner
+  throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
+}
+
 function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
   return {
     userId: document.userId,
@@ -325,6 +408,10 @@ function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
     updatedAt: (document as { updatedAt?: string }).updatedAt ?? new Date().toISOString(),
     itemsById: (document as { itemsById?: Record<string, Item> }).itemsById || {},
     itemPlacements: (document as { itemPlacements?: Record<string, PersistedItemPlacement> }).itemPlacements || {},
+    expeditionsById: readContainerMap(document.expeditionsById),
+    recoveriesById: readContainerMap(document.recoveriesById),
+    settlementsById: readContainerMap(document.settlementsById),
+    serviceJobsById: readContainerMap(document.serviceJobsById),
     requestRecords: Array.isArray((document as { requestRecords?: unknown }).requestRecords)
       ? [...((document as { requestRecords: PersistedRequestRecord[] }).requestRecords)]
       : [],
@@ -358,7 +445,7 @@ export function hydratePersistedGame(document: PersistedGameV3): SaveGame {
   } as unknown as SaveGame, { refreshVisitors: false })
 
   const stash = Object.entries(document.itemPlacements)
-    .filter(([, placement]) => placement.ownerKind === 'caravan' && placement.custodyKind !== 'tombstone')
+    .filter(([, placement]) => placement.ownerKind === 'caravan' && ['stash', 'service'].includes(placement.custodyKind))
     .map(([itemId]) => document.itemsById[itemId])
     .filter((item): item is Item => Boolean(item))
 
@@ -373,9 +460,13 @@ export function buildPersistedFromPublic(
   previous?: PersistedGameV3,
   dependencies = defaultDependencies
 ): PersistedGameV3 {
-  const normalized = normalizeSaveGame(structuredClone(save))
+  const normalized = normalizeSaveGame(structuredClone(save), { refreshVisitors: false })
   const itemsById: Record<string, Item> = {}
   const itemPlacements: Record<string, PersistedItemPlacement> = {}
+  const expeditionsById = structuredClone(previous?.expeditionsById ?? {})
+  const recoveriesById = structuredClone(previous?.recoveriesById ?? {})
+  const settlementsById = structuredClone(previous?.settlementsById ?? {})
+  const serviceJobsById = structuredClone(previous?.serviceJobsById ?? {})
   const stash: string[] = []
 
   const seenIds = new Set<string>()
@@ -384,6 +475,7 @@ export function buildPersistedFromPublic(
     if (seenIds.has(item.id)) throw new PersistedGameCorruptError('Item IDs in stash must be unique')
     seenIds.add(item.id)
     const serviceJob = normalized.caravan.services.appraiserQueue.find((job) => job.itemId === item.id)
+    if (serviceJob) serviceJobsById[serviceJob.id] = { id: serviceJob.id, itemIds: [item.id] }
     registerItem(itemsById, itemPlacements, item, serviceJob
       ? { ownerKind: 'caravan', custodyKind: 'service', custodyId: serviceJob.id }
       : { ownerKind: 'caravan', custodyKind: 'stash' })
@@ -411,10 +503,13 @@ export function buildPersistedFromPublic(
   }
   for (const itemId of Object.keys(itemsById)) {
     if (seenIds.has(itemId) || isReferencedByVisitors(itemId, visitRound, visitHistory)) continue
-    itemPlacements[itemId] = { ownerKind: 'tombstone', custodyKind: 'tombstone' }
+    const previousPlacement = previous?.itemPlacements[itemId]
+    itemPlacements[itemId] = previousPlacement && ['expedition', 'recovery', 'settlement'].includes(previousPlacement.custodyKind)
+      ? structuredClone(previousPlacement)
+      : { ownerKind: 'tombstone', custodyKind: 'tombstone' }
   }
 
-  return {
+  const persisted: PersistedGameV3 = {
     userId: normalized.userId,
     schemaVersion: SAVE_SCHEMA_VERSION,
     gold: Number(normalized.gold ?? 0),
@@ -430,10 +525,18 @@ export function buildPersistedFromPublic(
     updatedAt: normalized.updatedAt,
     itemsById,
     itemPlacements,
+    expeditionsById,
+    recoveriesById,
+    settlementsById,
+    serviceJobsById,
     requestRecords: structuredClone(previous?.requestRecords ?? []),
     businessKeys: structuredClone(previous?.businessKeys ?? {}),
     ledger: structuredClone(previous?.ledger ?? [])
   }
+  if (!isPersistedCanonical(persisted)) {
+    throw new PersistedGameCorruptError('Public aggregate cannot be represented as canonical PersistedGameV3')
+  }
+  return persisted
 }
 
 function hasLegacyFields(value: unknown): boolean {
@@ -455,6 +558,12 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   const stash = (document as { stash?: unknown }).stash
   const itemsById = (document as { itemsById?: Record<string, Item> }).itemsById
   const itemPlacements = (document as { itemPlacements?: Record<string, PersistedItemPlacement> }).itemPlacements
+  const containerMaps = {
+    expedition: candidate.expeditionsById,
+    recovery: candidate.recoveriesById,
+    settlement: candidate.settlementsById,
+    service: candidate.serviceJobsById
+  }
 
   if (candidate.schemaVersion !== SAVE_SCHEMA_VERSION) return false
   if (!Array.isArray(stash) || !itemsById || !itemPlacements) return false
@@ -466,9 +575,16 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   if (!candidate.businessKeys || typeof candidate.businessKeys !== 'object' || Array.isArray(candidate.businessKeys)) return false
   if (!candidate.visitRound || typeof candidate.visitRound !== 'object' || !Array.isArray((candidate.visitRound as { slots?: unknown }).slots)) return false
   if (!Array.isArray(candidate.visitHistory)) return false
+  if (!candidate.caravan || typeof candidate.caravan !== 'object') return false
+  const caravan = candidate.caravan as Partial<SaveGame['caravan']>
+  if (!caravan.services || !Array.isArray(caravan.services.appraiserQueue)) return false
+  const allRounds = [candidate.visitRound, ...candidate.visitHistory] as PersistedVisitRound[]
+  const visitorIds = new Set(allRounds.flatMap((round) => round.slots.flatMap((slot) => slot.visitor?.id ? [slot.visitor.id] : [])))
+  if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
   if (Object.keys(itemsById).length !== Object.keys(itemPlacements).length) return false
 
   const seen = new Set<string>()
+  const activeReferences = new Set<string>()
   for (const itemId of stash) {
     if (typeof itemId !== 'string' || !itemId) return false
     if (seen.has(itemId)) return false
@@ -484,13 +600,28 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     if (itemId !== itemsById[itemId]?.id) return false
     const compatible =
       (placement.ownerKind === 'caravan' && ['stash', 'service', 'expedition', 'recovery', 'settlement'].includes(placement.custodyKind))
-      || (placement.ownerKind === 'visitor' && placement.custodyKind === 'visitor' && Boolean(placement.ownerId) && placement.ownerId === placement.custodyId)
+      || (placement.ownerKind === 'visitor' && placement.custodyKind === 'visitor' && Boolean(placement.ownerId) && placement.ownerId === placement.custodyId && visitorIds.has(placement.ownerId!))
       || (placement.ownerKind === 'tombstone' && placement.custodyKind === 'tombstone')
     if (!compatible) return false
     if (placement.custodyKind === 'stash' && !seen.has(itemId)) return false
+    if (placement.custodyKind !== 'stash' && placement.custodyKind !== 'visitor' && placement.custodyKind !== 'tombstone') {
+      const container = (containerMaps[placement.custodyKind] as Record<string, PersistedCustodyContainer>)[placement.custodyId ?? '']
+      if (!container?.itemIds.includes(itemId)) return false
+    }
   }
+  for (const [kind, containers] of Object.entries(containerMaps)) {
+    for (const container of Object.values(containers as Record<string, PersistedCustodyContainer>)) {
+      for (const itemId of container.itemIds) {
+        if (activeReferences.has(itemId)) return false
+        activeReferences.add(itemId)
+        const placement = itemPlacements[itemId]
+        if (!placement || placement.custodyKind !== kind || placement.custodyId !== container.id) return false
+      }
+    }
+  }
+  if (Object.values(itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length > Number(candidate.stashLimit)) return false
 
-  const rounds = [candidate.visitRound, ...candidate.visitHistory] as PersistedVisitRound[]
+  const rounds = allRounds
   for (const round of rounds) {
     if (!round || !Array.isArray(round.slots)) return false
     for (const slot of round.slots) {
@@ -498,14 +629,34 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
       if (!visitor) continue
       if (!Array.isArray(visitor.offers) || !Array.isArray(visitor.trades)) return false
       if (visitor.offers.some((offer) => !offer.itemId || !itemsById[offer.itemId] || Object.prototype.hasOwnProperty.call(offer, 'item'))) return false
+      for (const offer of visitor.offers.filter((candidate) => !candidate.purchasedAt)) {
+        if (activeReferences.has(offer.itemId)) return false
+        activeReferences.add(offer.itemId)
+        const placement = itemPlacements[offer.itemId]
+        if (placement?.ownerKind !== 'visitor' || placement.ownerId !== visitor.id || placement.custodyId !== visitor.id) return false
+      }
       if (visitor.commission && Object.prototype.hasOwnProperty.call(visitor.commission, 'rewardItem')) return false
-      if (visitor.commission?.rewardItemId && !itemsById[visitor.commission.rewardItemId]) return false
+      if (visitor.commission?.rewardItemId) {
+        if (activeReferences.has(visitor.commission.rewardItemId)) return false
+        activeReferences.add(visitor.commission.rewardItemId)
+        const placement = itemPlacements[visitor.commission.rewardItemId]
+        if (!itemsById[visitor.commission.rewardItemId] || placement?.ownerKind !== 'visitor' || placement.ownerId !== visitor.id) return false
+      }
     }
+  }
+
+  const appraiserJobs = new Map(caravan.services.appraiserQueue.map((job) => [job.id, job.itemId]))
+  for (const [jobId, itemId] of appraiserJobs) {
+    const container = (candidate.serviceJobsById as Record<string, PersistedCustodyContainer>)[jobId]
+    const placement = itemPlacements[itemId]
+    if (!container || container.itemIds.length !== 1 || container.itemIds[0] !== itemId) return false
+    if (placement?.custodyKind !== 'service' || placement.custodyId !== jobId) return false
   }
 
   const requestIds = new Set<string>()
   for (const record of candidate.requestRecords as PersistedRequestRecord[]) {
     if (!record || typeof record.requestId !== 'string' || requestIds.has(record.requestId)) return false
+    if (!record.operationKey || !record.businessKey || typeof record.response !== 'object' || !record.response) return false
     if (!/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)) return false
     if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
     if (containsInternalFields(record.response)) return false
@@ -513,13 +664,19 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   }
 
   const ledgerKeys = new Set<string>()
+  let previousLedgerRevision = 0
   for (const entry of candidate.ledger as PersistedLedgerEntry[]) {
     if (!entry || typeof entry.businessKey !== 'string' || ledgerKeys.has(entry.businessKey)) return false
+    if (!entry.requestId || !entry.operationKey || !/^[a-f0-9]{64}$/.test(entry.commandHash)) return false
+    if (!Number.isFinite(Date.parse(entry.at)) || !Number.isInteger(entry.revision) || entry.revision < 1) return false
+    if (entry.revision <= previousLedgerRevision || entry.revision > Number(candidate.revision)) return false
     if (!Number.isInteger(entry.goldDelta) || !Array.isArray(entry.itemChanges)) return false
     ledgerKeys.add(entry.businessKey)
+    previousLedgerRevision = entry.revision
   }
   for (const [businessKey, requestId] of Object.entries(candidate.businessKeys as Record<string, string>)) {
-    if (!businessKey || !requestId || !ledgerKeys.has(businessKey)) return false
+    const ledgerEntry = (candidate.ledger as PersistedLedgerEntry[]).find((entry) => entry.businessKey === businessKey)
+    if (!businessKey || !requestId || !ledgerEntry || ledgerEntry.requestId !== requestId) return false
   }
 
   return true
@@ -530,10 +687,25 @@ function isResourceMap(value: unknown): value is Record<string, number> {
     && Object.values(value as Record<string, unknown>).every((entry) => Number.isInteger(entry) && Number(entry) >= 0)
 }
 
+function readContainerMap(value: unknown): Record<string, PersistedCustodyContainer> {
+  return isContainerMap(value) ? structuredClone(value) : {}
+}
+
+function isContainerMap(value: unknown): value is Record<string, PersistedCustodyContainer> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.entries(value as Record<string, unknown>).every(([id, entry]) => {
+    if (!entry || typeof entry !== 'object') return false
+    const container = entry as PersistedCustodyContainer
+    return container.id === id && Array.isArray(container.itemIds)
+      && new Set(container.itemIds).size === container.itemIds.length
+      && container.itemIds.every((itemId) => typeof itemId === 'string' && Boolean(itemId))
+  })
+}
+
 function containsInternalFields(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const keys = new Set(Object.keys(value as object))
-  return ['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'processedRequestIds', 'processedRequests']
+  return ['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById', 'serviceJobsById', 'processedRequestIds', 'processedRequests']
     .some((key) => keys.has(key))
 }
 
@@ -634,6 +806,15 @@ function itemPlacementChanges(before: PersistedGameV3, after: PersistedGameV3): 
 function hashCommand(operationKey: string, command: unknown): string {
   const payload = canonicalize({ operationKey, command: commandPayload(command) })
   return createHash('sha256').update(JSON.stringify(payload ?? null)).digest('hex')
+}
+
+function isRepeatableOperation(operationKey: string): boolean {
+  try {
+    const [operation] = JSON.parse(operationKey) as unknown[]
+    return operation === 'reset' || operation === 'appraise-complete' || operation === 'upgrade'
+  } catch {
+    return false
+  }
 }
 
 function commandPayload(command: unknown): unknown {
