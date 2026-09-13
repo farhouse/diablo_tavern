@@ -215,9 +215,13 @@ export function claimVisitorCommission(save: SaveGame, visitorId: string, now = 
   const rewardGold = commission.rewardGold ?? 0
   save.gold += rewardGold
   const capacityUsed = save._effectiveCapacityUsed ?? save.stash.length
-  if (commission.outcome === 'complete' && capacityUsed < save.stashLimit) {
-    commission.rewardItem = createOfferItem(random)
-    save.stash.push(cloneItem(commission.rewardItem))
+  if (commission.outcome === 'complete') {
+    if (commission.rewardItem) {
+      if (!save.stash.some((item) => item.id === commission.rewardItem!.id)) save.stash.push(cloneItem(commission.rewardItem))
+    } else if (capacityUsed < save.stashLimit) {
+      commission.rewardItem = createOfferItem(random)
+      save.stash.push(cloneItem(commission.rewardItem))
+    }
   }
   commission.status = 'claimed'
   commission.claimedAt = now.toISOString()

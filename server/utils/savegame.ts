@@ -551,6 +551,13 @@ export function buildPersistedFromPublic(
             startsAt: visitor.commission.startedAt
           }
         }
+      } else if (visitor.commission?.rewardItemId) {
+        const settlement = settlementsById[visitor.commission.id]
+        if (settlement) {
+          settlement.itemIds = settlement.itemIds.filter((itemId) => itemId !== visitor.commission!.rewardItemId)
+          if (settlement.itemIds.length === 0) delete settlementsById[visitor.commission.id]
+        }
+        if (expeditionsById[visitor.commission.id]?.itemIds.length === 0) delete expeditionsById[visitor.commission.id]
       }
     }
   }
@@ -642,6 +649,15 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   if (!allRounds.every(isPersistedRound)) return false
   const visitorIds = new Set(allRounds.flatMap((round) => round.slots.flatMap((slot) => slot.visitor?.id ? [slot.visitor.id] : [])))
   if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
+  for (const container of Object.values(candidate.expeditionsById as Record<string, PersistedCustodyContainer>)) {
+    if (container.projection?.kind !== 'expedition' || !visitorIds.has(container.projection.visitorId)) return false
+  }
+  for (const container of Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)) {
+    if (container.projection?.kind !== 'settlement' || !(container.projection.expeditionId in (candidate.expeditionsById as object))) return false
+  }
+  for (const container of Object.values(candidate.recoveriesById as Record<string, PersistedCustodyContainer>)) {
+    if (container.projection?.kind !== 'recovery' || !(container.projection.sourceExpeditionId in (candidate.expeditionsById as object))) return false
+  }
   if (Object.keys(itemsById).length !== Object.keys(itemPlacements).length) return false
 
   const seen = new Set<string>()

@@ -39,10 +39,10 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     if (placement.custodyKind === 'service') {
       const target = game.serviceJobsById[placement.custodyId ?? '']
       if (target?.projection?.kind === 'legacy_appraiser') {
-        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' })]
+        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' }, game)]
       }
     }
-    return [mapItem(item, placement)]
+    return [mapItem(item, placement, game)]
   })
   const visitors: unknown[] = [game.visitRound, ...game.visitHistory].flatMap<unknown>((round) => round.slots.flatMap<unknown>((slot) => {
     const visitor = slot.visitor
@@ -143,8 +143,9 @@ export function validateSemanticGameView(view: GameView): void {
   assertUnique(view.serviceJobs as Array<Record<string, unknown>>, 'jobId')
   const itemIds = new Set<string>()
   const visitorIds = new Set((view.visitors as Array<{ visitorId: string }>).map((visitor) => visitor.visitorId))
+  const expeditionVisitors = new Map((view.expeditions as Array<{ expeditionId: string; visitorId: string }>).map((entry) => [entry.expeditionId, entry.visitorId]))
   const targetIds = {
-    expedition: new Set((view.expeditions as Array<{ expeditionId: string }>).map((entry) => entry.expeditionId)),
+    expedition: new Set(expeditionVisitors.keys()),
     settlement: new Set((view.settlements as Array<{ settlementId: string }>).map((entry) => entry.settlementId)),
     recovery: new Set((view.recoveries as Array<{ recoveryId: string }>).map((entry) => entry.recoveryId)),
     service: new Set((view.serviceJobs as Array<{ jobId: string }>).map((entry) => entry.jobId))
@@ -172,6 +173,10 @@ export function validateSemanticGameView(view: GameView): void {
         throw new Error(`Invalid visitor custody for ${item.itemId}`)
       }
     }
+    if (item.custody.kind === 'expedition' && item.custody.expeditionId
+      && expeditionVisitors.get(item.custody.expeditionId) !== item.custody.visitorId) {
+      throw new Error(`Expedition visitor mismatch for ${item.itemId}`)
+    }
     const reference = item.custody.kind === 'expedition' ? item.custody.expeditionId
       : item.custody.kind === 'settlement' ? item.custody.settlementId
         : item.custody.kind === 'recovery' ? item.custody.recoveryId
@@ -189,7 +194,7 @@ function assertUnique(values: Array<Record<string, unknown>>, key: string): void
   if (new Set(ids).size !== ids.length) throw new Error(`Duplicate public ${key}`)
 }
 
-function mapItem(item: Item, placement: PersistedItemPlacement): Record<string, unknown> {
+function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3): Record<string, unknown> {
   const base = {
     itemId: item.id,
     name: { key: `item.${item.baseName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, fallback: item.displayName },
@@ -199,7 +204,7 @@ function mapItem(item: Item, placement: PersistedItemPlacement): Record<string, 
     owner: placement.ownerKind === 'visitor'
       ? { kind: 'visitor', visitorId: placement.ownerId }
       : { kind: 'caravan' },
-    custody: mapCustody(placement),
+    custody: mapCustody(placement, game),
     actions: []
   }
   if (!item.identified) return { ...base, identification: 'unidentified' }
@@ -215,11 +220,14 @@ function mapItem(item: Item, placement: PersistedItemPlacement): Record<string, 
   }
 }
 
-function mapCustody(placement: PersistedItemPlacement): Record<string, unknown> {
+function mapCustody(placement: PersistedItemPlacement, game: PersistedGameV3): Record<string, unknown> {
   switch (placement.custodyKind) {
     case 'visitor': return { kind: 'visitor', visitorId: placement.custodyId }
     case 'service': return { kind: 'service', jobId: placement.custodyId }
-    case 'expedition': return { kind: 'expedition', expeditionId: placement.custodyId, visitorId: placement.ownerId ?? placement.custodyId }
+    case 'expedition': {
+      const target = game.expeditionsById[placement.custodyId ?? '']?.projection
+      return { kind: 'expedition', expeditionId: placement.custodyId, visitorId: target?.kind === 'expedition' ? target.visitorId : '' }
+    }
     case 'settlement': return { kind: 'settlement', settlementId: placement.custodyId }
     case 'recovery': return { kind: 'recovery', recoveryId: placement.custodyId }
     default: return { kind: 'stash' }

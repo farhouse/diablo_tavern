@@ -150,11 +150,12 @@ describe('atomic persisted-game mutation', () => {
     visitor.commission = {
       ...visitor.commissionOptions[0]!, id: 'capacity-commission', status: 'ready',
       startedAt: '2026-09-13T00:00:00.000Z', finishesAt: '2026-09-13T00:01:00.000Z',
-      outcomeRoll: 0.1, outcome: 'complete', rewardGold: 0
+      outcomeRoll: 0.1, outcome: 'complete', rewardGold: 0,
+      rewardItem: { ...structuredClone(save.stash[0]!), id: 'pending-capacity-reward' }
     }
     const initial = buildPersistedFromPublic(save)
     const templateId = initial.stash[0]!
-    for (let index = initial.stash.length; index < initial.stashLimit; index += 1) {
+    for (let index = initial.stash.length; index < initial.stashLimit - 1; index += 1) {
       const itemId = `capacity-item-${index}`
       initial.itemsById[itemId] = { ...structuredClone(initial.itemsById[templateId]!), id: itemId }
       initial.itemPlacements[itemId] = { ownerKind: 'caravan', custodyKind: 'stash' }
@@ -171,6 +172,7 @@ describe('atomic persisted-game mutation', () => {
       claimVisitorCommission(draft, visitor.id, new Date('2026-09-13T00:02:00.000Z'), () => 0.5)
     })
     expect(result.stash).toHaveLength(initial.stashLimit - 1)
+    expect(result.stash).toContainEqual(expect.objectContaining({ id: 'pending-capacity-reward' }))
     expect(Object.keys((document as PersistedGameV3).itemsById)).toHaveLength(Object.keys(initial.itemsById).length)
   })
 

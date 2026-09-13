@@ -82,6 +82,14 @@ describe('PersistedGameV3 invariants', () => {
         : operation === 'service' ? { jobId: targetId }
           : { recoveryId: targetId }
     ))
+    if (operation === 'loan') {
+      const visitorId = persisted.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id
+      expect(view.items).toContainEqual(expect.objectContaining({
+        itemId,
+        custody: expect.objectContaining({ expeditionId: targetId, visitorId })
+      }))
+      expect(view.expeditions).toContainEqual(expect.objectContaining({ expeditionId: targetId, visitorId }))
+    }
   })
 
   it('counts an unclaimed commission reward as caravan property', () => {
