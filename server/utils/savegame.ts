@@ -239,6 +239,9 @@ export async function mutateSaveGameAtomic(
       }
       return existingReplay.response as unknown as SaveGame
     }
+    if (persisted.ledger.some((entry) => entry.requestId === requestId)) {
+      throw new IdempotencyConflictError('requestId was already committed and its replay record is unavailable')
+    }
 
     const businessOwner = persisted.businessKeys[businessKey]
     if (businessOwner !== undefined) {
@@ -369,10 +372,20 @@ export async function transitionItemAtomic(
     if (replay.commandHash !== commandHash) throw new IdempotencyConflictError('requestId was already used for a different command')
     return replay.response
   }
+  if (current.ledger.some((entry) => entry.requestId === requestId)) {
+    throw new IdempotencyConflictError('requestId was already committed and its replay record is unavailable')
+  }
   if (current.businessKeys[businessKey]) throw new BusinessKeyConflictError('item transition was already committed')
   if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 
   const { game: transitioned } = applyItemTransition(current, command)
+  pruneEmptyOrphanedLifecycle(
+    transitioned.expeditionsById,
+    transitioned.settlementsById,
+    transitioned.recoveriesById,
+    transitioned.visitRound,
+    transitioned.visitHistory
+  )
   const now = dependencies.now().toISOString()
   transitioned.revision = expectedRevision + 1
   transitioned.updatedAt = now
@@ -706,6 +719,11 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
         : commission.outcome === 'partial' ? commission.partialRewardGold : 0
       if (commission.rewardGold !== expectedGold) return false
       if (commission.outcome !== 'complete' && commission.rewardItemId !== undefined) return false
+      const expectedSettlementItems = commission.status === 'ready' && commission.rewardItemId
+        ? [commission.rewardItemId]
+        : []
+      if (settlement.itemIds.length !== expectedSettlementItems.length
+        || settlement.itemIds.some((itemId, index) => itemId !== expectedSettlementItems[index])) return false
       if (commission.status === 'ready') {
         if (visitor.state !== 'returned' || visitor.departedAt || commission.claimedAt !== undefined) return false
       } else if (visitor.state !== 'departed' || !visitor.departedAt || !commission.claimedAt
@@ -802,8 +820,10 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   let previousLedgerRevision = 0
   for (const entry of candidate.ledger as PersistedLedgerEntry[]) {
     if (!isPlainRecord(entry) || !hasOnlyKeys(entry, ['at', 'requestId', 'operationKey', 'commandHash', 'businessKey', 'revision', 'goldDelta', 'materialDeltas', 'itemChanges'])) return false
-    if (typeof entry.businessKey !== 'string' || ledgerKeys.has(entry.businessKey)) return false
-    if (!entry.requestId || ledgerRequestIds.has(entry.requestId) || !entry.operationKey || !/^[a-f0-9]{64}$/.test(entry.commandHash)) return false
+    if (typeof entry.businessKey !== 'string' || !entry.businessKey || ledgerKeys.has(entry.businessKey)) return false
+    if (typeof entry.requestId !== 'string' || !entry.requestId || ledgerRequestIds.has(entry.requestId)
+      || typeof entry.operationKey !== 'string' || !entry.operationKey
+      || typeof entry.commandHash !== 'string' || !/^[a-f0-9]{64}$/.test(entry.commandHash)) return false
     if (!Number.isFinite(Date.parse(entry.at)) || !Number.isInteger(entry.revision) || entry.revision < 1) return false
     if (entry.revision <= previousLedgerRevision || entry.revision > Number(candidate.revision)) return false
     if (!Number.isInteger(entry.goldDelta) || !isSignedResourceMap(entry.materialDeltas) || !Array.isArray(entry.itemChanges)
@@ -824,8 +844,9 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   for (const record of candidate.requestRecords as PersistedRequestRecord[]) {
     if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'revision', 'createdAt', 'updatedAt'])) return false
     if (typeof record.requestId !== 'string' || !record.requestId || requestIds.has(record.requestId)) return false
-    if (!record.operationKey || !record.businessKey || !isPublicSaveGame(record.response)) return false
-    if (!/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)
+    if (typeof record.operationKey !== 'string' || !record.operationKey
+      || typeof record.businessKey !== 'string' || !record.businessKey || !isPublicSaveGame(record.response)) return false
+    if (typeof record.commandHash !== 'string' || !/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)
       || record.revision < 1 || record.revision > Number(candidate.revision)
       || record.response.revision !== record.revision) return false
     if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
