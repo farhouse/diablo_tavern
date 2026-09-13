@@ -159,6 +159,33 @@ describe('PersistedGameV3 invariants', () => {
     expect(isPersistedCanonical(prematureSettlement)).toBe(false)
   })
 
+  it('requires settlement custody to equal the pending commission reward exactly', () => {
+    const noRewardSave = createSaveGame('settlement-without-reward')
+    const noRewardVisitor = noRewardSave.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    noRewardVisitor.state = 'returned'
+    noRewardVisitor.commission = {
+      ...noRewardVisitor.commissionOptions[0]!, id: 'no-reward', status: 'ready',
+      startedAt: noRewardSave.createdAt, finishesAt: noRewardSave.updatedAt, outcomeRoll: 0.5,
+      outcome: 'partial', rewardGold: noRewardVisitor.commissionOptions[0]!.partialRewardGold
+    }
+    const noReward = buildPersistedFromPublic(noRewardSave)
+    moveStashItemToSettlement(noReward, noReward.stash[0]!, 'no-reward')
+    expect(isPersistedCanonical(noReward)).toBe(false)
+
+    const pendingSave = createSaveGame('settlement-extra-reward')
+    const pendingVisitor = pendingSave.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    pendingVisitor.state = 'returned'
+    pendingVisitor.commission = {
+      ...pendingVisitor.commissionOptions[0]!, id: 'pending-reward', status: 'ready',
+      startedAt: pendingSave.createdAt, finishesAt: pendingSave.updatedAt, outcomeRoll: 0.5,
+      outcome: 'complete', rewardGold: pendingVisitor.commissionOptions[0]!.fullRewardGold,
+      rewardItem: { ...structuredClone(pendingSave.stash[0]!), id: 'reward-item' }
+    }
+    const pending = buildPersistedFromPublic(pendingSave)
+    moveStashItemToSettlement(pending, pending.stash[0]!, 'pending-reward')
+    expect(isPersistedCanonical(pending)).toBe(false)
+  })
+
   it('rejects commission state, reward, and timestamp contradictions', () => {
     const persisted = buildPersistedFromPublic(createSaveGame('commission-state'))
     addTarget(persisted, 'loan', 'active-expedition')
@@ -430,6 +457,12 @@ function addTarget(game: PersistedGameV3, operation: 'loan' | 'service' | 'recov
       id: targetId, itemIds: [], projection: { kind: 'recovery', sourceExpeditionId, resolvedAt: at }
     }
   }
+}
+
+function moveStashItemToSettlement(game: PersistedGameV3, itemId: string, settlementId: string): void {
+  game.stash = game.stash.filter((candidate) => candidate !== itemId)
+  game.itemPlacements[itemId] = { ownerKind: 'caravan', custodyKind: 'settlement', custodyId: settlementId }
+  game.settlementsById[settlementId]!.itemIds.push(itemId)
 }
 
 function commissionFor(visitor: PersistedGameV3['visitRound']['slots'][number]['visitor'], id: string, at: string) {

@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -137,6 +137,37 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const reloaded = await getPersistedGameV3(userIds[12]!)
     expect(reloaded.itemPlacements[itemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: 'mongo-service' })
     expect(reloaded.serviceJobsById['mongo-service']?.itemIds).toEqual([itemId])
+  })
+
+  it('returns the final retained loan after its visitor ages out and prunes the lifecycle', async () => {
+    const { getPersistedGameV3, mutateSaveGameAtomic, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { applyItemTransition } = await import('../server/domain/item-transitions')
+    const initial = await getPersistedGameV3(userIds[13]!)
+    addExpedition(initial, 'retained-expedition')
+    const visitor = initial.visitRound.slots.find((slot) => slot.visitor?.commission)?.visitor!
+    const itemId = initial.stash[0]!
+    const loaned = applyItemTransition(initial, { operation: 'loan', itemId, targetId: 'retained-expedition' }).game
+    loaned.visitHistory = [structuredClone(loaned.visitRound)]
+    loaned.visitRound = {
+      id: 'empty-current', number: 99,
+      slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: loaned.updatedAt
+    }
+    for (let index = 0; index < 20; index += 1) {
+      loaned.visitHistory.unshift({
+        id: `empty-history-${index}`, number: 98 - index,
+        slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: loaned.updatedAt
+      })
+    }
+    await collection.replaceOne({ userId: userIds[13] }, loaned)
+    await mutateSaveGameAtomic(userIds[13]!, 'prune-visitor', 'history:prune', 0, {}, () => {})
+    const retained = await getPersistedGameV3(userIds[13]!)
+    expect(retained.visitHistory.flatMap((round) => round.slots).some((slot) => slot.visitor?.id === visitor.id)).toBe(false)
+    expect(retained.expeditionsById['retained-expedition']?.itemIds).toEqual([itemId])
+
+    await transitionItemAtomic(userIds[13]!, 'return-retained', 1, { operation: 'return', itemId, targetId: 'retained-expedition' })
+    const returned = await getPersistedGameV3(userIds[13]!)
+    expect(returned.stash).toContain(itemId)
+    expect(returned.expeditionsById['retained-expedition']).toBeUndefined()
   })
 
   it('recovers the committed response after the repository driver throws', async () => {

@@ -108,6 +108,29 @@ describe('atomic persisted-game mutation', () => {
       .rejects.toBeInstanceOf(BusinessKeyConflictError)
   })
 
+  it('rejects reuse of an expired requestId before executing another mutation', async () => {
+    const { IdempotencyConflictError, mutateSaveGameAtomic, transitionItemAtomic } = await import('../server/utils/savegame')
+    const persisted = document as PersistedGameV3
+    persisted.revision = 1
+    persisted.businessKeys['historic:key'] = 'historic-request'
+    persisted.ledger.push({
+      at: persisted.updatedAt, requestId: 'historic-request', operationKey: 'historic-operation',
+      commandHash: 'a'.repeat(64), businessKey: 'historic:key', revision: 1,
+      goldDelta: 0, materialDeltas: {}, itemChanges: []
+    })
+    const mutate = vi.fn((save: SaveGame) => { save.gold += 1 })
+
+    await expect(mutateSaveGameAtomic('atomic-user', 'historic-request', 'new:key', 1, {}, mutate))
+      .rejects.toBeInstanceOf(IdempotencyConflictError)
+    expect(mutate).not.toHaveBeenCalled()
+
+    const itemId = persisted.stash[0]!
+    const visitorId = persisted.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
+    await expect(transitionItemAtomic('atomic-user', 'historic-request', 1, { operation: 'sell', itemId, targetId: visitorId }))
+      .rejects.toBeInstanceOf(IdempotencyConflictError)
+    expect(document).toEqual(persisted)
+  })
+
   it('records material deltas and permits a later transition instance for the same item', async () => {
     const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
     const initial = await getPersistedGameV3('atomic-user')
