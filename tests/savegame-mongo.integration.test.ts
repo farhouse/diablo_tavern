@@ -75,7 +75,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const custody = await getPersistedGameV3(userIds[7]!)
     const itemId = custody.stash[0]!
     addExpedition(custody, 'expedition-a')
-    addExpedition(custody, 'expedition-b')
+    addExpedition(custody, 'expedition-b', 1)
     await collection.replaceOne({ userId: userIds[7] }, custody)
     await transitionItemAtomic(userIds[7]!, 'mongo-loan-a', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
     const projected = mapPersistedGameToGameView(await getPersistedGameV3(userIds[7]!), new Date('2026-09-13T12:00:00.000Z'))
@@ -214,8 +214,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
   })
 })
 
-function addExpedition(game: PersistedGameV3, id: string): void {
-  const visitor = game.visitRound.slots.find((slot) => slot.visitor)?.visitor
+function addExpedition(game: PersistedGameV3, id: string, visitorIndex = 0): void {
+  const visitor = game.visitRound.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])[visitorIndex]
   const visitorId = visitor?.id ?? 'missing'
   if (visitor && !visitor.commission) visitor.commission = {
     ...visitor.commissionOptions[0]!, id: `contract-${id}`, status: 'active',

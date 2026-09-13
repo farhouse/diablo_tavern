@@ -221,6 +221,8 @@ describe('PersistedGameV3 invariants', () => {
       startedAt: save.createdAt, finishesAt: save.updatedAt, outcomeRoll: 0.5,
       outcome: 'complete', rewardGold: 10, rewardItem: structuredClone(save.stash[0]!)
     }
+    visitor.state = 'returned'
+    visitor.commission.rewardGold = visitor.commission.fullRewardGold
     visitor.commission.rewardItem!.id = 'pending-reward-item'
     const persisted = buildPersistedFromPublic(save)
     expect(persisted.itemPlacements['pending-reward-item']).toMatchObject({ ownerKind: 'caravan' })
@@ -236,7 +238,7 @@ describe('PersistedGameV3 invariants', () => {
     visitor.commission = {
       ...visitor.commissionOptions[0]!, id: `commission-${outcome}`, status: 'ready',
       startedAt: save.createdAt, finishesAt: save.updatedAt, outcomeRoll: 0.5,
-      outcome, rewardGold: outcome === 'partial' ? 1 : 0
+      outcome, rewardGold: outcome === 'partial' ? visitor.commissionOptions[0]!.partialRewardGold : 0
     }
     const persisted = buildPersistedFromPublic(save)
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
@@ -271,6 +273,7 @@ describe('PersistedGameV3 invariants', () => {
     const persisted = buildPersistedFromPublic(createSaveGame('history-pruning'))
     const visitor = persisted.visitRound.slots.find((slot) => slot.visitor)?.visitor!
     visitor.commission = commissionFor(visitor, 'old-contract', persisted.updatedAt)
+    visitor.state = 'commissioned'
     persisted.expeditionsById['old-contract'] = {
       id: 'old-contract', itemIds: [],
       projection: { kind: 'expedition', visitorId: visitor.id, contractId: 'old-contract', startsAt: persisted.updatedAt }
@@ -362,7 +365,9 @@ describe('PersistedGameV3 invariants', () => {
         const beforeMaterials = state.materials.scrap ?? 0
         try {
           const candidate = structuredClone(state)
-          const targetId = `target-${step}`
+          const targetId = operation === 'loan'
+            ? Object.keys(candidate.expeditionsById)[0] ?? `target-${step}`
+            : `target-${step}`
           if (operation === 'loan' || operation === 'service' || operation === 'recover') addTarget(candidate, operation, targetId)
           const result = applyItemTransition(candidate, { operation, itemId, targetId })
           state = result.game
@@ -399,6 +404,8 @@ function addTarget(game: PersistedGameV3, operation: 'loan' | 'service' | 'recov
   if (operation === 'loan') {
     const visitor = game.visitRound.slots.find((slot) => slot.visitor)?.visitor
     const visitorId = visitor?.id ?? 'missing'
+    if (visitor?.commission && Object.values(game.expeditionsById).some((container) =>
+      container.projection?.kind === 'expedition' && container.projection.visitorId === visitor.id)) return
     if (visitor && !visitor.commission) visitor.commission = commissionFor(visitor, `contract-${targetId}`, at)
     if (visitor?.commission) visitor.state = 'commissioned'
     const contractId = visitor?.commission?.id ?? `contract-${targetId}`
@@ -410,13 +417,13 @@ function addTarget(game: PersistedGameV3, operation: 'loan' | 'service' | 'recov
       id: targetId, itemIds: [], projection: { kind: 'service', service: 'blacksmith', queuedAt: at, startsAt: at }
     }
   } else {
-    const sourceExpeditionId = `source-${targetId}`
+    const sourceExpeditionId = Object.keys(game.expeditionsById)[0] ?? `source-${targetId}`
     const visitor = game.visitRound.slots.find((slot) => slot.visitor)?.visitor
     const visitorId = visitor?.id ?? 'missing'
     if (visitor && !visitor.commission) visitor.commission = commissionFor(visitor, `contract-${targetId}`, at)
     if (visitor?.commission) visitor.state = 'commissioned'
     const contractId = visitor?.commission?.id ?? `contract-${targetId}`
-    game.expeditionsById[sourceExpeditionId] = {
+    if (!game.expeditionsById[sourceExpeditionId]) game.expeditionsById[sourceExpeditionId] = {
       id: sourceExpeditionId, itemIds: [], projection: { kind: 'expedition', visitorId, contractId, startsAt: at }
     }
     game.recoveriesById[targetId] = {

@@ -112,15 +112,21 @@ describe('atomic persisted-game mutation', () => {
     const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
     const initial = await getPersistedGameV3('atomic-user')
     const itemId = initial.stash[0]!
-    const visitor = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    const [visitor, secondVisitor] = initial.visitRound.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])
+    if (!visitor || !secondVisitor) throw new Error('Expected two visitors')
     const visitorId = visitor.id
     visitor.commission = {
       ...visitor.commissionOptions[0]!, id: 'contract-a', status: 'active',
       startedAt: initial.updatedAt, finishesAt: initial.updatedAt, outcomeRoll: 0.5
     }
     visitor.state = 'commissioned'
+    secondVisitor.commission = {
+      ...secondVisitor.commissionOptions[0]!, id: 'contract-b', status: 'active',
+      startedAt: initial.updatedAt, finishesAt: initial.updatedAt, outcomeRoll: 0.5
+    }
+    secondVisitor.state = 'commissioned'
     initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: visitor.commission.id, startsAt: initial.updatedAt } }
-    initial.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: visitor.commission.id, startsAt: initial.updatedAt } }
+    initial.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [], projection: { kind: 'expedition', visitorId: secondVisitor.id, contractId: secondVisitor.commission.id, startsAt: initial.updatedAt } }
     document = initial
 
     await transitionItemAtomic('atomic-user', 'loan-a', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
@@ -162,7 +168,7 @@ describe('atomic persisted-game mutation', () => {
     visitor.commission = {
       ...visitor.commissionOptions[0]!, id: 'capacity-commission', status: 'ready',
       startedAt: '2026-09-13T00:00:00.000Z', finishesAt: '2026-09-13T00:01:00.000Z',
-      outcomeRoll: 0.1, outcome: 'complete', rewardGold: 0,
+      outcomeRoll: 0.1, outcome: 'complete', rewardGold: visitor.commissionOptions[0]!.fullRewardGold,
       rewardItem: { ...structuredClone(save.stash[0]!), id: 'pending-capacity-reward' }
     }
     const initial = buildPersistedFromPublic(save)
@@ -174,11 +180,7 @@ describe('atomic persisted-game mutation', () => {
       initial.stash.push(itemId)
     }
     const loanedId = initial.stash[0]!
-    initial.expeditionsById['capacity-expedition'] = {
-      id: 'capacity-expedition', itemIds: [],
-      projection: { kind: 'expedition', visitorId: visitor.id, contractId: visitor.commission.id, startsAt: initial.updatedAt }
-    }
-    document = applyItemTransition(initial, { operation: 'loan', itemId: loanedId, targetId: 'capacity-expedition' }).game
+    document = applyItemTransition(initial, { operation: 'loan', itemId: loanedId, targetId: visitor.commission.id }).game
 
     const result = await mutateSaveGameAtomic('atomic-user', 'capacity-claim', 'claim:capacity', 0, {}, (draft) => {
       claimVisitorCommission(draft, visitor.id, new Date('2026-09-13T00:02:00.000Z'))

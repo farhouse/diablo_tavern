@@ -661,32 +661,62 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   if (visitorIds.size !== visitors.length) return false
   const visitorContracts = new Map(visitors.map((visitor) => [visitor.id, visitor.commission?.id]))
   if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
-  for (const container of Object.values(candidate.expeditionsById as Record<string, PersistedCustodyContainer>)) {
-    if (container.projection?.kind !== 'expedition' || !visitorIds.has(container.projection.visitorId)) return false
+  const expeditions = Object.values(candidate.expeditionsById as Record<string, PersistedCustodyContainer>)
+  const settlements = Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)
+  const recoveries = Object.values(candidate.recoveriesById as Record<string, PersistedCustodyContainer>)
+  for (const container of expeditions) {
+    if (container.projection?.kind !== 'expedition') return false
+    if (!visitorIds.has(container.projection.visitorId)) {
+      if (!hasRetainedExpeditionDependency(container, settlements, recoveries)) return false
+      continue
+    }
     if (visitorContracts.get(container.projection.visitorId) !== container.projection.contractId) return false
   }
   for (const visitor of visitors) {
-    if (!visitor.commission) continue
-    const expeditions = Object.values(candidate.expeditionsById as Record<string, PersistedCustodyContainer>)
+    if (!visitor.commission) {
+      if (visitor.state === 'commissioned' || visitor.state === 'returned') return false
+      if (visitor.state === 'departed' ? !visitor.departedAt : Boolean(visitor.departedAt)) return false
+      continue
+    }
+    const commission = visitor.commission
+    const matchingExpeditions = expeditions
       .filter((container) => container.projection?.kind === 'expedition'
         && container.projection.visitorId === visitor.id
-        && container.projection.contractId === visitor.commission!.id)
-    if (expeditions.length === 0) return false
-    if (visitor.commission.status !== 'active' && visitor.commission.outcome) {
-      const settlement = (candidate.settlementsById as Record<string, PersistedCustodyContainer>)[visitor.commission.id]
-      const expectedOutcome = visitor.commission.outcome === 'failed'
+        && container.projection.contractId === commission.id)
+    if (matchingExpeditions.length !== 1) return false
+    const expedition = matchingExpeditions[0]!
+    if (expedition.projection?.kind !== 'expedition' || expedition.projection.startsAt !== commission.startedAt) return false
+    const matchingSettlements = settlements.filter((container) => container.projection?.kind === 'settlement'
+      && container.projection.expeditionId === expedition.id)
+    if (commission.status === 'active') {
+      if (visitor.state !== 'commissioned' || visitor.departedAt || commission.outcome !== undefined
+        || commission.rewardGold !== undefined || commission.rewardItemId !== undefined
+        || commission.claimedAt !== undefined || matchingSettlements.length !== 0) return false
+    } else {
+      if (!commission.outcome || matchingSettlements.length !== 1) return false
+      const settlement = matchingSettlements[0]!
+      const expectedOutcome = commission.outcome === 'failed'
         ? 'death'
-        : visitor.commission.outcome === 'partial' ? 'retreated' : 'returned'
+        : commission.outcome === 'partial' ? 'retreated' : 'returned'
       if (settlement?.projection?.kind !== 'settlement'
-        || settlement.projection.expeditionId !== visitor.commission.id
         || settlement.projection.outcome !== expectedOutcome
-        || settlement.projection.appliedAt !== visitor.commission.finishesAt) return false
+        || settlement.projection.appliedAt !== commission.finishesAt) return false
+      const expectedGold = commission.outcome === 'complete'
+        ? commission.fullRewardGold
+        : commission.outcome === 'partial' ? commission.partialRewardGold : 0
+      if (commission.rewardGold !== expectedGold) return false
+      if (commission.outcome !== 'complete' && commission.rewardItemId !== undefined) return false
+      if (commission.status === 'ready') {
+        if (visitor.state !== 'returned' || visitor.departedAt || commission.claimedAt !== undefined) return false
+      } else if (visitor.state !== 'departed' || !visitor.departedAt || !commission.claimedAt
+        || visitor.departedAt !== commission.claimedAt
+        || Date.parse(commission.claimedAt) < Date.parse(commission.finishesAt)) return false
     }
   }
-  for (const container of Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)) {
+  for (const container of settlements) {
     if (container.projection?.kind !== 'settlement' || !(container.projection.expeditionId in (candidate.expeditionsById as object))) return false
   }
-  for (const container of Object.values(candidate.recoveriesById as Record<string, PersistedCustodyContainer>)) {
+  for (const container of recoveries) {
     if (container.projection?.kind !== 'recovery' || !(container.projection.sourceExpeditionId in (candidate.expeditionsById as object))) return false
   }
   if (Object.keys(itemsById).length !== Object.keys(itemPlacements).length) return false
@@ -766,30 +796,21 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     if (placement?.custodyKind !== 'service' || placement.custodyId !== jobId) return false
   }
 
-  const requestIds = new Set<string>()
-  for (const record of candidate.requestRecords as PersistedRequestRecord[]) {
-    if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'revision', 'createdAt', 'updatedAt'])) return false
-    if (typeof record.requestId !== 'string' || requestIds.has(record.requestId)) return false
-    if (!record.operationKey || !record.businessKey || !isPublicSaveGame(record.response)) return false
-    if (!/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)
-      || record.revision < 1 || record.revision > Number(candidate.revision)
-      || record.response.revision !== record.revision) return false
-    if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
-    if (containsInternalFields(record.response)) return false
-    requestIds.add(record.requestId)
-  }
-
   const ledgerKeys = new Set<string>()
+  const ledgerRequestIds = new Set<string>()
+  const ledgerByRequestId = new Map<string, PersistedLedgerEntry>()
   let previousLedgerRevision = 0
   for (const entry of candidate.ledger as PersistedLedgerEntry[]) {
     if (!isPlainRecord(entry) || !hasOnlyKeys(entry, ['at', 'requestId', 'operationKey', 'commandHash', 'businessKey', 'revision', 'goldDelta', 'materialDeltas', 'itemChanges'])) return false
     if (typeof entry.businessKey !== 'string' || ledgerKeys.has(entry.businessKey)) return false
-    if (!entry.requestId || !entry.operationKey || !/^[a-f0-9]{64}$/.test(entry.commandHash)) return false
+    if (!entry.requestId || ledgerRequestIds.has(entry.requestId) || !entry.operationKey || !/^[a-f0-9]{64}$/.test(entry.commandHash)) return false
     if (!Number.isFinite(Date.parse(entry.at)) || !Number.isInteger(entry.revision) || entry.revision < 1) return false
     if (entry.revision <= previousLedgerRevision || entry.revision > Number(candidate.revision)) return false
     if (!Number.isInteger(entry.goldDelta) || !isSignedResourceMap(entry.materialDeltas) || !Array.isArray(entry.itemChanges)
       || !entry.itemChanges.every(isItemChange)) return false
     ledgerKeys.add(entry.businessKey)
+    ledgerRequestIds.add(entry.requestId)
+    ledgerByRequestId.set(entry.requestId, entry)
     previousLedgerRevision = entry.revision
   }
   for (const [businessKey, requestId] of Object.entries(candidate.businessKeys as Record<string, string>)) {
@@ -799,7 +820,37 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   for (const entry of candidate.ledger as PersistedLedgerEntry[]) {
     if ((candidate.businessKeys as Record<string, string>)[entry.businessKey] !== entry.requestId) return false
   }
+  const requestIds = new Set<string>()
+  for (const record of candidate.requestRecords as PersistedRequestRecord[]) {
+    if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'revision', 'createdAt', 'updatedAt'])) return false
+    if (typeof record.requestId !== 'string' || !record.requestId || requestIds.has(record.requestId)) return false
+    if (!record.operationKey || !record.businessKey || !isPublicSaveGame(record.response)) return false
+    if (!/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)
+      || record.revision < 1 || record.revision > Number(candidate.revision)
+      || record.response.revision !== record.revision) return false
+    if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
+    if (containsInternalFields(record.response)) return false
+    const ledgerEntry = ledgerByRequestId.get(record.requestId)
+    if (!ledgerEntry || ledgerEntry.operationKey !== record.operationKey
+      || ledgerEntry.businessKey !== record.businessKey
+      || ledgerEntry.commandHash !== record.commandHash
+      || ledgerEntry.revision !== record.revision
+      || (candidate.businessKeys as Record<string, string>)[record.businessKey] !== record.requestId) return false
+    requestIds.add(record.requestId)
+  }
   return true
+}
+
+function hasRetainedExpeditionDependency(
+  expedition: PersistedCustodyContainer,
+  settlements: PersistedCustodyContainer[],
+  recoveries: PersistedCustodyContainer[]
+): boolean {
+  if (expedition.itemIds.length > 0) return true
+  return settlements.some((container) => container.projection?.kind === 'settlement'
+    && container.projection.expeditionId === expedition.id && container.itemIds.length > 0)
+    || recoveries.some((container) => container.projection?.kind === 'recovery'
+      && container.projection.sourceExpeditionId === expedition.id && container.itemIds.length > 0)
 }
 
 function isResourceMap(value: unknown): value is Record<string, number> {
@@ -919,7 +970,8 @@ function isPersistedCommission(value: unknown): value is PersistedVisitorCommiss
     'optionId', 'title', 'regionId', 'durationMs', 'successChance', 'fullRewardGold', 'partialRewardGold', 'riskLevel', 'failureConsequence'
   ].includes(key))))) return false
   if (typeof value.id !== 'string' || !value.id || !['active', 'ready', 'claimed'].includes(String(value.status))) return false
-  if (!Number.isFinite(Date.parse(String(value.startedAt))) || !Number.isFinite(Date.parse(String(value.finishesAt))) || !Number.isFinite(value.outcomeRoll)) return false
+  if (!Number.isFinite(Date.parse(String(value.startedAt))) || !Number.isFinite(Date.parse(String(value.finishesAt)))
+    || Date.parse(String(value.startedAt)) > Date.parse(String(value.finishesAt)) || !Number.isFinite(value.outcomeRoll)) return false
   if (value.outcome !== undefined && !['complete', 'partial', 'failed'].includes(String(value.outcome))) return false
   if (value.rewardGold !== undefined && (!Number.isInteger(value.rewardGold) || Number(value.rewardGold) < 0)) return false
   if (value.rewardItemId !== undefined && (typeof value.rewardItemId !== 'string' || !value.rewardItemId)) return false
