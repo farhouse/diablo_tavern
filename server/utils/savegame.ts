@@ -19,7 +19,7 @@ export interface PersistenceDependencies {
 const defaultDependencies: PersistenceDependencies = {
   now: () => new Date(),
   uuid: randomUUID,
-  random: Math.random
+  random: () => Math.random()
 }
 
 export interface PersistedItemPlacement {
@@ -340,7 +340,7 @@ export async function transitionItemAtomic(
   expectedRevision: number,
   command: ItemTransitionCommand,
   dependencies = defaultDependencies
-): Promise<PersistedGameV3> {
+): Promise<PublicSaveGame> {
   const saves = await saveGamesCollection()
   const current = await getPersistedGameV3(userId, dependencies)
   const operationKey = JSON.stringify(['item-transition', command.operation, command.itemId])
@@ -349,7 +349,7 @@ export async function transitionItemAtomic(
   const replay = current.requestRecords.find((record) => record.requestId === requestId)
   if (replay) {
     if (replay.commandHash !== commandHash) throw new IdempotencyConflictError('requestId was already used for a different command')
-    return current
+    return replay.response
   }
   if (current.businessKeys[businessKey]) throw new BusinessKeyConflictError('item transition was already committed')
   if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
@@ -376,10 +376,10 @@ export async function transitionItemAtomic(
     { userId, revision: expectedRevision } as Filter<DbSaveGame>,
     transitioned as unknown as DbSaveGame
   )
-  if (result.modifiedCount === 1) return transitioned
+  if (result.modifiedCount === 1) return response
   const winner = await getPersistedGameV3(userId, dependencies)
   const winnerReplay = winner.requestRecords.find((record) => record.requestId === requestId)
-  if (winnerReplay?.commandHash === commandHash) return winner
+  if (winnerReplay?.commandHash === commandHash) return winnerReplay.response
   throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 }
 

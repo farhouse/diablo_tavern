@@ -7,7 +7,7 @@ const suite = mongoUri ? describe : describe.skip
 let client: MongoClient
 let collection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => collection }))
 
@@ -51,6 +51,19 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
       .rejects.toBeInstanceOf(RevisionConflictError)
     await expect(mutateSaveGameAtomic(userIds[2]!, 'business-b', 'business:one', 1, {}, () => {}))
       .rejects.toBeInstanceOf(BusinessKeyConflictError)
+  })
+
+  it('replays the exact item-transition response after later commits', async () => {
+    const { getPersistedGameV3, mutateSaveGameAtomic, transitionItemAtomic } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3(userIds[6]!)
+    const itemId = initial.stash[0]!
+    const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
+    const command = { operation: 'sell' as const, itemId, targetId: visitorId }
+    const first = await transitionItemAtomic(userIds[6]!, 'transition-replay', 0, command)
+    await mutateSaveGameAtomic(userIds[6]!, 'later-command', 'later:credit', 1, { amount: 1 }, (save) => { save.gold += 1 })
+    const replay = await transitionItemAtomic(userIds[6]!, 'transition-replay', 0, command)
+    expect(replay).toEqual(first)
+    expect(replay.revision).toBe(1)
   })
 
   it.each([
