@@ -44,6 +44,7 @@ export function applyItemTransition(
     if (!game.stash.includes(command.itemId)) game.stash.push(command.itemId)
   } else {
     requireAvailableInStash(from)
+    requireAuthoritativeTarget(current, command)
     game.stash = game.stash.filter((itemId) => itemId !== command.itemId)
     switch (command.operation) {
       case 'sell':
@@ -88,8 +89,9 @@ function hasVisitor(game: PersistedGameV3, visitorId: string): boolean {
 function removeFromCustodyContainers(game: PersistedGameV3, itemId: string): void {
   for (const containers of [game.expeditionsById, game.recoveriesById, game.settlementsById, game.serviceJobsById]) {
     for (const [id, container] of Object.entries(containers)) {
+      const containedItem = container.itemIds.includes(itemId)
       container.itemIds = container.itemIds.filter((candidate) => candidate !== itemId)
-      if (container.itemIds.length === 0) delete containers[id]
+      if (containedItem && container.itemIds.length === 0) delete containers[id]
     }
   }
 }
@@ -105,7 +107,20 @@ function addToCustodyContainer(game: PersistedGameV3, itemId: string, placement:
   const containers = maps[placement.custodyKind as keyof typeof maps]
   const id = placement.custodyId!
   const existing = containers[id]
-  containers[id] = { id, itemIds: [...(existing?.itemIds ?? []), itemId] }
+  if (!existing) throw transitionError(`Authoritative ${placement.custodyKind} target does not exist`)
+  existing.itemIds.push(itemId)
+}
+
+function requireAuthoritativeTarget(game: PersistedGameV3, command: ItemTransitionCommand): void {
+  const maps = {
+    loan: game.expeditionsById,
+    service: game.serviceJobsById,
+    recover: game.recoveriesById
+  }
+  const containers = maps[command.operation as keyof typeof maps]
+  if (containers && !containers[command.targetId]) {
+    throw transitionError(`Authoritative ${command.operation} target does not exist`)
+  }
 }
 
 function requireAvailableInStash(placement: PersistedItemPlacement): void {

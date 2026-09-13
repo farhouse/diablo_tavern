@@ -78,7 +78,12 @@ describe('PersistedGameV3 invariants', () => {
         const beforeGold = state.gold
         const beforeMaterials = state.materials.scrap ?? 0
         try {
-          const result = applyItemTransition(state, { operation, itemId, targetId: `target-${step}` })
+          const candidate = structuredClone(state)
+          const targetId = `target-${step}`
+          if (operation === 'loan') candidate.expeditionsById[targetId] = { id: targetId, itemIds: [] }
+          if (operation === 'service') candidate.serviceJobsById[targetId] = { id: targetId, itemIds: [] }
+          if (operation === 'recover') candidate.recoveriesById[targetId] = { id: targetId, itemIds: [] }
+          const result = applyItemTransition(candidate, { operation, itemId, targetId })
           state = result.game
           expect(state.gold - beforeGold).toBe(result.effect.goldDelta)
           expect((state.materials.scrap ?? 0) - beforeMaterials).toBe(result.effect.materialDeltas.scrap ?? 0)
@@ -101,6 +106,7 @@ describe('PersistedGameV3 invariants', () => {
     const itemId = initial.stash[0]!
     const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
     const target = (operation: typeof first | typeof second, fallback: string) => operation === 'sell' ? visitorId : fallback
+    if (first === 'service') initial.serviceJobsById.winner = { id: 'winner', itemIds: [] }
     const winner = applyItemTransition(initial, { operation: first, itemId, targetId: target(first, 'winner') }).game
     expect(() => applyItemTransition(winner, { operation: second, itemId, targetId: target(second, 'loser') }))
       .toThrow(expect.objectContaining({ name: 'ItemTransitionError' }))

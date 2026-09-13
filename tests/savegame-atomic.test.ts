@@ -108,6 +108,28 @@ describe('atomic persisted-game mutation', () => {
       .rejects.toBeInstanceOf(BusinessKeyConflictError)
   })
 
+  it('removes completed appraiser custody before persisting', async () => {
+    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { completeAppraisalQueue } = await import('../utils/game-logic')
+    await mutateSaveGameAtomic('atomic-user', 'queue-job', 'queue:job-1', 0, {}, (save) => {
+      const item = save.stash[0]!
+      item.identified = false
+      item.rarity = 'rare'
+      save.caravan.services.appraiserQueue.push({
+        id: 'job-1', itemId: item.id,
+        startedAt: '2026-09-13T00:00:00.000Z',
+        finishesAt: '2026-09-13T00:01:00.000Z'
+      })
+    })
+    await mutateSaveGameAtomic(
+      'atomic-user', 'complete-job', JSON.stringify(['appraise-complete']), 1, {},
+      (save, deps) => completeAppraisalQueue(save, deps.now(), deps.random),
+      { now: () => new Date('2026-09-13T00:02:00.000Z'), random: () => 0.25, uuid: () => 'uuid' }
+    )
+    expect((document as PersistedGameV3).caravan.services.appraiserQueue).toEqual([])
+    expect((document as PersistedGameV3).serviceJobsById).toEqual({})
+  })
+
   it('retains every permanent ledger key and at least 30 days of replay records', async () => {
     const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
     const persisted = document as PersistedGameV3

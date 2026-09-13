@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   const itemId = getRouterParam(event, 'itemId') || ''
   const body = await readMutation(event)
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('identify', itemId), body.expectedRevision, body, (save) => identifyItem(save, itemId))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('identify', itemId), body.expectedRevision, body, (save, deps) => identifyItem(save, itemId, deps.random, deps.now()))
   } catch (error) {
     mutationError(error, 'Cannot identify item')
   }

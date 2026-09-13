@@ -467,6 +467,7 @@ export function buildPersistedFromPublic(
   const recoveriesById = structuredClone(previous?.recoveriesById ?? {})
   const settlementsById = structuredClone(previous?.settlementsById ?? {})
   const serviceJobsById = structuredClone(previous?.serviceJobsById ?? {})
+  for (const job of previous?.caravan.services.appraiserQueue ?? []) delete serviceJobsById[job.id]
   const stash: string[] = []
 
   const seenIds = new Set<string>()

@@ -63,6 +63,12 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const itemId = initial.stash[0]!
     const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing-visitor'
     const targetFor = (operation: string) => operation === 'sell' ? visitorId : `${operation}-target`
+    for (const operation of [firstName, secondName]) {
+      const targetId = targetFor(operation)
+      if (operation === 'loan') initial.expeditionsById[targetId] = { id: targetId, itemIds: [] }
+      if (operation === 'service') initial.serviceJobsById[targetId] = { id: targetId, itemIds: [] }
+    }
+    await collection.replaceOne({ userId }, initial)
     const results = await Promise.allSettled([
       transitionItemAtomic(userId, `${firstName}-request`, 0, { operation: firstName as never, itemId, targetId: targetFor(firstName) }),
       transitionItemAtomic(userId, `${secondName}-request`, 0, { operation: secondName as never, itemId, targetId: targetFor(secondName) })

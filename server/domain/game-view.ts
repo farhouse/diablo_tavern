@@ -1,6 +1,7 @@
 import type { Item } from '~/types/game'
 import { validateGameView } from '~/server/utils/game-view-validator'
 import {
+  getSaveGame,
   getPersistedGameV3,
   type PersistedGameV3,
   type PersistedItemPlacement
@@ -24,6 +25,7 @@ export interface GameView {
 }
 
 export async function getGameView(userId: string, now = new Date()): Promise<GameView> {
+  await getSaveGame(userId, { now: () => now, random: Math.random, uuid: crypto.randomUUID })
   const persisted = await getPersistedGameV3(userId)
   return mapPersistedGameToGameView(persisted, now)
 }
@@ -31,7 +33,9 @@ export async function getGameView(userId: string, now = new Date()): Promise<Gam
 export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date()): GameView {
   const items = Object.entries(game.itemsById).flatMap(([itemId, item]) => {
     const placement = game.itemPlacements[itemId]
-    if (!placement || placement.custodyKind === 'tombstone') return []
+    // The legacy V1 appraiser is intentionally isolated: the normative V2
+    // contract only defines blacksmith/enchanter jobs.
+    if (!placement || placement.custodyKind === 'tombstone' || placement.custodyKind === 'service') return []
     return [mapItem(item, placement)]
   })
   const visitors: unknown[] = [game.visitRound, ...game.visitHistory].flatMap<unknown>((round) => round.slots.flatMap<unknown>((slot) => {
@@ -93,15 +97,48 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
 }
 
 export function validateSemanticGameView(view: GameView): void {
+  assertUnique(view.visitors as Array<Record<string, unknown>>, 'visitorId')
+  assertUnique(view.expeditions as Array<Record<string, unknown>>, 'expeditionId')
+  assertUnique(view.settlements as Array<Record<string, unknown>>, 'settlementId')
+  assertUnique(view.recoveries as Array<Record<string, unknown>>, 'recoveryId')
+  assertUnique(view.serviceJobs as Array<Record<string, unknown>>, 'jobId')
   const itemIds = new Set<string>()
-  for (const item of view.items as Array<{ itemId: string; owner: { kind: string }; custody: { kind: string } }>) {
+  const visitorIds = new Set((view.visitors as Array<{ visitorId: string }>).map((visitor) => visitor.visitorId))
+  const targetIds = {
+    expedition: new Set((view.expeditions as Array<{ expeditionId: string }>).map((entry) => entry.expeditionId)),
+    settlement: new Set((view.settlements as Array<{ settlementId: string }>).map((entry) => entry.settlementId)),
+    recovery: new Set((view.recoveries as Array<{ recoveryId: string }>).map((entry) => entry.recoveryId)),
+    service: new Set((view.serviceJobs as Array<{ jobId: string }>).map((entry) => entry.jobId))
+  }
+  for (const item of view.items as Array<{ itemId: string; owner: { kind: string; visitorId?: string }; custody: { kind: string; visitorId?: string; expeditionId?: string; settlementId?: string; recoveryId?: string; jobId?: string } }>) {
     if (itemIds.has(item.itemId)) throw new Error(`Duplicate public itemId ${item.itemId}`)
     if (item.owner.kind === 'caravan' && !['stash', 'service', 'expedition', 'settlement', 'recovery'].includes(item.custody.kind)) {
       throw new Error(`Invalid caravan custody for ${item.itemId}`)
     }
+    if (item.owner.kind === 'visitor' && (!item.owner.visitorId || !visitorIds.has(item.owner.visitorId))) {
+      throw new Error(`Unknown visitor owner for ${item.itemId}`)
+    }
+    if (item.custody.kind === 'visitor') {
+      const visitorId = item.custody.visitorId
+      if (!visitorId || visitorId !== item.owner.visitorId || !visitorIds.has(visitorId)) {
+        throw new Error(`Invalid visitor custody for ${item.itemId}`)
+      }
+    }
+    const reference = item.custody.kind === 'expedition' ? item.custody.expeditionId
+      : item.custody.kind === 'settlement' ? item.custody.settlementId
+        : item.custody.kind === 'recovery' ? item.custody.recoveryId
+          : item.custody.kind === 'service' ? item.custody.jobId : undefined
+    if (item.custody.kind in targetIds && (!reference || !targetIds[item.custody.kind as keyof typeof targetIds].has(reference))) {
+      throw new Error(`Dangling ${item.custody.kind} custody for ${item.itemId}`)
+    }
     itemIds.add(item.itemId)
   }
   if (view.capacity.used > view.capacity.limit) throw new Error('Owned item capacity exceeds its limit')
+}
+
+function assertUnique(values: Array<Record<string, unknown>>, key: string): void {
+  const ids = values.map((value) => value[key])
+  if (new Set(ids).size !== ids.length) throw new Error(`Duplicate public ${key}`)
 }
 
 function mapItem(item: Item, placement: PersistedItemPlacement): Record<string, unknown> {

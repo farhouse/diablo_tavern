@@ -186,7 +186,7 @@ export function assignVisitorCommission(
   random: RandomSource = Math.random,
   now = new Date()
 ): SaveGame {
-  refreshVisitRound(save, now)
+  refreshVisitRound(save, now, random)
   const visitor = findVisitor(save, visitorId)
   if (visitor.state !== 'traded') throw domainError('Visitor must complete a trade before accepting a commission')
   const activeCount = currentVisitors(save).filter((entry) => entry.commission && entry.commission.status !== 'claimed').length
@@ -207,7 +207,7 @@ export function assignVisitorCommission(
 }
 
 export function claimVisitorCommission(save: SaveGame, visitorId: string, now = new Date(), random: RandomSource = Math.random): SaveGame {
-  refreshVisitRound(save, now)
+  refreshVisitRound(save, now, random)
   const visitor = findVisitor(save, visitorId)
   const commission = visitor.commission
   if (!commission || visitor.state !== 'returned' || commission.status !== 'ready') throw domainError('Commission is not ready to claim')
@@ -228,7 +228,7 @@ export function claimVisitorCommission(save: SaveGame, visitorId: string, now = 
 }
 
 export function dismissVisitor(save: SaveGame, visitorId: string, now = new Date(), random: RandomSource = Math.random): SaveGame {
-  refreshVisitRound(save, now)
+  refreshVisitRound(save, now, random)
   const visitor = findVisitor(save, visitorId)
   if (visitor.state === 'commissioned' || visitor.state === 'returned') throw domainError('Commission must be claimed before the visitor can leave')
   if (visitor.state === 'departed') throw domainError('Visitor has already departed')

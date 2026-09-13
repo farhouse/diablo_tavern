@@ -87,8 +87,8 @@ export function getMaxUpgradeLevel(upgradeId: CaravanUpgradeId): number {
   return caravanUpgradeCosts[upgradeId].length - 1
 }
 
-export function upgradeCaravan(save: SaveGame, upgradeId: CaravanUpgradeId): SaveGame {
-  save = normalizeSaveGame(save)
+export function upgradeCaravan(save: SaveGame, upgradeId: CaravanUpgradeId, now = new Date()): SaveGame {
+  save = normalizeSaveGame(save, { refreshVisitors: false })
   const currentLevel = save.caravan.upgrades[upgradeId]
   if (currentLevel >= getMaxUpgradeLevel(upgradeId)) throw gameError('Upgrade is already at max level')
   const cost = getUpgradeCost(upgradeId, currentLevel)
@@ -99,11 +99,11 @@ export function upgradeCaravan(save: SaveGame, upgradeId: CaravanUpgradeId): Sav
   save.caravan.upgrades[upgradeId] = currentLevel + 1
   save.caravan.level = Math.max(save.caravan.level, currentLevel + 1)
   save.stashLimit = getStashCapacity(save)
-  return touchSave(save)
+  return touchSave(save, now)
 }
 
 export function startAppraisal(save: SaveGame, itemId: string, now = new Date(), uuid = randomId): SaveGame {
-  save = normalizeSaveGame(save)
+  save = normalizeSaveGame(save, { refreshVisitors: false })
   const queueSize = getAppraiserQueueSize(save)
   if (queueSize <= 0) throw gameError('Appraiser not available. Upgrade your caravan.')
   const item = save.stash.find((entry) => entry.id === itemId)
@@ -124,8 +124,8 @@ export function startAppraisal(save: SaveGame, itemId: string, now = new Date(),
   return touchSave(save, now)
 }
 
-export function completeAppraisalQueue(save: SaveGame, now = new Date()): SaveGame {
-  save = normalizeSaveGame(save)
+export function completeAppraisalQueue(save: SaveGame, now = new Date(), random = Math.random): SaveGame {
+  save = normalizeSaveGame(save, { refreshVisitors: false })
   const remaining: AppraisalJob[] = []
   for (const job of save.caravan.services.appraiserQueue) {
     if (new Date(job.finishesAt).getTime() > now.getTime()) {
@@ -133,14 +133,14 @@ export function completeAppraisalQueue(save: SaveGame, now = new Date()): SaveGa
       continue
     }
     const item = save.stash.find((entry) => entry.id === job.itemId)
-    if (item && !item.identified) identifyWithoutCost(item)
+    if (item && !item.identified) identifyWithoutCost(item, random)
   }
   save.caravan.services.appraiserQueue = remaining
   return touchSave(save, now)
 }
 
-export function identifyItem(save: SaveGame, itemId: string): SaveGame {
-  save = normalizeSaveGame(save)
+export function identifyItem(save: SaveGame, itemId: string, random = Math.random, now = new Date()): SaveGame {
+  save = normalizeSaveGame(save, { refreshVisitors: false })
   const item = save.stash.find((entry) => entry.id === itemId)
   if (!item) throw gameError('Item not found in stash')
   if (save.caravan.services.appraiserQueue.some((job) => job.itemId === itemId)) {
@@ -150,8 +150,8 @@ export function identifyItem(save: SaveGame, itemId: string): SaveGame {
   const cost = identifyCost(item.rarity)
   if (save.gold < cost) throw gameError('Not enough gold')
   save.gold -= cost
-  identifyWithoutCost(item)
-  return touchSave(save)
+  identifyWithoutCost(item, random)
+  return touchSave(save, now)
 }
 
 export function identifyCost(rarity: ItemRarity): number {
@@ -166,9 +166,9 @@ export function touchSave(save: SaveGame, now = new Date()): SaveGame {
   return save
 }
 
-function identifyWithoutCost(item: SaveGame['stash'][number]): void {
+function identifyWithoutCost(item: SaveGame['stash'][number], random = Math.random): void {
   item.identified = true
-  if (item.rarity === 'rare') item.displayName = `${pick(rarePrefixes)} ${pick(rareSuffixes)}`
+  if (item.rarity === 'rare') item.displayName = `${pick(rarePrefixes, random)} ${pick(rareSuffixes, random)}`
 }
 
 function requireUserId(value: unknown): string {
@@ -186,8 +186,8 @@ function clampedLevel(value: unknown): 0 | 1 | 2 | 3 {
   return Math.min(3, nonNegativeInteger(value)) as 0 | 1 | 2 | 3
 }
 
-function pick<T>(values: T[]): T {
-  const value = values[Math.floor(Math.random() * values.length)]
+function pick<T>(values: T[], random = Math.random): T {
+  const value = values[Math.floor(random() * values.length)]
   if (value === undefined) throw gameError('Cannot choose from an empty collection')
   return value
 }
