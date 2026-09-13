@@ -118,6 +118,8 @@ export interface SaveGame {
   revision: number
   createdAt: string
   updatedAt: string
+  /** Server-only context; stripped from every public response. */
+  _effectiveCapacityUsed?: number
 }
 
 export interface User {

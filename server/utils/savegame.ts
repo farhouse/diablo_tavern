@@ -55,6 +55,12 @@ export interface PersistedLedgerEntry {
 export interface PersistedCustodyContainer {
   id: string
   itemIds: string[]
+  projection?:
+    | { kind: 'expedition'; visitorId: string; contractId: string; startsAt: string }
+    | { kind: 'settlement'; expeditionId: string; outcome: 'returned' | 'retreated' | 'death'; appliedAt: string }
+    | { kind: 'recovery'; sourceExpeditionId: string; resolvedAt: string }
+    | { kind: 'service'; service: 'blacksmith' | 'enchanter'; queuedAt: string; startsAt: string }
+    | { kind: 'legacy_appraiser' }
 }
 
 type PersistedVisitorOffer = Omit<VisitorOffer, 'item'> & { itemId: string }
@@ -474,7 +480,8 @@ export function hydratePersistedGame(document: PersistedGameV3): SaveGame {
 
   return {
     ...base,
-    stash
+    stash,
+    _effectiveCapacityUsed: Object.values(document.itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length
   }
 }
 
@@ -499,7 +506,7 @@ export function buildPersistedFromPublic(
     if (seenIds.has(item.id)) throw new PersistedGameCorruptError('Item IDs in stash must be unique')
     seenIds.add(item.id)
     const serviceJob = normalized.caravan.services.appraiserQueue.find((job) => job.itemId === item.id)
-    if (serviceJob) serviceJobsById[serviceJob.id] = { id: serviceJob.id, itemIds: [item.id] }
+    if (serviceJob) serviceJobsById[serviceJob.id] = { id: serviceJob.id, itemIds: [item.id], projection: { kind: 'legacy_appraiser' } }
     registerItem(itemsById, itemPlacements, item, serviceJob
       ? { ownerKind: 'caravan', custodyKind: 'service', custodyId: serviceJob.id }
       : { ownerKind: 'caravan', custodyKind: 'stash' })
@@ -524,7 +531,26 @@ export function buildPersistedFromPublic(
         const rewardItemId = visitor.commission.rewardItemId
         const settlementId = visitor.commission.id
         itemPlacements[rewardItemId] = { ownerKind: 'caravan', custodyKind: 'settlement', custodyId: settlementId }
-        settlementsById[settlementId] = { id: settlementId, itemIds: [rewardItemId] }
+        settlementsById[settlementId] = {
+          id: settlementId,
+          itemIds: [rewardItemId],
+          projection: {
+            kind: 'settlement',
+            expeditionId: visitor.commission.id,
+            outcome: visitor.commission.outcome === 'failed' ? 'death' : visitor.commission.outcome === 'partial' ? 'retreated' : 'returned',
+            appliedAt: visitor.commission.finishesAt
+          }
+        }
+        expeditionsById[visitor.commission.id] = {
+          id: visitor.commission.id,
+          itemIds: [],
+          projection: {
+            kind: 'expedition',
+            visitorId: visitor.id,
+            contractId: visitor.commission.id,
+            startsAt: visitor.commission.startedAt
+          }
+        }
       }
     }
   }
@@ -642,10 +668,13 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     if (placement.custodyKind !== 'stash' && placement.custodyKind !== 'visitor' && placement.custodyKind !== 'tombstone') {
       const container = (containerMaps[placement.custodyKind] as Record<string, PersistedCustodyContainer>)[placement.custodyId ?? '']
       if (!container?.itemIds.includes(itemId)) return false
+      if (container.projection?.kind !== placement.custodyKind
+        && !(placement.custodyKind === 'service' && container.projection?.kind === 'legacy_appraiser')) return false
     }
   }
   for (const [kind, containers] of Object.entries(containerMaps)) {
     for (const container of Object.values(containers as Record<string, PersistedCustodyContainer>)) {
+      if (container.projection?.kind !== kind && !(kind === 'service' && container.projection?.kind === 'legacy_appraiser')) return false
       for (const itemId of container.itemIds) {
         if (activeReferences.has(itemId)) return false
         activeReferences.add(itemId)
@@ -693,7 +722,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   for (const record of candidate.requestRecords as PersistedRequestRecord[]) {
     if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'revision', 'createdAt', 'updatedAt'])) return false
     if (typeof record.requestId !== 'string' || requestIds.has(record.requestId)) return false
-    if (!record.operationKey || !record.businessKey || typeof record.response !== 'object' || !record.response) return false
+    if (!record.operationKey || !record.businessKey || !isPublicSaveGame(record.response)) return false
     if (!/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)) return false
     if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
     if (containsInternalFields(record.response)) return false
@@ -857,12 +886,82 @@ function isContainerMap(value: unknown): value is Record<string, PersistedCustod
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   return Object.entries(value as Record<string, unknown>).every(([id, entry]) => {
     if (!entry || typeof entry !== 'object') return false
-    if (!hasOnlyKeys(entry as Record<string, unknown>, ['id', 'itemIds'])) return false
+    if (!hasOnlyKeys(entry as Record<string, unknown>, ['id', 'itemIds', 'projection'])) return false
     const container = entry as PersistedCustodyContainer
     return container.id === id && Array.isArray(container.itemIds)
       && new Set(container.itemIds).size === container.itemIds.length
       && container.itemIds.every((itemId) => typeof itemId === 'string' && Boolean(itemId))
+      && (container.projection === undefined || isCustodyProjection(container.projection))
   })
+}
+
+function isCustodyProjection(value: unknown): boolean {
+  if (!isPlainRecord(value) || typeof value.kind !== 'string') return false
+  if (value.kind === 'legacy_appraiser') return hasOnlyKeys(value, ['kind'])
+  if (value.kind === 'expedition') return hasOnlyKeys(value, ['kind', 'visitorId', 'contractId', 'startsAt'])
+    && typeof value.visitorId === 'string' && Boolean(value.visitorId) && typeof value.contractId === 'string' && Boolean(value.contractId)
+    && Number.isFinite(Date.parse(String(value.startsAt)))
+  if (value.kind === 'settlement') return hasOnlyKeys(value, ['kind', 'expeditionId', 'outcome', 'appliedAt'])
+    && typeof value.expeditionId === 'string' && Boolean(value.expeditionId) && ['returned', 'retreated', 'death'].includes(String(value.outcome))
+    && Number.isFinite(Date.parse(String(value.appliedAt)))
+  if (value.kind === 'recovery') return hasOnlyKeys(value, ['kind', 'sourceExpeditionId', 'resolvedAt'])
+    && typeof value.sourceExpeditionId === 'string' && Boolean(value.sourceExpeditionId) && Number.isFinite(Date.parse(String(value.resolvedAt)))
+  return value.kind === 'service' && hasOnlyKeys(value, ['kind', 'service', 'queuedAt', 'startsAt'])
+    && ['blacksmith', 'enchanter'].includes(String(value.service))
+    && Number.isFinite(Date.parse(String(value.queuedAt))) && Number.isFinite(Date.parse(String(value.startsAt)))
+}
+
+function isPublicSaveGame(value: unknown): boolean {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, [
+    'schemaVersion', 'gold', 'caravan', 'stashLimit', 'stash', 'unlockedRegionIds',
+    'visitRound', 'visitHistory', 'revision', 'createdAt', 'updatedAt'
+  ])) return false
+  if (value.schemaVersion !== SAVE_SCHEMA_VERSION || !Number.isInteger(value.gold) || Number(value.gold) < 0) return false
+  if (!isCaravan(value.caravan) || !Number.isInteger(value.stashLimit) || Number(value.stashLimit) < 0) return false
+  if (!Array.isArray(value.stash) || !value.stash.every(isItem)) return false
+  if (!Array.isArray(value.unlockedRegionIds) || !value.unlockedRegionIds.every((id) => typeof id === 'string' && Boolean(id))) return false
+  if (!Number.isInteger(value.revision) || Number(value.revision) < 0) return false
+  if (!Number.isFinite(Date.parse(String(value.createdAt))) || !Number.isFinite(Date.parse(String(value.updatedAt)))) return false
+  return isPublicRound(value.visitRound) && Array.isArray(value.visitHistory) && value.visitHistory.every(isPublicRound)
+}
+
+function isPublicRound(value: unknown): boolean {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ['id', 'number', 'slots', 'createdAt'])) return false
+  if (typeof value.id !== 'string' || !value.id || !Number.isInteger(value.number) || !Number.isFinite(Date.parse(String(value.createdAt)))) return false
+  return Array.isArray(value.slots) && value.slots.every((slot) => isPlainRecord(slot)
+    && hasOnlyKeys(slot, ['id', 'visitor', 'nextArrivalCheckAt'])
+    && typeof slot.id === 'string' && Boolean(slot.id)
+    && (slot.nextArrivalCheckAt === undefined || Number.isFinite(Date.parse(String(slot.nextArrivalCheckAt))))
+    && (slot.visitor === undefined || isPublicVisitor(slot.visitor)))
+}
+
+function isPublicVisitor(value: unknown): boolean {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, [
+    'id', 'name', 'class', 'level', 'origin', 'equipmentSummary', 'state', 'budget', 'initialBudget',
+    'acceptedItemTypes', 'interestedItemTypes', 'offers', 'buyQuotes', 'trades', 'power',
+    'commissionOptions', 'commission', 'arrivedAt', 'departedAt'
+  ])) return false
+  if (!Array.isArray(value.offers)) return false
+  const offers: PersistedVisitorOffer[] = []
+  for (const offer of value.offers) {
+    if (!isPlainRecord(offer) || !hasOnlyKeys(offer, ['id', 'item', 'price', 'purchasedAt']) || !isItem(offer.item)) return false
+    if (typeof offer.id !== 'string' || !offer.id || !Number.isInteger(offer.price)) return false
+    if (offer.purchasedAt !== undefined && !Number.isFinite(Date.parse(String(offer.purchasedAt)))) return false
+    offers.push({ id: offer.id, itemId: offer.item.id, price: Number(offer.price), ...(offer.purchasedAt ? { purchasedAt: String(offer.purchasedAt) } : {}) })
+  }
+  let commission: PersistedVisitorCommission | undefined
+  if (value.commission !== undefined) {
+    if (!isPlainRecord(value.commission) || !hasOnlyKeys(value.commission, [
+      'optionId', 'title', 'regionId', 'durationMs', 'successChance', 'fullRewardGold', 'partialRewardGold',
+      'riskLevel', 'failureConsequence', 'id', 'status', 'startedAt', 'finishesAt', 'outcome',
+      'rewardGold', 'rewardItem', 'claimedAt'
+    ])) return false
+    const { rewardItem, ...rest } = value.commission
+    if (rewardItem !== undefined && !isItem(rewardItem)) return false
+    commission = { ...rest, outcomeRoll: 0, ...(rewardItem ? { rewardItemId: rewardItem.id } : {}) } as PersistedVisitorCommission
+  }
+  const { offers: _offers, commission: _commission, ...rest } = value
+  return isPersistedVisitor({ ...rest, offers, ...(commission ? { commission } : {}) })
 }
 
 function containsInternalFields(value: unknown): boolean {
@@ -993,7 +1092,7 @@ function commandPayload(command: unknown): unknown {
   return payload
 }
 
-export type PublicSaveGame = Omit<SaveGame, '_id' | 'userId' | 'processedRequestIds' | 'processedRequests'>
+export type PublicSaveGame = Omit<SaveGame, '_id' | 'userId' | '_effectiveCapacityUsed' | 'processedRequestIds' | 'processedRequests'>
 
 export function sanitizeGameResponse(save: SaveGame): SaveGame {
   return stripPrivateFields(save) as SaveGame
@@ -1002,7 +1101,7 @@ export function sanitizeGameResponse(save: SaveGame): SaveGame {
 function stripPrivateFields(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripPrivateFields)
   if (value && typeof value === 'object') {
-    const privateKeys = new Set(['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'processedRequestIds', 'processedRequests', 'outcomeRoll'])
+    const privateKeys = new Set(['_id', 'userId', '_effectiveCapacityUsed', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'processedRequestIds', 'processedRequests', 'outcomeRoll'])
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
       .filter(([key, entry]) => entry !== undefined && !privateKeys.has(key))
       .map(([key, entry]) => [key, stripPrivateFields(entry)]))

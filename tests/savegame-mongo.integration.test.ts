@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { MongoClient, type Collection } from 'mongodb'
 import type { SaveGame } from '../types/game'
+import type { PersistedGameV3 } from '../server/utils/savegame'
 
 const mongoUri = process.env.MONGO_TEST_URI
 const suite = mongoUri ? describe : describe.skip
@@ -73,8 +74,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const custody = await getPersistedGameV3(userIds[7]!)
     const itemId = custody.stash[0]!
-    custody.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [] }
-    custody.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [] }
+    addExpedition(custody, 'expedition-a')
+    addExpedition(custody, 'expedition-b')
     await collection.replaceOne({ userId: userIds[7] }, custody)
     await transitionItemAtomic(userIds[7]!, 'mongo-loan-a', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
     const projected = mapPersistedGameToGameView(await getPersistedGameV3(userIds[7]!), new Date('2026-09-13T12:00:00.000Z'))
@@ -94,7 +95,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
     const initial = await getPersistedGameV3(userIds[9]!)
     const itemId = initial.stash[0]!
-    initial.expeditionsById['uncertain-expedition'] = { id: 'uncertain-expedition', itemIds: [] }
+    addExpedition(initial, 'uncertain-expedition')
     await collection.replaceOne({ userId: userIds[9] }, initial)
     repositoryCollection = {
       findOne: (...args: Parameters<Collection['findOne']>) => collection.findOne(...args),
@@ -133,8 +134,10 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const targetFor = (operation: string) => operation === 'sell' ? visitorId : `${operation}-target`
     for (const operation of [firstName, secondName]) {
       const targetId = targetFor(operation)
-      if (operation === 'loan') initial.expeditionsById[targetId] = { id: targetId, itemIds: [] }
-      if (operation === 'service') initial.serviceJobsById[targetId] = { id: targetId, itemIds: [] }
+      if (operation === 'loan') addExpedition(initial, targetId)
+      if (operation === 'service') initial.serviceJobsById[targetId] = {
+        id: targetId, itemIds: [], projection: { kind: 'service', service: 'blacksmith', queuedAt: initial.updatedAt, startsAt: initial.updatedAt }
+      }
     }
     await collection.replaceOne({ userId }, initial)
     const results = await Promise.allSettled([
@@ -162,3 +165,10 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(indexes).toContainEqual(expect.objectContaining({ name: 'userId_unique', unique: true }))
   })
 })
+
+function addExpedition(game: PersistedGameV3, id: string): void {
+  const visitorId = game.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
+  game.expeditionsById[id] = {
+    id, itemIds: [], projection: { kind: 'expedition', visitorId, contractId: `contract-${id}`, startsAt: game.updatedAt }
+  }
+}

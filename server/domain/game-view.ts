@@ -36,6 +36,12 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     // The legacy V1 appraiser is intentionally isolated: the normative V2
     // contract only defines blacksmith/enchanter jobs.
     if (!placement || placement.custodyKind === 'tombstone') return []
+    if (placement.custodyKind === 'service') {
+      const target = game.serviceJobsById[placement.custodyId ?? '']
+      if (target?.projection?.kind === 'legacy_appraiser') {
+        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' })]
+      }
+    }
     return [mapItem(item, placement)]
   })
   const visitors: unknown[] = [game.visitRound, ...game.visitHistory].flatMap<unknown>((round) => round.slots.flatMap<unknown>((slot) => {
@@ -70,23 +76,39 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     }]
   }))
   const transitions = collectTransitions(game).filter((timestamp) => Date.parse(timestamp) > now.getTime()).sort()
-  const expeditions = Object.values(game.expeditionsById).map((container) => ({
-    expeditionId: container.id, visitorId: `visitor-${container.id}`, contractId: `contract-${container.id}`,
-    state: 'scheduled', actions: [], startsAt: game.updatedAt
-  }))
-  const settlements = Object.values(game.settlementsById).map((container) => ({
-    settlementId: container.id, expeditionId: `expedition-${container.id}`, state: 'settled', outcome: 'returned',
-    appliedAt: game.updatedAt, appliedBy: 'confirmation', appliedChoices: [], visitorResolution: 'stays', actions: []
-  }))
-  const recoveries = Object.values(game.recoveriesById).map((container) => ({
-    recoveryId: container.id, sourceExpeditionId: `expedition-${container.id}`, itemIds: [...container.itemIds],
-    state: 'recovered', actions: [], resolvedAt: game.updatedAt, recoveredItemIds: [...container.itemIds]
-  }))
-  const serviceJobs = Object.values(game.serviceJobsById).flatMap((container) => container.itemIds.slice(0, 1).map((itemId) => ({
-    jobId: container.id, itemId, service: 'blacksmith', state: 'queued',
-    label: { key: `service.${container.id}`, fallback: 'Servicio de artesano' }, actions: [],
-    queuedAt: game.updatedAt, startsAt: game.updatedAt
-  })))
+  const expeditions = Object.values(game.expeditionsById).flatMap((container) => {
+    const target = container.projection
+    if (target?.kind !== 'expedition') return []
+    return [{
+      expeditionId: container.id, visitorId: target.visitorId, contractId: target.contractId,
+      state: 'scheduled', actions: [], startsAt: target.startsAt
+    }]
+  })
+  const settlements = Object.values(game.settlementsById).flatMap((container) => {
+    const target = container.projection
+    if (target?.kind !== 'settlement') return []
+    return [{
+      settlementId: container.id, expeditionId: target.expeditionId, state: 'settled', outcome: target.outcome,
+      appliedAt: target.appliedAt, appliedBy: 'confirmation', appliedChoices: [], visitorResolution: 'stays', actions: []
+    }]
+  })
+  const recoveries = Object.values(game.recoveriesById).flatMap((container) => {
+    const target = container.projection
+    if (target?.kind !== 'recovery') return []
+    return [{
+      recoveryId: container.id, sourceExpeditionId: target.sourceExpeditionId, itemIds: [...container.itemIds],
+      state: 'recovered', actions: [], resolvedAt: target.resolvedAt, recoveredItemIds: [...container.itemIds]
+    }]
+  })
+  const serviceJobs = Object.values(game.serviceJobsById).flatMap((container) => {
+    const target = container.projection
+    if (target?.kind !== 'service') return []
+    return container.itemIds.slice(0, 1).map((itemId) => ({
+      jobId: container.id, itemId, service: target.service, state: 'queued',
+      label: { key: `service.${container.id}`, fallback: 'Servicio de artesano' }, actions: [],
+      queuedAt: target.queuedAt, startsAt: target.startsAt
+    }))
+  })
   const view: GameView = {
     contractVersion: 'v2-etapa0-3',
     labelCatalogVersion: 'es-AR-v1',
@@ -126,6 +148,15 @@ export function validateSemanticGameView(view: GameView): void {
     settlement: new Set((view.settlements as Array<{ settlementId: string }>).map((entry) => entry.settlementId)),
     recovery: new Set((view.recoveries as Array<{ recoveryId: string }>).map((entry) => entry.recoveryId)),
     service: new Set((view.serviceJobs as Array<{ jobId: string }>).map((entry) => entry.jobId))
+  }
+  for (const expedition of view.expeditions as Array<{ expeditionId: string; visitorId: string }>) {
+    if (!visitorIds.has(expedition.visitorId)) throw new Error(`Unknown expedition visitor for ${expedition.expeditionId}`)
+  }
+  for (const settlement of view.settlements as Array<{ settlementId: string; expeditionId: string }>) {
+    if (!targetIds.expedition.has(settlement.expeditionId)) throw new Error(`Unknown settlement expedition for ${settlement.settlementId}`)
+  }
+  for (const recovery of view.recoveries as Array<{ recoveryId: string; sourceExpeditionId: string }>) {
+    if (!targetIds.expedition.has(recovery.sourceExpeditionId)) throw new Error(`Unknown recovery expedition for ${recovery.recoveryId}`)
   }
   for (const item of view.items as Array<{ itemId: string; owner: { kind: string; visitorId?: string }; custody: { kind: string; visitorId?: string; expeditionId?: string; settlementId?: string; recoveryId?: string; jobId?: string } }>) {
     if (itemIds.has(item.itemId)) throw new Error(`Duplicate public itemId ${item.itemId}`)

@@ -40,6 +40,7 @@ export function applyItemTransition(
 
   if (command.operation === 'return') {
     if (from.ownerKind !== 'caravan' || from.custodyKind === 'stash') throw transitionError('Only an item away from stash can return')
+    if (from.custodyId !== command.targetId) throw transitionError('Return target does not match current authoritative custody')
     to = { ownerKind: 'caravan', custodyKind: 'stash' }
     if (!game.stash.includes(command.itemId)) game.stash.push(command.itemId)
   } else {

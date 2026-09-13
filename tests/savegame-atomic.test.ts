@@ -112,8 +112,9 @@ describe('atomic persisted-game mutation', () => {
     const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
     const initial = await getPersistedGameV3('atomic-user')
     const itemId = initial.stash[0]!
-    initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [] }
-    initial.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [] }
+    const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
+    initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: 'contract-a', startsAt: initial.updatedAt } }
+    initial.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: 'contract-b', startsAt: initial.updatedAt } }
     document = initial
 
     await transitionItemAtomic('atomic-user', 'loan-a', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
@@ -124,6 +125,53 @@ describe('atomic persisted-game mutation', () => {
 
     expect((document as PersistedGameV3).ledger.at(-1)?.materialDeltas.scrap).toBeGreaterThan(0)
     expect((document as PersistedGameV3).ledger.map((entry) => entry.businessKey)).toContain(JSON.stringify(['item-transition', 'loan', itemId, 'expedition-b']))
+  })
+
+  it('rejects a return target that differs from current authoritative custody', async () => {
+    const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { ItemTransitionError } = await import('../server/domain/item-transitions')
+    const initial = await getPersistedGameV3('atomic-user')
+    const itemId = initial.stash[0]!
+    const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
+    initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: 'contract-a', startsAt: initial.updatedAt } }
+    document = initial
+    await transitionItemAtomic('atomic-user', 'loan-authoritative', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
+    await expect(transitionItemAtomic('atomic-user', 'wrong-return', 1, { operation: 'return', itemId, targetId: 'expedition-b' }))
+      .rejects.toBeInstanceOf(ItemTransitionError)
+  })
+
+  it('uses effective caravan ownership when admitting a commission reward', async () => {
+    const { buildPersistedFromPublic, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { applyItemTransition } = await import('../server/domain/item-transitions')
+    const { claimVisitorCommission } = await import('../utils/visitor-logic')
+    const save = createSaveGame('atomic-user')
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    visitor.state = 'returned'
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!, id: 'capacity-commission', status: 'ready',
+      startedAt: '2026-09-13T00:00:00.000Z', finishesAt: '2026-09-13T00:01:00.000Z',
+      outcomeRoll: 0.1, outcome: 'complete', rewardGold: 0
+    }
+    const initial = buildPersistedFromPublic(save)
+    const templateId = initial.stash[0]!
+    for (let index = initial.stash.length; index < initial.stashLimit; index += 1) {
+      const itemId = `capacity-item-${index}`
+      initial.itemsById[itemId] = { ...structuredClone(initial.itemsById[templateId]!), id: itemId }
+      initial.itemPlacements[itemId] = { ownerKind: 'caravan', custodyKind: 'stash' }
+      initial.stash.push(itemId)
+    }
+    const loanedId = initial.stash[0]!
+    initial.expeditionsById['capacity-expedition'] = {
+      id: 'capacity-expedition', itemIds: [],
+      projection: { kind: 'expedition', visitorId: visitor.id, contractId: 'capacity-contract', startsAt: initial.updatedAt }
+    }
+    document = applyItemTransition(initial, { operation: 'loan', itemId: loanedId, targetId: 'capacity-expedition' }).game
+
+    const result = await mutateSaveGameAtomic('atomic-user', 'capacity-claim', 'claim:capacity', 0, {}, (draft) => {
+      claimVisitorCommission(draft, visitor.id, new Date('2026-09-13T00:02:00.000Z'), () => 0.5)
+    })
+    expect(result.stash).toHaveLength(initial.stashLimit - 1)
+    expect(Object.keys((document as PersistedGameV3).itemsById)).toHaveLength(Object.keys(initial.itemsById).length)
   })
 
   it('recovers an exact replay when replaceOne throws after committing', async () => {
@@ -162,8 +210,9 @@ describe('atomic persisted-game mutation', () => {
   })
 
   it('retains every permanent ledger key and at least 30 days of replay records', async () => {
-    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { mutateSaveGameAtomic, sanitizeGameResponse } = await import('../server/utils/savegame')
     const persisted = document as PersistedGameV3
+    const replayResponse = sanitizeGameResponse(createSaveGame('atomic-user')) as never
     for (let index = 0; index < 510; index += 1) {
       const businessKey = `historic:${index}`
       persisted.businessKeys[businessKey] = `historic-request-${index}`
@@ -175,8 +224,8 @@ describe('atomic persisted-game mutation', () => {
     }
     persisted.revision = 510
     persisted.requestRecords.push(
-      { requestId: 'expired', operationKey: 'expired', businessKey: 'expired', commandHash: 'b'.repeat(64), response: {} as never, revision: 1, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
-      { requestId: 'recent', operationKey: 'recent', businessKey: 'recent', commandHash: 'c'.repeat(64), response: {} as never, revision: 1, createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z' }
+      { requestId: 'expired', operationKey: 'expired', businessKey: 'expired', commandHash: 'b'.repeat(64), response: replayResponse, revision: 1, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
+      { requestId: 'recent', operationKey: 'recent', businessKey: 'recent', commandHash: 'c'.repeat(64), response: replayResponse, revision: 1, createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z' }
     )
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-13T00:00:00.000Z'))

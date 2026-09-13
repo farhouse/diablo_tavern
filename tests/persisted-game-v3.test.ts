@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createSaveGame } from '../utils/game-logic'
-import { buildPersistedFromPublic, isPersistedCanonical, sanitizeGameResponse } from '../server/utils/savegame'
+import { buildPersistedFromPublic, isPersistedCanonical, sanitizeGameResponse, type PersistedGameV3 } from '../server/utils/savegame'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
 import { applyItemTransition, effectiveCapacityUsed } from '../server/domain/item-transitions'
 
@@ -56,6 +56,13 @@ describe('PersistedGameV3 invariants', () => {
     incomplete.itemsById[itemId] = { id: itemId } as never
     expect(isPersistedCanonical(incomplete)).toBe(false)
 
+    const badReplay = buildPersistedFromPublic(createSaveGame('invalid-replay'))
+    badReplay.requestRecords.push({
+      requestId: 'bad', operationKey: 'bad', businessKey: 'bad', commandHash: 'a'.repeat(64),
+      response: {} as never, revision: 0, createdAt: badReplay.createdAt, updatedAt: badReplay.updatedAt
+    })
+    expect(isPersistedCanonical(badReplay)).toBe(false)
+
     const unknown = buildPersistedFromPublic(createSaveGame('unknown-field')) as typeof incomplete & { legacyGold?: number }
     unknown.legacyGold = 123
     expect(isPersistedCanonical(unknown)).toBe(false)
@@ -65,9 +72,7 @@ describe('PersistedGameV3 invariants', () => {
     const persisted = buildPersistedFromPublic(createSaveGame(`projection-${operation}`))
     const itemId = persisted.stash[0]!
     const targetId = `${operation}-target`
-    if (operation === 'loan') persisted.expeditionsById[targetId] = { id: targetId, itemIds: [] }
-    if (operation === 'service') persisted.serviceJobsById[targetId] = { id: targetId, itemIds: [] }
-    if (operation === 'recover') persisted.recoveriesById[targetId] = { id: targetId, itemIds: [] }
+    addTarget(persisted, operation, targetId)
     const transitioned = applyItemTransition(persisted, { operation, itemId, targetId }).game
     const view = mapPersistedGameToGameView(transitioned, new Date('2026-09-13T12:00:00.000Z'))
     expect(view.items).toContainEqual(expect.objectContaining({ itemId }))
@@ -135,9 +140,7 @@ describe('PersistedGameV3 invariants', () => {
         try {
           const candidate = structuredClone(state)
           const targetId = `target-${step}`
-          if (operation === 'loan') candidate.expeditionsById[targetId] = { id: targetId, itemIds: [] }
-          if (operation === 'service') candidate.serviceJobsById[targetId] = { id: targetId, itemIds: [] }
-          if (operation === 'recover') candidate.recoveriesById[targetId] = { id: targetId, itemIds: [] }
+          if (operation === 'loan' || operation === 'service' || operation === 'recover') addTarget(candidate, operation, targetId)
           const result = applyItemTransition(candidate, { operation, itemId, targetId })
           state = result.game
           expect(state.gold - beforeGold).toBe(result.effect.goldDelta)
@@ -167,3 +170,26 @@ describe('PersistedGameV3 invariants', () => {
       .toThrow(expect.objectContaining({ name: 'ItemTransitionError' }))
   })
 })
+
+function addTarget(game: PersistedGameV3, operation: 'loan' | 'service' | 'recover', targetId: string): void {
+  const at = game.updatedAt
+  if (operation === 'loan') {
+    const visitorId = game.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
+    game.expeditionsById[targetId] = {
+      id: targetId, itemIds: [], projection: { kind: 'expedition', visitorId, contractId: `contract-${targetId}`, startsAt: at }
+    }
+  } else if (operation === 'service') {
+    game.serviceJobsById[targetId] = {
+      id: targetId, itemIds: [], projection: { kind: 'service', service: 'blacksmith', queuedAt: at, startsAt: at }
+    }
+  } else {
+    const sourceExpeditionId = `source-${targetId}`
+    const visitorId = game.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
+    game.expeditionsById[sourceExpeditionId] = {
+      id: sourceExpeditionId, itemIds: [], projection: { kind: 'expedition', visitorId, contractId: `contract-${targetId}`, startsAt: at }
+    }
+    game.recoveriesById[targetId] = {
+      id: targetId, itemIds: [], projection: { kind: 'recovery', sourceExpeditionId, resolvedAt: at }
+    }
+  }
+}
