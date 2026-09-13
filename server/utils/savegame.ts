@@ -474,7 +474,12 @@ export function hydratePersistedGame(document: PersistedGameV3): SaveGame {
   } as unknown as SaveGame, { refreshVisitors: false })
 
   const stash = Object.entries(document.itemPlacements)
-    .filter(([, placement]) => placement.ownerKind === 'caravan' && ['stash', 'service'].includes(placement.custodyKind))
+    .filter(([, placement]) => {
+      if (placement.ownerKind !== 'caravan') return false
+      if (placement.custodyKind === 'stash') return true
+      if (placement.custodyKind !== 'service') return false
+      return document.serviceJobsById[placement.custodyId ?? '']?.projection?.kind === 'legacy_appraiser'
+    })
     .map(([itemId]) => document.itemsById[itemId])
     .filter((item): item is Item => Boolean(item))
 
@@ -506,11 +511,17 @@ export function buildPersistedFromPublic(
     if (seenIds.has(item.id)) throw new PersistedGameCorruptError('Item IDs in stash must be unique')
     seenIds.add(item.id)
     const serviceJob = normalized.caravan.services.appraiserQueue.find((job) => job.itemId === item.id)
+    const previousPlacement = previous?.itemPlacements[item.id]
+    const normativeServiceJob = previousPlacement?.custodyKind === 'service'
+      ? serviceJobsById[previousPlacement.custodyId ?? '']
+      : undefined
+    const preservesNormativeService = normativeServiceJob?.projection?.kind === 'service'
     if (serviceJob) serviceJobsById[serviceJob.id] = { id: serviceJob.id, itemIds: [item.id], projection: { kind: 'legacy_appraiser' } }
     registerItem(itemsById, itemPlacements, item, serviceJob
       ? { ownerKind: 'caravan', custodyKind: 'service', custodyId: serviceJob.id }
+      : preservesNormativeService ? structuredClone(previousPlacement!)
       : { ownerKind: 'caravan', custodyKind: 'stash' })
-    if (!serviceJob) stash.push(item.id)
+    if (!serviceJob && !preservesNormativeService) stash.push(item.id)
   }
 
   const visitRound = persistRound(normalized.visitRound, itemsById, itemPlacements)
@@ -555,9 +566,7 @@ export function buildPersistedFromPublic(
         const settlement = settlementsById[visitor.commission.id]
         if (settlement) {
           settlement.itemIds = settlement.itemIds.filter((itemId) => itemId !== visitor.commission!.rewardItemId)
-          if (settlement.itemIds.length === 0) delete settlementsById[visitor.commission.id]
         }
-        if (expeditionsById[visitor.commission.id]?.itemIds.length === 0) delete expeditionsById[visitor.commission.id]
       }
     }
   }
@@ -567,7 +576,7 @@ export function buildPersistedFromPublic(
   for (const itemId of Object.keys(itemsById)) {
     if (seenIds.has(itemId) || isReferencedByVisitors(itemId, visitRound, visitHistory)) continue
     const previousPlacement = previous?.itemPlacements[itemId]
-    itemPlacements[itemId] = previousPlacement && ['expedition', 'recovery', 'settlement'].includes(previousPlacement.custodyKind)
+    itemPlacements[itemId] = previousPlacement && ['service', 'expedition', 'recovery', 'settlement'].includes(previousPlacement.custodyKind)
       ? structuredClone(previousPlacement)
       : { ownerKind: 'tombstone', custodyKind: 'tombstone' }
   }
@@ -647,10 +656,14 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   if (!caravan.services || !Array.isArray(caravan.services.appraiserQueue)) return false
   const allRounds = [candidate.visitRound, ...candidate.visitHistory]
   if (!allRounds.every(isPersistedRound)) return false
-  const visitorIds = new Set(allRounds.flatMap((round) => round.slots.flatMap((slot) => slot.visitor?.id ? [slot.visitor.id] : [])))
+  const visitors = allRounds.flatMap((round) => round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : []))
+  const visitorIds = new Set(visitors.map((visitor) => visitor.id))
+  if (visitorIds.size !== visitors.length) return false
+  const visitorContracts = new Map(visitors.map((visitor) => [visitor.id, visitor.commission?.id]))
   if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
   for (const container of Object.values(candidate.expeditionsById as Record<string, PersistedCustodyContainer>)) {
     if (container.projection?.kind !== 'expedition' || !visitorIds.has(container.projection.visitorId)) return false
+    if (visitorContracts.get(container.projection.visitorId) !== container.projection.contractId) return false
   }
   for (const container of Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)) {
     if (container.projection?.kind !== 'settlement' || !(container.projection.expeditionId in (candidate.expeditionsById as object))) return false
@@ -691,6 +704,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   for (const [kind, containers] of Object.entries(containerMaps)) {
     for (const container of Object.values(containers as Record<string, PersistedCustodyContainer>)) {
       if (container.projection?.kind !== kind && !(kind === 'service' && container.projection?.kind === 'legacy_appraiser')) return false
+      if (kind === 'service' && container.itemIds.length > 1) return false
       for (const itemId of container.itemIds) {
         if (activeReferences.has(itemId)) return false
         activeReferences.add(itemId)
@@ -739,7 +753,9 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'revision', 'createdAt', 'updatedAt'])) return false
     if (typeof record.requestId !== 'string' || requestIds.has(record.requestId)) return false
     if (!record.operationKey || !record.businessKey || !isPublicSaveGame(record.response)) return false
-    if (!/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)) return false
+    if (!/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)
+      || record.revision < 1 || record.revision > Number(candidate.revision)
+      || record.response.revision !== record.revision) return false
     if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
     if (containsInternalFields(record.response)) return false
     requestIds.add(record.requestId)
@@ -761,6 +777,9 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   for (const [businessKey, requestId] of Object.entries(candidate.businessKeys as Record<string, string>)) {
     const ledgerEntry = (candidate.ledger as PersistedLedgerEntry[]).find((entry) => entry.businessKey === businessKey)
     if (!businessKey || !requestId || !ledgerEntry || ledgerEntry.requestId !== requestId) return false
+  }
+  for (const entry of candidate.ledger as PersistedLedgerEntry[]) {
+    if ((candidate.businessKeys as Record<string, string>)[entry.businessKey] !== entry.requestId) return false
   }
   return true
 }

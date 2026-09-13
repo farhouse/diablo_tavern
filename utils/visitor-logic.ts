@@ -28,6 +28,10 @@ export const VISITOR_CONFIG = {
     risky: { durationMultiplier: 1.75, chanceDelta: -0.15, fullRewardMultiplier: 1.35, partialRewardMultiplier: 0.35 }
   }
 } as const
+
+export function effectiveCaravanCapacityUsed(save: Pick<SaveGame, 'stash' | '_effectiveCapacityUsed'>): number {
+  return save._effectiveCapacityUsed ?? save.stash.length
+}
 const allItemTypes: ItemType[] = ['weapon', 'armor', 'helmet', 'gloves', 'boots', 'ring', 'amulet', 'charm']
 const visitorNames = ['Mira', 'Torvald', 'Ysra', 'Kael', 'Nahla', 'Bram', 'Vesper', 'Orin']
 const visitorClasses: HeroClass[] = ['barbarian', 'sorceress', 'paladin', 'necromancer']
@@ -84,6 +88,11 @@ export function refreshVisitRound(save: SaveGame, now = new Date(), random: Rand
       visitor.commission.rewardGold = result === 'complete'
         ? visitor.commission.fullRewardGold
         : result === 'partial' ? visitor.commission.partialRewardGold : 0
+      if (result === 'complete' && !visitor.commission.rewardItem
+        && effectiveCaravanCapacityUsed(save) < save.stashLimit) {
+        visitor.commission.rewardItem = createOfferItem(random)
+        adjustEffectiveCapacity(save, 1)
+      }
     }
   }
   return save
@@ -134,12 +143,13 @@ export function buyFromVisitor(save: SaveGame, visitorId: string, offerId: strin
   if (!offer) throw domainError('Offer not found')
   if (offer.purchasedAt) throw domainError('Offer was already purchased')
   if (save.gold < offer.price) throw domainError('Not enough gold')
-  if (save.stash.length >= save.stashLimit) throw domainError('Stash is full')
+  if (effectiveCaravanCapacityUsed(save) >= save.stashLimit) throw domainError('Stash is full')
 
   save.gold -= offer.price
   visitor.budget += offer.price
   offer.purchasedAt = now.toISOString()
   save.stash.push({ ...cloneItem(offer.item), acquisitionCost: offer.price })
+  adjustEffectiveCapacity(save, 1)
   visitor.trades.push({ requestId, kind: 'player_bought', itemId: offer.item.id, price: offer.price, createdAt: now.toISOString() })
   visitor.state = 'traded'
   return touch(save, now)
@@ -158,6 +168,7 @@ export function sellToVisitor(save: SaveGame, visitorId: string, itemId: string,
   if (visitor.budget < price) throw domainError('Visitor cannot afford this item')
 
   save.stash.splice(itemIndex, 1)
+  adjustEffectiveCapacity(save, -1)
   save.gold += price
   visitor.budget -= price
   visitor.trades.push({ requestId, kind: 'player_sold', itemId, price, createdAt: now.toISOString() })
@@ -214,13 +225,9 @@ export function claimVisitorCommission(save: SaveGame, visitorId: string, now = 
 
   const rewardGold = commission.rewardGold ?? 0
   save.gold += rewardGold
-  const capacityUsed = save._effectiveCapacityUsed ?? save.stash.length
   if (commission.outcome === 'complete') {
     if (commission.rewardItem) {
       if (!save.stash.some((item) => item.id === commission.rewardItem!.id)) save.stash.push(cloneItem(commission.rewardItem))
-    } else if (capacityUsed < save.stashLimit) {
-      commission.rewardItem = createOfferItem(random)
-      save.stash.push(cloneItem(commission.rewardItem))
     }
   }
   commission.status = 'claimed'
@@ -251,18 +258,19 @@ export function salvageItem(save: SaveGame, itemId: string, now = new Date()): S
   const itemIndex = save.stash.findIndex((item) => item.id === itemId)
   if (itemIndex < 0) throw domainError('Item not found in stash')
   const [item] = save.stash.splice(itemIndex, 1)
+  adjustEffectiveCapacity(save, -1)
   save.gold += Math.max(1, Math.floor(item!.value * 0.25))
   return touch(save, now)
 }
 
-export function hasCommercialAction(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | 'visitRound'>): boolean {
+export function hasCommercialAction(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | 'visitRound' | '_effectiveCapacityUsed'>): boolean {
   return hasPurchaseAction(save) || hasSaleAction(save)
 }
 
-export function hasPurchaseAction(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | 'visitRound'>): boolean {
+export function hasPurchaseAction(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | 'visitRound' | '_effectiveCapacityUsed'>): boolean {
   return currentVisitors(save).some((visitor) => (visitor.state === 'open' || visitor.state === 'traded')
     && !visitor.trades.some((trade) => trade.kind === 'player_bought')
-    && save.stash.length < save.stashLimit
+    && effectiveCaravanCapacityUsed(save) < save.stashLimit
     && visitor.offers.some((offer) => !offer.purchasedAt && offer.price <= save.gold))
 }
 
@@ -376,18 +384,19 @@ function stableIndex(value: string, length: number): number {
   return hash % length
 }
 
-function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit'>, visitors: Visitor[], random: RandomSource): void {
+function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | 'stashLimit' | '_effectiveCapacityUsed'>, visitors: Visitor[], random: RandomSource): void {
   const first = visitors[0]!
   const cheapestOfferPrice = Math.min(...itemBases.map((base) => Math.round(base.value * 0.90)))
   let sellable = save.stash.find((item) => item.identified)
   if (!sellable && !itemBases.some((base) => Math.round(base.value * 0.90) <= save.gold)) {
     // Soft-lock recovery for a current save with no usable assets.
-    if (save.stash.length >= save.stashLimit) {
+    if (effectiveCaravanCapacityUsed(save) >= save.stashLimit) {
       sellable = save.stash[0]
       if (sellable) sellable.identified = true
     } else {
       sellable = starterItem(3, random)
       save.stash.push(sellable)
+      adjustEffectiveCapacity(save, 1)
     }
   }
 
@@ -413,6 +422,10 @@ function ensureCommercialOpportunities(save: Pick<SaveGame, 'gold' | 'stash' | '
     const price = Math.min(purchasingPower, Math.max(Math.round(item.value * 0.90), percentage(item.value, 0.90, 1.25, random)))
     first.offers[0] = { id: randomId(random), item, price }
   }
+}
+
+function adjustEffectiveCapacity(save: Pick<SaveGame, '_effectiveCapacityUsed'>, delta: number): void {
+  if (save._effectiveCapacityUsed !== undefined) save._effectiveCapacityUsed += delta
 }
 
 function unlockedCommissionOptions(unlockedRegionIds: SaveGame['unlockedRegionIds'], power: number, fallbackRegionId?: string): CommissionOption[] {

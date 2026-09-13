@@ -31,6 +31,7 @@ export function applyItemTransition(
   const from = current.itemPlacements[command.itemId]
   if (!item || !from) throw transitionError('Item does not exist')
   if (!command.targetId) throw transitionError('A targetId is required')
+  if (command.operation !== 'return') requireAuthoritativeTarget(current, command)
 
   const game = structuredClone(current)
   removeFromCustodyContainers(game, command.itemId)
@@ -45,7 +46,6 @@ export function applyItemTransition(
     if (!game.stash.includes(command.itemId)) game.stash.push(command.itemId)
   } else {
     requireAvailableInStash(from)
-    requireAuthoritativeTarget(current, command)
     game.stash = game.stash.filter((itemId) => itemId !== command.itemId)
     switch (command.operation) {
       case 'sell':
@@ -88,11 +88,18 @@ function hasVisitor(game: PersistedGameV3, visitorId: string): boolean {
 }
 
 function removeFromCustodyContainers(game: PersistedGameV3, itemId: string): void {
-  for (const containers of [game.expeditionsById, game.recoveriesById, game.settlementsById, game.serviceJobsById]) {
+  for (const [kind, containers] of Object.entries({
+    expedition: game.expeditionsById,
+    recovery: game.recoveriesById,
+    settlement: game.settlementsById,
+    service: game.serviceJobsById
+  })) {
     for (const [id, container] of Object.entries(containers)) {
       const containedItem = container.itemIds.includes(itemId)
       container.itemIds = container.itemIds.filter((candidate) => candidate !== itemId)
-      if (containedItem && container.itemIds.length === 0) delete containers[id]
+      // Expeditions and their settlement/recovery history are authoritative
+      // lifecycle records. Service jobs end when their only item leaves.
+      if (kind === 'service' && containedItem && container.itemIds.length === 0) delete containers[id]
     }
   }
 }
@@ -119,8 +126,12 @@ function requireAuthoritativeTarget(game: PersistedGameV3, command: ItemTransiti
     recover: game.recoveriesById
   }
   const containers = maps[command.operation as keyof typeof maps]
-  if (containers && !containers[command.targetId]) {
+  const target = containers?.[command.targetId]
+  if (containers && !target) {
     throw transitionError(`Authoritative ${command.operation} target does not exist`)
+  }
+  if (command.operation === 'service' && target!.itemIds.length > 0) {
+    throw transitionError('Authoritative service target already has an item')
   }
 }
 

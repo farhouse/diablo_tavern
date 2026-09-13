@@ -112,9 +112,14 @@ describe('atomic persisted-game mutation', () => {
     const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
     const initial = await getPersistedGameV3('atomic-user')
     const itemId = initial.stash[0]!
-    const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
-    initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: 'contract-a', startsAt: initial.updatedAt } }
-    initial.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: 'contract-b', startsAt: initial.updatedAt } }
+    const visitor = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    const visitorId = visitor.id
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!, id: 'contract-a', status: 'active',
+      startedAt: initial.updatedAt, finishesAt: initial.updatedAt, outcomeRoll: 0.5
+    }
+    initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: visitor.commission.id, startsAt: initial.updatedAt } }
+    initial.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: visitor.commission.id, startsAt: initial.updatedAt } }
     document = initial
 
     await transitionItemAtomic('atomic-user', 'loan-a', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
@@ -132,8 +137,13 @@ describe('atomic persisted-game mutation', () => {
     const { ItemTransitionError } = await import('../server/domain/item-transitions')
     const initial = await getPersistedGameV3('atomic-user')
     const itemId = initial.stash[0]!
-    const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
-    initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: 'contract-a', startsAt: initial.updatedAt } }
+    const visitor = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    const visitorId = visitor.id
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!, id: 'contract-a', status: 'active',
+      startedAt: initial.updatedAt, finishesAt: initial.updatedAt, outcomeRoll: 0.5
+    }
+    initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [], projection: { kind: 'expedition', visitorId, contractId: visitor.commission.id, startsAt: initial.updatedAt } }
     document = initial
     await transitionItemAtomic('atomic-user', 'loan-authoritative', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
     await expect(transitionItemAtomic('atomic-user', 'wrong-return', 1, { operation: 'return', itemId, targetId: 'expedition-b' }))
@@ -164,7 +174,7 @@ describe('atomic persisted-game mutation', () => {
     const loanedId = initial.stash[0]!
     initial.expeditionsById['capacity-expedition'] = {
       id: 'capacity-expedition', itemIds: [],
-      projection: { kind: 'expedition', visitorId: visitor.id, contractId: 'capacity-contract', startsAt: initial.updatedAt }
+      projection: { kind: 'expedition', visitorId: visitor.id, contractId: visitor.commission.id, startsAt: initial.updatedAt }
     }
     document = applyItemTransition(initial, { operation: 'loan', itemId: loanedId, targetId: 'capacity-expedition' }).game
 
@@ -174,6 +184,42 @@ describe('atomic persisted-game mutation', () => {
     expect(result.stash).toHaveLength(initial.stashLimit - 1)
     expect(result.stash).toContainEqual(expect.objectContaining({ id: 'pending-capacity-reward' }))
     expect(Object.keys((document as PersistedGameV3).itemsById)).toHaveLength(Object.keys(initial.itemsById).length)
+  })
+
+  it('persists assignment, pending settlement projection, and exact reward claim', async () => {
+    const { getPersistedGameV3, getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const { assignVisitorCommission, claimVisitorCommission } = await import('../utils/visitor-logic')
+    const initial = await getPersistedGameV3('atomic-user')
+    const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
+    const start = new Date('2026-09-13T00:00:00.000Z')
+    const dependencies = { now: () => start, random: () => 0, uuid: () => 'pending-flow' }
+
+    await mutateSaveGameAtomic('atomic-user', 'assign-flow', 'commission:assign:flow', 0, {}, (save) => {
+      const visitor = save.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
+      visitor.state = 'traded'
+      assignVisitorCommission(save, visitorId, 'safe', () => 0, start)
+    }, dependencies)
+    const assigned = await getPersistedGameV3('atomic-user')
+    const finish = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!.finishesAt
+    const reconcileDependencies = { ...dependencies, now: () => new Date(finish) }
+    await getSaveGame('atomic-user', reconcileDependencies)
+
+    const ready = await getPersistedGameV3('atomic-user')
+    const readyVisitor = ready.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
+    const rewardItemId = readyVisitor.commission!.rewardItemId!
+    const view = mapPersistedGameToGameView(ready, new Date(finish))
+    expect(ready.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'settlement', custodyId: readyVisitor.commission!.id })
+    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: readyVisitor.commission!.id }))
+    expect(view.items).toContainEqual(expect.objectContaining({ itemId: rewardItemId, custody: expect.objectContaining({ kind: 'settlement' }) }))
+
+    await mutateSaveGameAtomic('atomic-user', 'claim-flow', 'commission:claim:flow', ready.revision, {}, (save) => {
+      claimVisitorCommission(save, visitorId, new Date(finish), () => 0.99)
+    }, reconcileDependencies)
+    const claimed = await getPersistedGameV3('atomic-user')
+    expect(claimed.stash.filter((itemId) => itemId === rewardItemId)).toHaveLength(1)
+    expect(claimed.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
+    expect(claimed.expeditionsById[readyVisitor.commission!.id]).toBeDefined()
   })
 
   it('recovers an exact replay when replaceOne throws after committing', async () => {
@@ -214,7 +260,8 @@ describe('atomic persisted-game mutation', () => {
   it('retains every permanent ledger key and at least 30 days of replay records', async () => {
     const { mutateSaveGameAtomic, sanitizeGameResponse } = await import('../server/utils/savegame')
     const persisted = document as PersistedGameV3
-    const replayResponse = sanitizeGameResponse(createSaveGame('atomic-user')) as never
+    const replayResponse = sanitizeGameResponse(createSaveGame('atomic-user'))
+    replayResponse.revision = 1
     for (let index = 0; index < 510; index += 1) {
       const businessKey = `historic:${index}`
       persisted.businessKeys[businessKey] = `historic-request-${index}`
@@ -226,8 +273,8 @@ describe('atomic persisted-game mutation', () => {
     }
     persisted.revision = 510
     persisted.requestRecords.push(
-      { requestId: 'expired', operationKey: 'expired', businessKey: 'expired', commandHash: 'b'.repeat(64), response: replayResponse, revision: 1, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
-      { requestId: 'recent', operationKey: 'recent', businessKey: 'recent', commandHash: 'c'.repeat(64), response: replayResponse, revision: 1, createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z' }
+      { requestId: 'expired', operationKey: 'expired', businessKey: 'expired', commandHash: 'b'.repeat(64), response: replayResponse as never, revision: 1, createdAt: '2026-07-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z' },
+      { requestId: 'recent', operationKey: 'recent', businessKey: 'recent', commandHash: 'c'.repeat(64), response: replayResponse as never, revision: 1, createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z' }
     )
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-13T00:00:00.000Z'))

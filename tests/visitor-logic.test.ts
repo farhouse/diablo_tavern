@@ -69,6 +69,21 @@ describe('visitor trade and commission loop', () => {
     expect(visitor.trades.map((trade) => trade.kind)).toEqual(['player_sold', 'player_bought'])
   })
 
+  it('rejects purchases against effective caravan capacity before mutating trade state', () => {
+    const save = createSaveGame('effective-capacity-purchase')
+    const visitor = visitors(save)[0]!
+    const offer = visitor.offers[0]!
+    save.gold = offer.price
+    save._effectiveCapacityUsed = save.stashLimit
+    const before = structuredClone(save)
+
+    expect(hasPurchaseAction(save)).toBe(false)
+    expect(() => buyFromVisitor(save, visitor.id, offer.id, 'over-capacity')).toThrow('Stash is full')
+    expect(save.gold).toBe(before.gold)
+    expect(offer.purchasedAt).toBeUndefined()
+    expect(visitor.trades).toEqual(before.visitRound.slots[0]!.visitor!.trades)
+  })
+
   it('recovers a full, cashless stash of unidentified items without exceeding its capacity', () => {
     const save = createSaveGame('unidentified-commercial-recovery')
     save.gold = 0
@@ -92,6 +107,19 @@ describe('visitor trade and commission loop', () => {
     expect(offer).toBeTruthy()
     buyFromVisitor(save, visitor.id, offer!.id, 'recovery-purchase')
     expect(save.stash).toHaveLength(save.stashLimit)
+  })
+
+  it('does not fabricate a soft-lock recovery item when off-stash ownership fills capacity', () => {
+    const save = createSaveGame('off-stash-soft-lock')
+    save.gold = 0
+    save.stash = []
+    save._effectiveCapacityUsed = save.stashLimit
+
+    save.visitRound = createVisitRound(save, 2, new Date('2026-01-01T00:00:00Z'), seeded(31))
+
+    expect(save.stash).toEqual([])
+    expect(save._effectiveCapacityUsed).toBe(save.stashLimit)
+    expect(hasPurchaseAction(save)).toBe(false)
   })
 
   it('guarantees the post-recovery purchase for the cheapest item at the minimum quote roll', () => {
@@ -278,6 +306,28 @@ describe('visitor trade and commission loop', () => {
     expect(visitor.commission!.status).toBe('claimed')
     expect(save.visitHistory[0]!.slots.flatMap((slot) => slot.visitor ? [slot.visitor.id] : [])).toContain(visitor.id)
     expect(() => claimVisitorCommission(save, visitor.id, finished)).toThrow('not found')
+  })
+
+  it('creates a capacity-counted pending reward on reconcile and claims that same item', () => {
+    const save = createSaveGame('pending-reward-flow')
+    const visitor = visitors(save)[0]!
+    visitor.state = 'traded'
+    const startedAt = new Date('2026-01-01T00:00:00.000Z')
+    assignVisitorCommission(save, visitor.id, 'safe', () => 0, startedAt)
+    save._effectiveCapacityUsed = save.stash.length
+
+    const finishedAt = new Date(visitor.commission!.finishesAt)
+    refreshVisitRound(save, finishedAt, () => 0)
+    const pendingItemId = visitor.commission!.rewardItem?.id
+
+    expect(visitor.commission!.status).toBe('ready')
+    expect(pendingItemId).toBeTruthy()
+    expect(save.stash.some((item) => item.id === pendingItemId)).toBe(false)
+    expect(save._effectiveCapacityUsed).toBe(save.stash.length + 1)
+
+    claimVisitorCommission(save, visitor.id, finishedAt, () => 0.99)
+    expect(save.stash.filter((item) => item.id === pendingItemId)).toHaveLength(1)
+    expect(save._effectiveCapacityUsed).toBe(save.stash.length)
   })
 
   it('enforces at most two unclaimed commissions', () => {

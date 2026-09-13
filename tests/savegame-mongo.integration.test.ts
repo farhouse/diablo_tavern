@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -82,6 +82,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(projected.expeditions).toContainEqual(expect.objectContaining({ expeditionId: 'expedition-a' }))
     expect(projected.items).toContainEqual(expect.objectContaining({ itemId, custody: expect.objectContaining({ expeditionId: 'expedition-a' }) }))
     await transitionItemAtomic(userIds[7]!, 'mongo-return-a', 1, { operation: 'return', itemId, targetId: 'expedition-a' })
+    expect((await getPersistedGameV3(userIds[7]!)).expeditionsById['expedition-a']).toBeDefined()
     await transitionItemAtomic(userIds[7]!, 'mongo-loan-b', 2, { operation: 'loan', itemId, targetId: 'expedition-b' })
 
     const materials = await getPersistedGameV3(userIds[8]!)
@@ -89,6 +90,53 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     await transitionItemAtomic(userIds[8]!, 'mongo-dismantle', 0, { operation: 'dismantle', itemId: dismantledId, targetId: 'scrap' })
     const persisted = await collection.findOne({ userId: userIds[8] })
     expect(persisted?.ledger[0].materialDeltas.scrap).toBe(persisted?.materials.scrap)
+  })
+
+  it('persists the real commission pending reward before claiming it', async () => {
+    const { getPersistedGameV3, getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const { assignVisitorCommission, claimVisitorCommission } = await import('../utils/visitor-logic')
+    const initial = await getPersistedGameV3(userIds[11]!)
+    const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
+    const start = new Date('2026-09-13T00:00:00.000Z')
+    const dependencies = { now: () => start, random: () => 0, uuid: () => 'mongo-pending-flow' }
+    await mutateSaveGameAtomic(userIds[11]!, 'mongo-assign-flow', 'commission:assign:mongo-flow', 0, {}, (save) => {
+      const visitor = save.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
+      visitor.state = 'traded'
+      assignVisitorCommission(save, visitorId, 'safe', () => 0, start)
+    }, dependencies)
+    const assigned = await getPersistedGameV3(userIds[11]!)
+    const finish = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!.finishesAt
+    const reconcileDependencies = { ...dependencies, now: () => new Date(finish) }
+    await getSaveGame(userIds[11]!, reconcileDependencies)
+    const ready = await getPersistedGameV3(userIds[11]!)
+    const commission = ready.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
+    const rewardItemId = commission.rewardItemId!
+    const view = mapPersistedGameToGameView(ready, new Date(finish))
+    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: commission.id }))
+    expect(ready.itemPlacements[rewardItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'settlement' })
+    await mutateSaveGameAtomic(userIds[11]!, 'mongo-claim-flow', 'commission:claim:mongo-flow', ready.revision, {}, (save) => {
+      claimVisitorCommission(save, visitorId, new Date(finish), () => 0.99)
+    }, reconcileDependencies)
+    const claimed = await getPersistedGameV3(userIds[11]!)
+    expect(claimed.stash.filter((itemId) => itemId === rewardItemId)).toHaveLength(1)
+    expect(claimed.itemPlacements[rewardItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'stash' })
+  })
+
+  it('preserves normative service custody through a generic Mongo mutation', async () => {
+    const { getPersistedGameV3, mutateSaveGameAtomic, transitionItemAtomic } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3(userIds[12]!)
+    const itemId = initial.stash[0]!
+    initial.serviceJobsById['mongo-service'] = {
+      id: 'mongo-service', itemIds: [],
+      projection: { kind: 'service', service: 'blacksmith', queuedAt: initial.updatedAt, startsAt: initial.updatedAt }
+    }
+    await collection.replaceOne({ userId: userIds[12] }, initial)
+    await transitionItemAtomic(userIds[12]!, 'mongo-service-item', 0, { operation: 'service', itemId, targetId: 'mongo-service' })
+    await mutateSaveGameAtomic(userIds[12]!, 'mongo-generic', 'generic:gold', 1, {}, (save) => { save.gold += 1 })
+    const reloaded = await getPersistedGameV3(userIds[12]!)
+    expect(reloaded.itemPlacements[itemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: 'mongo-service' })
+    expect(reloaded.serviceJobsById['mongo-service']?.itemIds).toEqual([itemId])
   })
 
   it('recovers the committed response after the repository driver throws', async () => {
@@ -167,8 +215,14 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
 })
 
 function addExpedition(game: PersistedGameV3, id: string): void {
-  const visitorId = game.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
+  const visitor = game.visitRound.slots.find((slot) => slot.visitor)?.visitor
+  const visitorId = visitor?.id ?? 'missing'
+  if (visitor && !visitor.commission) visitor.commission = {
+    ...visitor.commissionOptions[0]!, id: `contract-${id}`, status: 'active',
+    startedAt: game.updatedAt, finishesAt: game.updatedAt, outcomeRoll: 0.5
+  }
+  const contractId = visitor?.commission?.id ?? `contract-${id}`
   game.expeditionsById[id] = {
-    id, itemIds: [], projection: { kind: 'expedition', visitorId, contractId: `contract-${id}`, startsAt: game.updatedAt }
+    id, itemIds: [], projection: { kind: 'expedition', visitorId, contractId, startsAt: game.updatedAt }
   }
 }

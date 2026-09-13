@@ -92,6 +92,72 @@ describe('PersistedGameV3 invariants', () => {
     }
   })
 
+  it('preserves normative service custody through compatibility round trips', async () => {
+    const persisted = buildPersistedFromPublic(createSaveGame('service-round-trip'))
+    const itemId = persisted.stash[0]!
+    addTarget(persisted, 'service', 'blacksmith-job')
+    const serviced = applyItemTransition(persisted, { operation: 'service', itemId, targetId: 'blacksmith-job' }).game
+    const { hydratePersistedGame } = await import('../server/utils/savegame')
+    const rebuilt = buildPersistedFromPublic(hydratePersistedGame(serviced), serviced)
+
+    expect(rebuilt.itemPlacements[itemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: 'blacksmith-job' })
+    expect(rebuilt.serviceJobsById['blacksmith-job']?.itemIds).toEqual([itemId])
+    expect(isPersistedCanonical(rebuilt)).toBe(true)
+  })
+
+  it('rejects sharing one normative service job between multiple items', () => {
+    const persisted = buildPersistedFromPublic(createSaveGame('service-cardinality'))
+    addTarget(persisted, 'service', 'single-job')
+    const first = applyItemTransition(persisted, { operation: 'service', itemId: persisted.stash[0]!, targetId: 'single-job' }).game
+    expect(() => applyItemTransition(first, { operation: 'service', itemId: first.stash[0]!, targetId: 'single-job' }))
+      .toThrow('already has an item')
+  })
+
+  it('preserves authoritative expedition history after its item returns', () => {
+    const persisted = buildPersistedFromPublic(createSaveGame('expedition-history'))
+    addTarget(persisted, 'loan', 'expedition-a')
+    const itemId = persisted.stash[0]!
+    const loaned = applyItemTransition(persisted, { operation: 'loan', itemId, targetId: 'expedition-a' }).game
+    const returned = applyItemTransition(loaned, { operation: 'return', itemId, targetId: 'expedition-a' }).game
+    expect(returned.expeditionsById['expedition-a']).toBeDefined()
+    expect(returned.expeditionsById['expedition-a']?.itemIds).toEqual([])
+    expect(isPersistedCanonical(returned)).toBe(true)
+  })
+
+  it('rejects duplicate visitors and expedition contract mismatches', () => {
+    const duplicate = buildPersistedFromPublic(createSaveGame('duplicate-visitor'))
+    duplicate.visitHistory.push(structuredClone(duplicate.visitRound))
+    expect(isPersistedCanonical(duplicate)).toBe(false)
+
+    const mismatch = buildPersistedFromPublic(createSaveGame('contract-mismatch'))
+    addTarget(mismatch, 'loan', 'expedition-mismatch')
+    const expedition = mismatch.expeditionsById['expedition-mismatch']!
+    if (expedition.projection?.kind === 'expedition') expedition.projection.contractId = 'foreign-contract'
+    expect(isPersistedCanonical(mismatch)).toBe(false)
+  })
+
+  it('requires ledger and business keys in both directions and bounds replay revisions', () => {
+    const orphanLedger = buildPersistedFromPublic(createSaveGame('orphan-ledger'))
+    orphanLedger.revision = 1
+    orphanLedger.ledger.push({
+      at: orphanLedger.updatedAt, requestId: 'orphan-request', operationKey: 'orphan', businessKey: 'orphan',
+      commandHash: 'a'.repeat(64), revision: 1, goldDelta: 0, materialDeltas: {}, itemChanges: []
+    })
+    expect(isPersistedCanonical(orphanLedger)).toBe(false)
+
+    const orphanBusinessKey = buildPersistedFromPublic(createSaveGame('orphan-business-key'))
+    orphanBusinessKey.businessKeys.orphan = 'orphan-request'
+    expect(isPersistedCanonical(orphanBusinessKey)).toBe(false)
+
+    const futureReplay = buildPersistedFromPublic(createSaveGame('future-replay'))
+    futureReplay.requestRecords.push({
+      requestId: 'future', operationKey: 'future', businessKey: 'future', commandHash: 'b'.repeat(64),
+      response: sanitizeGameResponse(createSaveGame('future-replay')) as never,
+      revision: futureReplay.revision + 1, createdAt: futureReplay.createdAt, updatedAt: futureReplay.updatedAt
+    })
+    expect(isPersistedCanonical(futureReplay)).toBe(false)
+  })
+
   it('counts an unclaimed commission reward as caravan property', () => {
     const save = createSaveGame('pending-reward')
     const visitor = save.visitRound.slots.find((slot) => slot.visitor)?.visitor!
@@ -182,9 +248,12 @@ describe('PersistedGameV3 invariants', () => {
 function addTarget(game: PersistedGameV3, operation: 'loan' | 'service' | 'recover', targetId: string): void {
   const at = game.updatedAt
   if (operation === 'loan') {
-    const visitorId = game.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
+    const visitor = game.visitRound.slots.find((slot) => slot.visitor)?.visitor
+    const visitorId = visitor?.id ?? 'missing'
+    if (visitor && !visitor.commission) visitor.commission = commissionFor(visitor, `contract-${targetId}`, at)
+    const contractId = visitor?.commission?.id ?? `contract-${targetId}`
     game.expeditionsById[targetId] = {
-      id: targetId, itemIds: [], projection: { kind: 'expedition', visitorId, contractId: `contract-${targetId}`, startsAt: at }
+      id: targetId, itemIds: [], projection: { kind: 'expedition', visitorId, contractId, startsAt: at }
     }
   } else if (operation === 'service') {
     game.serviceJobsById[targetId] = {
@@ -192,12 +261,22 @@ function addTarget(game: PersistedGameV3, operation: 'loan' | 'service' | 'recov
     }
   } else {
     const sourceExpeditionId = `source-${targetId}`
-    const visitorId = game.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
+    const visitor = game.visitRound.slots.find((slot) => slot.visitor)?.visitor
+    const visitorId = visitor?.id ?? 'missing'
+    if (visitor && !visitor.commission) visitor.commission = commissionFor(visitor, `contract-${targetId}`, at)
+    const contractId = visitor?.commission?.id ?? `contract-${targetId}`
     game.expeditionsById[sourceExpeditionId] = {
-      id: sourceExpeditionId, itemIds: [], projection: { kind: 'expedition', visitorId, contractId: `contract-${targetId}`, startsAt: at }
+      id: sourceExpeditionId, itemIds: [], projection: { kind: 'expedition', visitorId, contractId, startsAt: at }
     }
     game.recoveriesById[targetId] = {
       id: targetId, itemIds: [], projection: { kind: 'recovery', sourceExpeditionId, resolvedAt: at }
     }
+  }
+}
+
+function commissionFor(visitor: PersistedGameV3['visitRound']['slots'][number]['visitor'], id: string, at: string) {
+  return {
+    ...visitor!.commissionOptions[0]!, id, status: 'active' as const,
+    startedAt: at, finishesAt: at, outcomeRoll: 0.5
   }
 }
