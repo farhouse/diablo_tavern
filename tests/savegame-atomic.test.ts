@@ -201,7 +201,10 @@ describe('atomic persisted-game mutation', () => {
       assignVisitorCommission(save, visitorId, 'safe', () => 0, start)
     }, dependencies)
     const assigned = await getPersistedGameV3('atomic-user')
-    const finish = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!.finishesAt
+    const assignedCommission = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
+    expect(assigned.expeditionsById[assignedCommission.id]).toBeDefined()
+    expect(assigned.settlementsById[assignedCommission.id]).toBeUndefined()
+    const finish = assignedCommission.finishesAt
     const reconcileDependencies = { ...dependencies, now: () => new Date(finish) }
     await getSaveGame('atomic-user', reconcileDependencies)
 

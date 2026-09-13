@@ -3,6 +3,7 @@ import { createSaveGame } from '../utils/game-logic'
 import { buildPersistedFromPublic, isPersistedCanonical, sanitizeGameResponse, type PersistedGameV3 } from '../server/utils/savegame'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
 import { applyItemTransition, effectiveCapacityUsed } from '../server/domain/item-transitions'
+import { assignVisitorCommission, refreshVisitRound } from '../utils/visitor-logic'
 
 describe('PersistedGameV3 invariants', () => {
   it('stores each actionable item once and only references it from containers', () => {
@@ -172,6 +173,65 @@ describe('PersistedGameV3 invariants', () => {
     expect(effectiveCapacityUsed(persisted)).toBe(save.stash.length + 1)
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
     expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: 'commission-reward' }))
+  })
+
+  it.each(['partial', 'failed'] as const)('projects %s commission lifecycle without fabricating an item', (outcome) => {
+    const save = createSaveGame(`commission-${outcome}`)
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    visitor.state = 'returned'
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!, id: `commission-${outcome}`, status: 'ready',
+      startedAt: save.createdAt, finishesAt: save.updatedAt, outcomeRoll: 0.5,
+      outcome, rewardGold: outcome === 'partial' ? 1 : 0
+    }
+    const persisted = buildPersistedFromPublic(save)
+    const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
+    expect(persisted.expeditionsById[visitor.commission.id]).toBeDefined()
+    expect(persisted.settlementsById[visitor.commission.id]?.itemIds).toEqual([])
+    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: visitor.commission.id }))
+  })
+
+  it('projects a completed commission settlement when effective capacity leaves no reward slot', () => {
+    const save = createSaveGame('commission-full-capacity')
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    visitor.state = 'traded'
+    const startedAt = new Date('2026-01-01T00:00:00.000Z')
+    assignVisitorCommission(save, visitor.id, 'safe', () => 0, startedAt)
+    save.stashLimit = save.stash.length
+    save._effectiveCapacityUsed = save.stashLimit
+    refreshVisitRound(save, new Date(visitor.commission!.finishesAt), () => 0)
+    expect(visitor.commission!.rewardItem).toBeUndefined()
+
+    const persisted = buildPersistedFromPublic(save)
+    const view = mapPersistedGameToGameView(persisted, new Date(visitor.commission!.finishesAt))
+    expect(persisted.settlementsById[visitor.commission!.id]?.itemIds).toEqual([])
+    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: visitor.commission!.id }))
+  })
+
+  it('prunes empty lifecycle after its visitor ages out of bounded history', async () => {
+    const persisted = buildPersistedFromPublic(createSaveGame('history-pruning'))
+    const visitor = persisted.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    visitor.commission = commissionFor(visitor, 'old-contract', persisted.updatedAt)
+    persisted.expeditionsById['old-contract'] = {
+      id: 'old-contract', itemIds: [],
+      projection: { kind: 'expedition', visitorId: visitor.id, contractId: 'old-contract', startsAt: persisted.updatedAt }
+    }
+    persisted.visitHistory = [structuredClone(persisted.visitRound)]
+    persisted.visitRound = {
+      id: 'empty-current', number: 99,
+      slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: persisted.updatedAt
+    }
+    for (let index = 0; index < 20; index += 1) {
+      persisted.visitHistory.unshift({
+        id: `empty-history-${index}`, number: 98 - index,
+        slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: persisted.updatedAt
+      })
+    }
+    expect(isPersistedCanonical(persisted)).toBe(true)
+    const { hydratePersistedGame } = await import('../server/utils/savegame')
+    const rebuilt = buildPersistedFromPublic(hydratePersistedGame(persisted), persisted)
+    expect(rebuilt.expeditionsById['old-contract']).toBeUndefined()
+    expect(isPersistedCanonical(rebuilt)).toBe(true)
   })
 
   it('deeply strips private rolls from compatibility responses', () => {

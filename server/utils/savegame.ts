@@ -538,38 +538,38 @@ export function buildPersistedFromPublic(
           }
         }
       }
-      if (visitor.commission?.rewardItemId && visitor.commission.status !== 'claimed') {
-        const rewardItemId = visitor.commission.rewardItemId
-        const settlementId = visitor.commission.id
-        itemPlacements[rewardItemId] = { ownerKind: 'caravan', custodyKind: 'settlement', custodyId: settlementId }
-        settlementsById[settlementId] = {
-          id: settlementId,
-          itemIds: [rewardItemId],
-          projection: {
-            kind: 'settlement',
-            expeditionId: visitor.commission.id,
-            outcome: visitor.commission.outcome === 'failed' ? 'death' : visitor.commission.outcome === 'partial' ? 'retreated' : 'returned',
-            appliedAt: visitor.commission.finishesAt
+      const commission = visitor.commission
+      if (!commission) continue
+      const expedition = expeditionsById[commission.id]
+      expeditionsById[commission.id] = {
+        id: commission.id,
+        itemIds: [...(expedition?.itemIds ?? [])],
+        projection: {
+          kind: 'expedition', visitorId: visitor.id, contractId: commission.id, startsAt: commission.startedAt
+        }
+      }
+      if (commission.status !== 'active' && commission.outcome) {
+        const pendingRewardIds = commission.rewardItemId && commission.status !== 'claimed'
+          ? [commission.rewardItemId]
+          : []
+        if (pendingRewardIds[0]) {
+          itemPlacements[pendingRewardIds[0]] = {
+            ownerKind: 'caravan', custodyKind: 'settlement', custodyId: commission.id
           }
         }
-        expeditionsById[visitor.commission.id] = {
-          id: visitor.commission.id,
-          itemIds: [],
+        settlementsById[commission.id] = {
+          id: commission.id,
+          itemIds: pendingRewardIds,
           projection: {
-            kind: 'expedition',
-            visitorId: visitor.id,
-            contractId: visitor.commission.id,
-            startsAt: visitor.commission.startedAt
+            kind: 'settlement', expeditionId: commission.id,
+            outcome: commission.outcome === 'failed' ? 'death' : commission.outcome === 'partial' ? 'retreated' : 'returned',
+            appliedAt: commission.finishesAt
           }
-        }
-      } else if (visitor.commission?.rewardItemId) {
-        const settlement = settlementsById[visitor.commission.id]
-        if (settlement) {
-          settlement.itemIds = settlement.itemIds.filter((itemId) => itemId !== visitor.commission!.rewardItemId)
         }
       }
     }
   }
+  pruneEmptyOrphanedLifecycle(expeditionsById, settlementsById, recoveriesById, visitRound, visitHistory)
   for (const [itemId, item] of Object.entries(previous?.itemsById ?? {})) {
     if (!itemsById[itemId]) itemsById[itemId] = structuredClone(item)
   }
@@ -664,6 +664,21 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   for (const container of Object.values(candidate.expeditionsById as Record<string, PersistedCustodyContainer>)) {
     if (container.projection?.kind !== 'expedition' || !visitorIds.has(container.projection.visitorId)) return false
     if (visitorContracts.get(container.projection.visitorId) !== container.projection.contractId) return false
+  }
+  for (const visitor of visitors) {
+    if (!visitor.commission) continue
+    const expeditions = Object.values(candidate.expeditionsById as Record<string, PersistedCustodyContainer>)
+      .filter((container) => container.projection?.kind === 'expedition'
+        && container.projection.visitorId === visitor.id
+        && container.projection.contractId === visitor.commission!.id)
+    if (expeditions.length === 0) return false
+    if (visitor.commission.status !== 'active' && visitor.commission.outcome) {
+      const settledExpeditionIds = new Set(expeditions.map((expedition) => expedition.id))
+      const hasSettlement = Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)
+        .some((settlement) => settlement.projection?.kind === 'settlement'
+          && settledExpeditionIds.has(settlement.projection.expeditionId))
+      if (!hasSettlement) return false
+    }
   }
   for (const container of Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)) {
     if (container.projection?.kind !== 'settlement' || !(container.projection.expeditionId in (candidate.expeditionsById as object))) return false
@@ -1088,6 +1103,31 @@ function isReferencedByVisitors(itemId: string, current: PersistedVisitRound, hi
     || slot.visitor?.commission?.rewardItemId === itemId
     || slot.visitor?.trades.some((trade) => trade.itemId === itemId)
   ))
+}
+
+function pruneEmptyOrphanedLifecycle(
+  expeditions: Record<string, PersistedCustodyContainer>,
+  settlements: Record<string, PersistedCustodyContainer>,
+  recoveries: Record<string, PersistedCustodyContainer>,
+  current: PersistedVisitRound,
+  history: PersistedVisitRound[]
+): void {
+  const visitorIds = new Set([current, ...history].flatMap((round) =>
+    round.slots.flatMap((slot) => slot.visitor ? [slot.visitor.id] : [])))
+  for (const [expeditionId, expedition] of Object.entries(expeditions)) {
+    const projection = expedition.projection
+    if (projection?.kind !== 'expedition' || visitorIds.has(projection.visitorId)) continue
+    const dependentSettlements = Object.entries(settlements)
+      .filter(([, container]) => container.projection?.kind === 'settlement' && container.projection.expeditionId === expeditionId)
+    const dependentRecoveries = Object.entries(recoveries)
+      .filter(([, container]) => container.projection?.kind === 'recovery' && container.projection.sourceExpeditionId === expeditionId)
+    if (expedition.itemIds.length > 0
+      || dependentSettlements.some(([, container]) => container.itemIds.length > 0)
+      || dependentRecoveries.some(([, container]) => container.itemIds.length > 0)) continue
+    for (const [id] of dependentSettlements) delete settlements[id]
+    for (const [id] of dependentRecoveries) delete recoveries[id]
+    delete expeditions[expeditionId]
+  }
 }
 
 function itemPlacementChanges(before: PersistedGameV3, after: PersistedGameV3): PersistedLedgerEntry['itemChanges'] {
