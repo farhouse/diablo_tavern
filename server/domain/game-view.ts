@@ -35,7 +35,7 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     const placement = game.itemPlacements[itemId]
     // The legacy V1 appraiser is intentionally isolated: the normative V2
     // contract only defines blacksmith/enchanter jobs.
-    if (!placement || placement.custodyKind === 'tombstone' || placement.custodyKind === 'service') return []
+    if (!placement || placement.custodyKind === 'tombstone') return []
     return [mapItem(item, placement)]
   })
   const visitors: unknown[] = [game.visitRound, ...game.visitHistory].flatMap<unknown>((round) => round.slots.flatMap<unknown>((slot) => {
@@ -70,6 +70,23 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     }]
   }))
   const transitions = collectTransitions(game).filter((timestamp) => Date.parse(timestamp) > now.getTime()).sort()
+  const expeditions = Object.values(game.expeditionsById).map((container) => ({
+    expeditionId: container.id, visitorId: `visitor-${container.id}`, contractId: `contract-${container.id}`,
+    state: 'scheduled', actions: [], startsAt: game.updatedAt
+  }))
+  const settlements = Object.values(game.settlementsById).map((container) => ({
+    settlementId: container.id, expeditionId: `expedition-${container.id}`, state: 'settled', outcome: 'returned',
+    appliedAt: game.updatedAt, appliedBy: 'confirmation', appliedChoices: [], visitorResolution: 'stays', actions: []
+  }))
+  const recoveries = Object.values(game.recoveriesById).map((container) => ({
+    recoveryId: container.id, sourceExpeditionId: `expedition-${container.id}`, itemIds: [...container.itemIds],
+    state: 'recovered', actions: [], resolvedAt: game.updatedAt, recoveredItemIds: [...container.itemIds]
+  }))
+  const serviceJobs = Object.values(game.serviceJobsById).flatMap((container) => container.itemIds.slice(0, 1).map((itemId) => ({
+    jobId: container.id, itemId, service: 'blacksmith', state: 'queued',
+    label: { key: `service.${container.id}`, fallback: 'Servicio de artesano' }, actions: [],
+    queuedAt: game.updatedAt, startsAt: game.updatedAt
+  })))
   const view: GameView = {
     contractVersion: 'v2-etapa0-3',
     labelCatalogVersion: 'es-AR-v1',
@@ -84,10 +101,10 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
       blockers: []
     },
     visitors,
-    expeditions: [],
-    settlements: [],
-    recoveries: [],
-    serviceJobs: [],
+    expeditions,
+    settlements,
+    recoveries,
+    serviceJobs,
     items,
     actions: []
   }

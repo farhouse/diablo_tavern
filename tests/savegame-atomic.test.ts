@@ -108,6 +108,37 @@ describe('atomic persisted-game mutation', () => {
       .rejects.toBeInstanceOf(BusinessKeyConflictError)
   })
 
+  it('records material deltas and permits a later transition instance for the same item', async () => {
+    const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3('atomic-user')
+    const itemId = initial.stash[0]!
+    initial.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [] }
+    initial.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [] }
+    document = initial
+
+    await transitionItemAtomic('atomic-user', 'loan-a', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
+    await transitionItemAtomic('atomic-user', 'return-a', 1, { operation: 'return', itemId, targetId: 'expedition-a' })
+    await transitionItemAtomic('atomic-user', 'loan-b', 2, { operation: 'loan', itemId, targetId: 'expedition-b' })
+    const secondItem = (document as PersistedGameV3).stash.find((id) => id !== itemId)!
+    await transitionItemAtomic('atomic-user', 'dismantle', 3, { operation: 'dismantle', itemId: secondItem, targetId: 'scrap' })
+
+    expect((document as PersistedGameV3).ledger.at(-1)?.materialDeltas.scrap).toBeGreaterThan(0)
+    expect((document as PersistedGameV3).ledger.map((entry) => entry.businessKey)).toContain(JSON.stringify(['item-transition', 'loan', itemId, 'expedition-b']))
+  })
+
+  it('recovers an exact replay when replaceOne throws after committing', async () => {
+    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const original = collection.replaceOne.getMockImplementation()!
+    collection.replaceOne.mockImplementationOnce(async (...args: Parameters<typeof original>) => {
+      await original(...args)
+      throw new Error('simulated network loss after commit')
+    })
+    const mutate = vi.fn((save: SaveGame) => { save.gold += 11 })
+    const result = await mutateSaveGameAtomic('atomic-user', 'thrown-uncertain', 'credit:thrown', 0, { amount: 11 }, mutate)
+    expect(result.gold).toBe(461)
+    expect(mutate).toHaveBeenCalledOnce()
+  })
+
   it('removes completed appraiser custody before persisting', async () => {
     const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
     const { completeAppraisalQueue } = await import('../utils/game-logic')
@@ -139,7 +170,7 @@ describe('atomic persisted-game mutation', () => {
       persisted.ledger.push({
         at: '2026-07-01T00:00:00.000Z', requestId: `historic-request-${index}`,
         operationKey: businessKey, commandHash: 'a'.repeat(64), businessKey,
-        revision: index + 1, goldDelta: 0, itemChanges: []
+        revision: index + 1, goldDelta: 0, materialDeltas: {}, itemChanges: []
       })
     }
     persisted.revision = 510
@@ -171,6 +202,12 @@ describe('atomic persisted-game mutation', () => {
   it('rejects corrupt schema 3 instead of normalizing it', async () => {
     const { getSaveGame, PersistedGameCorruptError } = await import('../server/utils/savegame')
     document = { userId: 'atomic-user', schemaVersion: 3, revision: 0, gold: 450 }
+    await expect(getSaveGame('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+  })
+
+  it('rejects legacy fields on a document that declares schema 3', async () => {
+    const { getSaveGame, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    document = { ...(document as PersistedGameV3), heroes: [], processedRequests: [] }
     await expect(getSaveGame('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
 })

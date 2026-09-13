@@ -48,6 +48,7 @@ export interface PersistedLedgerEntry {
   businessKey: string
   revision: number
   goldDelta: number
+  materialDeltas: Record<string, number>
   itemChanges: Array<{ itemId: string; from?: PersistedItemPlacement; to: PersistedItemPlacement }>
 }
 
@@ -116,11 +117,11 @@ export async function getPersistedGameV3(userId: string, dependencies = defaultD
       return created
     }
 
-    if (existing.schemaVersion === SAVE_SCHEMA_VERSION && !hasLegacyFields(existing) && !isPersistedCanonical(existing)) {
+    if (existing.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(existing) || !isPersistedCanonical(existing))) {
       throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
     }
 
-    const existingIsLegacy = existing.schemaVersion !== SAVE_SCHEMA_VERSION || hasLegacyFields(existing) || !hasPersistedV3Shape(existing)
+    const existingIsLegacy = existing.schemaVersion !== SAVE_SCHEMA_VERSION
     if (existingIsLegacy) {
       const replacement = createPersistedGameV3(userId, dependencies)
       replacement.revision = (typeof existing.revision === 'number' ? existing.revision : 0) + 1
@@ -219,7 +220,7 @@ export async function mutateSaveGameAtomic(
       continue
     }
 
-    if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && !hasLegacyFields(currentDocument) && !isPersistedCanonical(currentDocument)) {
+    if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(currentDocument) || !isPersistedCanonical(currentDocument))) {
       throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
     }
 
@@ -238,7 +239,7 @@ export async function mutateSaveGameAtomic(
       throw new BusinessKeyConflictError('business key was already committed and its replay record is unavailable')
     }
 
-    if (currentDocument.schemaVersion !== SAVE_SCHEMA_VERSION || hasLegacyFields(currentDocument) || !hasPersistedV3Shape(currentDocument)) {
+    if (currentDocument.schemaVersion !== SAVE_SCHEMA_VERSION) {
       await getSaveGame(userId, dependencies)
       continue
     }
@@ -290,6 +291,7 @@ export async function mutateSaveGameAtomic(
         businessKey,
         revision: nextRevision,
         goldDelta: next.gold - persisted.gold,
+        materialDeltas: resourceDeltas(persisted.materials, next.materials),
         itemChanges: itemPlacementChanges(persisted, next)
       }],
       schemaVersion: SAVE_SCHEMA_VERSION
@@ -298,15 +300,25 @@ export async function mutateSaveGameAtomic(
       throw new PersistedGameCorruptError('Mutation produced an invalid PersistedGameV3 document')
     }
 
-    const replaceResult = await saves.replaceOne(
-      {
-        userId,
-        ...(currentView.revision === 0
-          ? { $or: [{ revision: 0 }, { revision: { $exists: false } }] }
-          : { revision: currentView.revision })
-      } as Filter<DbSaveGame>,
-      nextPersisted as unknown as DbSaveGame
-    )
+    let replaceResult
+    try {
+      replaceResult = await saves.replaceOne(
+        {
+          userId,
+          ...(currentView.revision === 0
+            ? { $or: [{ revision: 0 }, { revision: { $exists: false } }] }
+            : { revision: currentView.revision })
+        } as Filter<DbSaveGame>,
+        nextPersisted as unknown as DbSaveGame
+      )
+    } catch (error) {
+      const afterError = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+      if (afterError && isPersistedCanonical(afterError)) {
+        const replay = afterError.requestRecords.find((record) => record.requestId === requestId)
+        if (replay?.commandHash === requestHash) return replay.response as unknown as SaveGame
+      }
+      throw error
+    }
     if (replaceResult.modifiedCount === 1) {
       return sanitizeGameResponse(validated)
     }
@@ -343,7 +355,7 @@ export async function transitionItemAtomic(
 ): Promise<PublicSaveGame> {
   const saves = await saveGamesCollection()
   const current = await getPersistedGameV3(userId, dependencies)
-  const operationKey = JSON.stringify(['item-transition', command.operation, command.itemId])
+  const operationKey = JSON.stringify(['item-transition', command.operation, command.itemId, command.targetId])
   const businessKey = operationKey
   const commandHash = hashCommand(operationKey, command)
   const replay = current.requestRecords.find((record) => record.requestId === requestId)
@@ -368,14 +380,25 @@ export async function transitionItemAtomic(
     at: now, requestId, operationKey, commandHash, businessKey,
     revision: transitioned.revision,
     goldDelta: transitioned.gold - current.gold,
+    materialDeltas: resourceDeltas(current.materials, transitioned.materials),
     itemChanges: itemPlacementChanges(current, transitioned)
   }]
   if (!isPersistedCanonical(transitioned)) throw new PersistedGameCorruptError('Item transition produced an invalid aggregate')
 
-  const result = await saves.replaceOne(
-    { userId, revision: expectedRevision } as Filter<DbSaveGame>,
-    transitioned as unknown as DbSaveGame
-  )
+  let result
+  try {
+    result = await saves.replaceOne(
+      { userId, revision: expectedRevision } as Filter<DbSaveGame>,
+      transitioned as unknown as DbSaveGame
+    )
+  } catch (error) {
+    const afterError = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+    if (afterError && isPersistedCanonical(afterError)) {
+      const exactReplay = afterError.requestRecords.find((record) => record.requestId === requestId)
+      if (exactReplay?.commandHash === commandHash) return exactReplay.response
+    }
+    throw error
+  }
   if (result.modifiedCount === 1) return response
   const winner = await getPersistedGameV3(userId, dependencies)
   const winnerReplay = winner.requestRecords.find((record) => record.requestId === requestId)
@@ -497,6 +520,12 @@ export function buildPersistedFromPublic(
           }
         }
       }
+      if (visitor.commission?.rewardItemId && visitor.commission.status !== 'claimed') {
+        const rewardItemId = visitor.commission.rewardItemId
+        const settlementId = visitor.commission.id
+        itemPlacements[rewardItemId] = { ownerKind: 'caravan', custodyKind: 'settlement', custodyId: settlementId }
+        settlementsById[settlementId] = { id: settlementId, itemIds: [rewardItemId] }
+      }
     }
   }
   for (const [itemId, item] of Object.entries(previous?.itemsById ?? {})) {
@@ -534,10 +563,11 @@ export function buildPersistedFromPublic(
     businessKeys: structuredClone(previous?.businessKeys ?? {}),
     ledger: structuredClone(previous?.ledger ?? [])
   }
-  if (!isPersistedCanonical(persisted)) {
+  const canonical = stripUndefinedDeep(persisted) as PersistedGameV3
+  if (!isPersistedCanonical(canonical)) {
     throw new PersistedGameCorruptError('Public aggregate cannot be represented as canonical PersistedGameV3')
   }
-  return persisted
+  return canonical
 }
 
 function hasLegacyFields(value: unknown): boolean {
@@ -545,16 +575,16 @@ function hasLegacyFields(value: unknown): boolean {
   return PERSISTENCE_LEGACY_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(value, field))
 }
 
-function hasPersistedV3Shape(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as { schemaVersion?: unknown }
-  return candidate.schemaVersion === SAVE_SCHEMA_VERSION
-}
-
 export function isPersistedCanonical(document: unknown): document is PersistedGameV3 {
   if (!document || typeof document !== 'object') return false
 
   const candidate = document as Record<string, unknown>
+  if (!hasOnlyKeys(candidate, [
+    '_id', 'userId', 'schemaVersion', 'gold', 'materials', 'caravan', 'stashLimit', 'stash',
+    'unlockedRegionIds', 'visitRound', 'visitHistory', 'revision', 'createdAt', 'updatedAt',
+    'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById',
+    'serviceJobsById', 'requestRecords', 'businessKeys', 'ledger'
+  ])) return false
 
   const stash = (document as { stash?: unknown }).stash
   const itemsById = (document as { itemsById?: Record<string, Item> }).itemsById
@@ -567,19 +597,23 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   }
 
   if (candidate.schemaVersion !== SAVE_SCHEMA_VERSION) return false
-  if (!Array.isArray(stash) || !itemsById || !itemPlacements) return false
+  if (!Array.isArray(stash) || !isPlainRecord(itemsById) || !isPlainRecord(itemPlacements)) return false
   if (typeof candidate.userId !== 'string' || !candidate.userId) return false
   if (!Number.isInteger(candidate.gold) || Number(candidate.gold) < 0 || !isResourceMap(candidate.materials)) return false
+  if (!Number.isInteger(candidate.stashLimit) || Number(candidate.stashLimit) < 0) return false
+  if (!Array.isArray(candidate.unlockedRegionIds) || !candidate.unlockedRegionIds.every((id) => typeof id === 'string' && Boolean(id))) return false
   if (!Number.isInteger(candidate.revision) || Number(candidate.revision) < 0) return false
   if (!Number.isFinite(Date.parse(String(candidate.createdAt))) || !Number.isFinite(Date.parse(String(candidate.updatedAt)))) return false
   if (!Array.isArray(candidate.requestRecords) || !Array.isArray(candidate.ledger)) return false
   if (!candidate.businessKeys || typeof candidate.businessKeys !== 'object' || Array.isArray(candidate.businessKeys)) return false
+  if (!Object.values(candidate.businessKeys as Record<string, unknown>).every((requestId) => typeof requestId === 'string' && Boolean(requestId))) return false
   if (!candidate.visitRound || typeof candidate.visitRound !== 'object' || !Array.isArray((candidate.visitRound as { slots?: unknown }).slots)) return false
   if (!Array.isArray(candidate.visitHistory)) return false
-  if (!candidate.caravan || typeof candidate.caravan !== 'object') return false
+  if (!isCaravan(candidate.caravan)) return false
   const caravan = candidate.caravan as Partial<SaveGame['caravan']>
   if (!caravan.services || !Array.isArray(caravan.services.appraiserQueue)) return false
-  const allRounds = [candidate.visitRound, ...candidate.visitHistory] as PersistedVisitRound[]
+  const allRounds = [candidate.visitRound, ...candidate.visitHistory]
+  if (!allRounds.every(isPersistedRound)) return false
   const visitorIds = new Set(allRounds.flatMap((round) => round.slots.flatMap((slot) => slot.visitor?.id ? [slot.visitor.id] : [])))
   if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
   if (Object.keys(itemsById).length !== Object.keys(itemPlacements).length) return false
@@ -597,7 +631,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   }
 
   for (const [itemId, placement] of Object.entries(itemPlacements)) {
-    if (!itemsById[itemId]) return false
+    if (!isItem(itemsById[itemId]) || !isPlacement(placement)) return false
     if (itemId !== itemsById[itemId]?.id) return false
     const compatible =
       (placement.ownerKind === 'caravan' && ['stash', 'service', 'expedition', 'recovery', 'settlement'].includes(placement.custodyKind))
@@ -638,10 +672,11 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
       }
       if (visitor.commission && Object.prototype.hasOwnProperty.call(visitor.commission, 'rewardItem')) return false
       if (visitor.commission?.rewardItemId) {
-        if (activeReferences.has(visitor.commission.rewardItemId)) return false
-        activeReferences.add(visitor.commission.rewardItemId)
         const placement = itemPlacements[visitor.commission.rewardItemId]
-        if (!itemsById[visitor.commission.rewardItemId] || placement?.ownerKind !== 'visitor' || placement.ownerId !== visitor.id) return false
+        if (!itemsById[visitor.commission.rewardItemId] || placement?.ownerKind !== 'caravan') return false
+        if (visitor.commission.status === 'claimed') {
+          if (placement.custodyKind !== 'stash') return false
+        } else if (placement.custodyKind !== 'settlement' || placement.custodyId !== visitor.commission.id) return false
       }
     }
   }
@@ -656,7 +691,8 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
 
   const requestIds = new Set<string>()
   for (const record of candidate.requestRecords as PersistedRequestRecord[]) {
-    if (!record || typeof record.requestId !== 'string' || requestIds.has(record.requestId)) return false
+    if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'revision', 'createdAt', 'updatedAt'])) return false
+    if (typeof record.requestId !== 'string' || requestIds.has(record.requestId)) return false
     if (!record.operationKey || !record.businessKey || typeof record.response !== 'object' || !record.response) return false
     if (!/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)) return false
     if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
@@ -667,11 +703,13 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   const ledgerKeys = new Set<string>()
   let previousLedgerRevision = 0
   for (const entry of candidate.ledger as PersistedLedgerEntry[]) {
-    if (!entry || typeof entry.businessKey !== 'string' || ledgerKeys.has(entry.businessKey)) return false
+    if (!isPlainRecord(entry) || !hasOnlyKeys(entry, ['at', 'requestId', 'operationKey', 'commandHash', 'businessKey', 'revision', 'goldDelta', 'materialDeltas', 'itemChanges'])) return false
+    if (typeof entry.businessKey !== 'string' || ledgerKeys.has(entry.businessKey)) return false
     if (!entry.requestId || !entry.operationKey || !/^[a-f0-9]{64}$/.test(entry.commandHash)) return false
     if (!Number.isFinite(Date.parse(entry.at)) || !Number.isInteger(entry.revision) || entry.revision < 1) return false
     if (entry.revision <= previousLedgerRevision || entry.revision > Number(candidate.revision)) return false
-    if (!Number.isInteger(entry.goldDelta) || !Array.isArray(entry.itemChanges)) return false
+    if (!Number.isInteger(entry.goldDelta) || !isSignedResourceMap(entry.materialDeltas) || !Array.isArray(entry.itemChanges)
+      || !entry.itemChanges.every(isItemChange)) return false
     ledgerKeys.add(entry.businessKey)
     previousLedgerRevision = entry.revision
   }
@@ -679,13 +717,136 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     const ledgerEntry = (candidate.ledger as PersistedLedgerEntry[]).find((entry) => entry.businessKey === businessKey)
     if (!businessKey || !requestId || !ledgerEntry || ledgerEntry.requestId !== requestId) return false
   }
-
   return true
 }
 
 function isResourceMap(value: unknown): value is Record<string, number> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
     && Object.values(value as Record<string, unknown>).every((entry) => Number.isInteger(entry) && Number(entry) >= 0)
+}
+
+function isSignedResourceMap(value: unknown): value is Record<string, number> {
+  return isPlainRecord(value) && Object.values(value).every((entry) => Number.isInteger(entry))
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedKeys = new Set(allowed)
+  return Object.keys(value).every((key) => allowedKeys.has(key))
+}
+
+function isItem(value: unknown): value is Item {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, [
+    'id', 'baseName', 'displayName', 'type', 'rarity', 'identified', 'width', 'height',
+    'requiredLevel', 'affixes', 'value', 'acquisitionCost', 'position'
+  ])) return false
+  if (!['id', 'baseName', 'displayName'].every((key) => typeof value[key] === 'string' && Boolean(value[key]))) return false
+  if (!['weapon', 'armor', 'helmet', 'gloves', 'boots', 'ring', 'amulet', 'charm'].includes(String(value.type))) return false
+  if (!['normal', 'magic', 'rare', 'unique'].includes(String(value.rarity)) || typeof value.identified !== 'boolean') return false
+  if (!['width', 'height', 'requiredLevel', 'value'].every((key) => Number.isInteger(value[key]) && Number(value[key]) >= 0)) return false
+  if (value.acquisitionCost !== undefined && (!Number.isInteger(value.acquisitionCost) || Number(value.acquisitionCost) < 0)) return false
+  if (!Array.isArray(value.affixes) || !value.affixes.every((affix) => isPlainRecord(affix)
+    && hasOnlyKeys(affix, ['stat', 'value']) && typeof affix.stat === 'string' && Number.isFinite(affix.value))) return false
+  return value.position === undefined || (isPlainRecord(value.position) && hasOnlyKeys(value.position, ['x', 'y'])
+    && Number.isFinite(value.position.x) && Number.isFinite(value.position.y))
+}
+
+function isPlacement(value: unknown): value is PersistedItemPlacement {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ['ownerKind', 'ownerId', 'custodyKind', 'custodyId'])) return false
+  if (!['caravan', 'visitor', 'tombstone'].includes(String(value.ownerKind))) return false
+  if (!['stash', 'visitor', 'service', 'expedition', 'recovery', 'settlement', 'tombstone'].includes(String(value.custodyKind))) return false
+  if (value.ownerId !== undefined && (typeof value.ownerId !== 'string' || !value.ownerId)) return false
+  if (value.custodyId !== undefined && (typeof value.custodyId !== 'string' || !value.custodyId)) return false
+  if (value.ownerKind === 'visitor') return Boolean(value.ownerId) && value.custodyKind === 'visitor' && value.ownerId === value.custodyId
+  if (value.ownerKind === 'caravan') return value.ownerId === undefined
+    && (value.custodyKind === 'stash' ? value.custodyId === undefined : value.custodyKind !== 'visitor' && value.custodyKind !== 'tombstone' && Boolean(value.custodyId))
+  return value.ownerId === undefined && value.custodyKind === 'tombstone'
+}
+
+function isCaravan(value: unknown): value is SaveGame['caravan'] {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ['level', 'upgrades', 'services'])) return false
+  if (!Number.isInteger(value.level) || !isPlainRecord(value.upgrades) || !hasOnlyKeys(value.upgrades, ['stashWagon', 'appraiser'])) return false
+  if (!Number.isInteger(value.upgrades.stashWagon) || !Number.isInteger(value.upgrades.appraiser)) return false
+  if (!isPlainRecord(value.services) || !hasOnlyKeys(value.services, ['appraiserQueue']) || !Array.isArray(value.services.appraiserQueue)) return false
+  return value.services.appraiserQueue.every((job) => isPlainRecord(job)
+    && hasOnlyKeys(job, ['id', 'itemId', 'startedAt', 'finishesAt'])
+    && ['id', 'itemId', 'startedAt', 'finishesAt'].every((key) => typeof job[key] === 'string' && Boolean(job[key])))
+}
+
+function isPersistedRound(value: unknown): value is PersistedVisitRound {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ['id', 'number', 'slots', 'createdAt'])) return false
+  if (typeof value.id !== 'string' || !value.id || !Number.isInteger(value.number) || !Number.isFinite(Date.parse(String(value.createdAt)))) return false
+  return Array.isArray(value.slots) && value.slots.every(isPersistedSlot)
+}
+
+function isPersistedSlot(value: unknown): value is PersistedVisitorSlot {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ['id', 'visitor', 'nextArrivalCheckAt']) || typeof value.id !== 'string' || !value.id) return false
+  if (value.nextArrivalCheckAt !== undefined && !Number.isFinite(Date.parse(String(value.nextArrivalCheckAt)))) return false
+  return value.visitor === undefined || isPersistedVisitor(value.visitor)
+}
+
+function isPersistedVisitor(value: unknown): value is PersistedVisitor {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, [
+    'id', 'name', 'class', 'level', 'origin', 'equipmentSummary', 'state', 'budget', 'initialBudget',
+    'acceptedItemTypes', 'interestedItemTypes', 'offers', 'buyQuotes', 'trades', 'power',
+    'commissionOptions', 'commission', 'arrivedAt', 'departedAt'
+  ])) return false
+  if (!['id', 'name', 'origin', 'arrivedAt'].every((key) => typeof value[key] === 'string' && Boolean(value[key]))) return false
+  if (!['barbarian', 'sorceress', 'paladin', 'necromancer'].includes(String(value.class))) return false
+  if (!['open', 'traded', 'commissioned', 'returned', 'departed'].includes(String(value.state))) return false
+  if (!['level', 'budget', 'initialBudget', 'power'].every((key) => Number.isInteger(value[key]) && Number(value[key]) >= 0)) return false
+  if (!Array.isArray(value.equipmentSummary) || !value.equipmentSummary.every((entry) => isPlainRecord(entry)
+    && hasOnlyKeys(entry, ['itemId', 'name', 'type', 'powerBonus']) && typeof entry.name === 'string'
+    && typeof entry.type === 'string' && Number.isFinite(entry.powerBonus))) return false
+  if (!Array.isArray(value.acceptedItemTypes) || !value.acceptedItemTypes.every((entry) => typeof entry === 'string')) return false
+  if (!Array.isArray(value.interestedItemTypes) || !value.interestedItemTypes.every((entry) => typeof entry === 'string')) return false
+  if (!Array.isArray(value.offers) || !value.offers.every(isPersistedOffer)) return false
+  if (!isPlainRecord(value.buyQuotes) || !Object.values(value.buyQuotes).every((quote) => Number.isInteger(quote) && Number(quote) >= 0)) return false
+  if (!Array.isArray(value.trades) || !value.trades.every((trade) => isPlainRecord(trade)
+    && hasOnlyKeys(trade, ['requestId', 'kind', 'itemId', 'price', 'createdAt'])
+    && ['requestId', 'itemId', 'createdAt'].every((key) => typeof trade[key] === 'string' && Boolean(trade[key]))
+    && ['player_bought', 'player_sold'].includes(String(trade.kind)) && Number.isInteger(trade.price))) return false
+  if (!Array.isArray(value.commissionOptions) || !value.commissionOptions.every(isCommissionOption)) return false
+  if (value.commission !== undefined && !isPersistedCommission(value.commission)) return false
+  return value.departedAt === undefined || Number.isFinite(Date.parse(String(value.departedAt)))
+}
+
+function isPersistedOffer(value: unknown): value is PersistedVisitorOffer {
+  return isPlainRecord(value) && hasOnlyKeys(value, ['id', 'itemId', 'price', 'purchasedAt'])
+    && typeof value.id === 'string' && Boolean(value.id) && typeof value.itemId === 'string' && Boolean(value.itemId)
+    && Number.isInteger(value.price) && (value.purchasedAt === undefined || Number.isFinite(Date.parse(String(value.purchasedAt))))
+}
+
+function isCommissionOption(value: unknown): value is Visitor['commissionOptions'][number] {
+  return isPlainRecord(value) && hasOnlyKeys(value, ['optionId', 'title', 'regionId', 'durationMs', 'successChance', 'fullRewardGold', 'partialRewardGold', 'riskLevel', 'failureConsequence'])
+    && ['safe', 'risky'].includes(String(value.optionId)) && ['title', 'regionId', 'failureConsequence'].every((key) => typeof value[key] === 'string' && Boolean(value[key]))
+    && ['durationMs', 'successChance', 'fullRewardGold', 'partialRewardGold'].every((key) => typeof value[key] === 'number' && Number.isFinite(value[key]))
+    && ['low', 'high'].includes(String(value.riskLevel))
+}
+
+function isPersistedCommission(value: unknown): value is PersistedVisitorCommission {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, [
+    'optionId', 'title', 'regionId', 'durationMs', 'successChance', 'fullRewardGold', 'partialRewardGold',
+    'riskLevel', 'failureConsequence', 'id', 'status', 'startedAt', 'finishesAt', 'outcomeRoll',
+    'outcome', 'rewardGold', 'rewardItemId', 'claimedAt'
+  ])) return false
+  if (!isCommissionOption(Object.fromEntries(Object.entries(value).filter(([key]) => [
+    'optionId', 'title', 'regionId', 'durationMs', 'successChance', 'fullRewardGold', 'partialRewardGold', 'riskLevel', 'failureConsequence'
+  ].includes(key))))) return false
+  if (typeof value.id !== 'string' || !value.id || !['active', 'ready', 'claimed'].includes(String(value.status))) return false
+  if (!Number.isFinite(Date.parse(String(value.startedAt))) || !Number.isFinite(Date.parse(String(value.finishesAt))) || !Number.isFinite(value.outcomeRoll)) return false
+  if (value.outcome !== undefined && !['complete', 'partial', 'failed'].includes(String(value.outcome))) return false
+  if (value.rewardGold !== undefined && (!Number.isInteger(value.rewardGold) || Number(value.rewardGold) < 0)) return false
+  if (value.rewardItemId !== undefined && (typeof value.rewardItemId !== 'string' || !value.rewardItemId)) return false
+  return value.claimedAt === undefined || Number.isFinite(Date.parse(String(value.claimedAt)))
+}
+
+function isItemChange(value: unknown): boolean {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ['itemId', 'from', 'to']) || typeof value.itemId !== 'string' || !value.itemId) return false
+  return (value.from === undefined || isPlacement(value.from)) && isPlacement(value.to)
 }
 
 function readContainerMap(value: unknown): Record<string, PersistedCustodyContainer> {
@@ -696,6 +857,7 @@ function isContainerMap(value: unknown): value is Record<string, PersistedCustod
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   return Object.entries(value as Record<string, unknown>).every(([id, entry]) => {
     if (!entry || typeof entry !== 'object') return false
+    if (!hasOnlyKeys(entry as Record<string, unknown>, ['id', 'itemIds'])) return false
     const container = entry as PersistedCustodyContainer
     return container.id === id && Array.isArray(container.itemIds)
       && new Set(container.itemIds).size === container.itemIds.length
@@ -706,8 +868,9 @@ function isContainerMap(value: unknown): value is Record<string, PersistedCustod
 function containsInternalFields(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const keys = new Set(Object.keys(value as object))
-  return ['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById', 'serviceJobsById', 'processedRequestIds', 'processedRequests']
-    .some((key) => keys.has(key))
+  if (['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById', 'serviceJobsById', 'processedRequestIds', 'processedRequests', 'outcomeRoll']
+    .some((key) => keys.has(key))) return true
+  return Object.values(value as Record<string, unknown>).some(containsInternalFields)
 }
 
 function registerItem(
@@ -804,6 +967,12 @@ function itemPlacementChanges(before: PersistedGameV3, after: PersistedGameV3): 
   return changes
 }
 
+function resourceDeltas(before: Record<string, number>, after: Record<string, number>): Record<string, number> {
+  return Object.fromEntries([...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .map((key) => [key, (after[key] ?? 0) - (before[key] ?? 0)] as const)
+    .filter(([, delta]) => delta !== 0))
+}
+
 function hashCommand(operationKey: string, command: unknown): string {
   const payload = canonicalize({ operationKey, command: commandPayload(command) })
   return createHash('sha256').update(JSON.stringify(payload ?? null)).digest('hex')
@@ -826,26 +995,27 @@ function commandPayload(command: unknown): unknown {
 
 export type PublicSaveGame = Omit<SaveGame, '_id' | 'userId' | 'processedRequestIds' | 'processedRequests'>
 
-function sanitizeGameResponse(save: SaveGame): SaveGame {
-  const sanitized = structuredClone(save) as unknown as Partial<SaveGame> & Record<string, unknown>
-  delete sanitized._id
-  delete sanitized.userId
-  delete sanitized.requestRecords
-  delete sanitized.businessKeys
-  delete sanitized.ledger
-  delete sanitized.itemsById
-  delete sanitized.itemPlacements
-  delete sanitized.processedRequestIds
-  delete sanitized.processedRequests
-  return stripUndefined(sanitized) as SaveGame
+export function sanitizeGameResponse(save: SaveGame): SaveGame {
+  return stripPrivateFields(save) as SaveGame
 }
 
-function stripUndefined(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripUndefined)
+function stripPrivateFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripPrivateFields)
+  if (value && typeof value === 'object') {
+    const privateKeys = new Set(['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'processedRequestIds', 'processedRequests', 'outcomeRoll'])
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([key, entry]) => entry !== undefined && !privateKeys.has(key))
+      .map(([key, entry]) => [key, stripPrivateFields(entry)]))
+  }
+  return value
+}
+
+function stripUndefinedDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripUndefinedDeep)
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
       .filter(([, entry]) => entry !== undefined)
-      .map(([key, entry]) => [key, stripUndefined(entry)]))
+      .map(([key, entry]) => [key, stripUndefinedDeep(entry)]))
   }
   return value
 }

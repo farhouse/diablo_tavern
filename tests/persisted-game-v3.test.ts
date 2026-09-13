@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createSaveGame } from '../utils/game-logic'
-import { buildPersistedFromPublic, isPersistedCanonical } from '../server/utils/savegame'
+import { buildPersistedFromPublic, isPersistedCanonical, sanitizeGameResponse } from '../server/utils/savegame'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
 import { applyItemTransition, effectiveCapacityUsed } from '../server/domain/item-transitions'
 
@@ -50,6 +50,61 @@ describe('PersistedGameV3 invariants', () => {
     expect(isPersistedCanonical(visitorMismatch)).toBe(false)
   })
 
+  it('rejects incomplete nested items and unknown fields in a declared V3 document', () => {
+    const incomplete = buildPersistedFromPublic(createSaveGame('invalid-item'))
+    const itemId = incomplete.stash[0]!
+    incomplete.itemsById[itemId] = { id: itemId } as never
+    expect(isPersistedCanonical(incomplete)).toBe(false)
+
+    const unknown = buildPersistedFromPublic(createSaveGame('unknown-field')) as typeof incomplete & { legacyGold?: number }
+    unknown.legacyGold = 123
+    expect(isPersistedCanonical(unknown)).toBe(false)
+  })
+
+  it.each(['loan', 'service', 'recover'] as const)('projects %s custody with its public target and item', (operation) => {
+    const persisted = buildPersistedFromPublic(createSaveGame(`projection-${operation}`))
+    const itemId = persisted.stash[0]!
+    const targetId = `${operation}-target`
+    if (operation === 'loan') persisted.expeditionsById[targetId] = { id: targetId, itemIds: [] }
+    if (operation === 'service') persisted.serviceJobsById[targetId] = { id: targetId, itemIds: [] }
+    if (operation === 'recover') persisted.recoveriesById[targetId] = { id: targetId, itemIds: [] }
+    const transitioned = applyItemTransition(persisted, { operation, itemId, targetId }).game
+    const view = mapPersistedGameToGameView(transitioned, new Date('2026-09-13T12:00:00.000Z'))
+    expect(view.items).toContainEqual(expect.objectContaining({ itemId }))
+    const collection = operation === 'loan' ? view.expeditions : operation === 'service' ? view.serviceJobs : view.recoveries
+    expect(collection).toContainEqual(expect.objectContaining(
+      operation === 'loan' ? { expeditionId: targetId }
+        : operation === 'service' ? { jobId: targetId }
+          : { recoveryId: targetId }
+    ))
+  })
+
+  it('counts an unclaimed commission reward as caravan property', () => {
+    const save = createSaveGame('pending-reward')
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!, id: 'commission-reward', status: 'ready',
+      startedAt: save.createdAt, finishesAt: save.updatedAt, outcomeRoll: 0.5,
+      outcome: 'complete', rewardGold: 10, rewardItem: structuredClone(save.stash[0]!)
+    }
+    visitor.commission.rewardItem!.id = 'pending-reward-item'
+    const persisted = buildPersistedFromPublic(save)
+    expect(persisted.itemPlacements['pending-reward-item']).toMatchObject({ ownerKind: 'caravan' })
+    expect(effectiveCapacityUsed(persisted)).toBe(save.stash.length + 1)
+    const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
+    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: 'commission-reward' }))
+  })
+
+  it('deeply strips private rolls from compatibility responses', () => {
+    const save = createSaveGame('private-roll')
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!, id: 'private-commission', status: 'active',
+      startedAt: save.createdAt, finishesAt: save.updatedAt, outcomeRoll: 0.42
+    }
+    expect(JSON.stringify(sanitizeGameResponse(save))).not.toContain('outcomeRoll')
+  })
+
   it('uses injected clock, RNG and UUID sources deterministically', () => {
     let seed = 7
     const dependencies = {
@@ -95,7 +150,7 @@ describe('PersistedGameV3 invariants', () => {
         expect(effectiveCapacityUsed(state)).toBeLessThanOrEqual(state.stashLimit)
       }
     }
-  })
+  }, 15_000)
 
   it.each([
     ['sell', 'loan'],

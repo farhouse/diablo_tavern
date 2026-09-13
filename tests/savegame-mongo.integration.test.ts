@@ -6,16 +6,18 @@ const mongoUri = process.env.MONGO_TEST_URI
 const suite = mongoUri ? describe : describe.skip
 let client: MongoClient
 let collection: Collection
+let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`]
 
-vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => collection }))
+vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
 suite('PersistedGameV3 against isolated real MongoDB', () => {
   beforeAll(async () => {
     client = new MongoClient(mongoUri!)
     await client.connect()
     collection = client.db('diablo_tavern_alta43_integration').collection('savegames')
+    repositoryCollection = collection
     await collection.createIndex({ userId: 1 }, { unique: true, name: 'userId_unique' })
     await collection.deleteMany({ userId: { $in: userIds } })
   })
@@ -64,6 +66,59 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const replay = await transitionItemAtomic(userIds[6]!, 'transition-replay', 0, command)
     expect(replay).toEqual(first)
     expect(replay.revision).toBe(1)
+  })
+
+  it('reloads and projects custody, records material conservation and permits a new loan instance', async () => {
+    const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const custody = await getPersistedGameV3(userIds[7]!)
+    const itemId = custody.stash[0]!
+    custody.expeditionsById['expedition-a'] = { id: 'expedition-a', itemIds: [] }
+    custody.expeditionsById['expedition-b'] = { id: 'expedition-b', itemIds: [] }
+    await collection.replaceOne({ userId: userIds[7] }, custody)
+    await transitionItemAtomic(userIds[7]!, 'mongo-loan-a', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
+    const projected = mapPersistedGameToGameView(await getPersistedGameV3(userIds[7]!), new Date('2026-09-13T12:00:00.000Z'))
+    expect(projected.expeditions).toContainEqual(expect.objectContaining({ expeditionId: 'expedition-a' }))
+    expect(projected.items).toContainEqual(expect.objectContaining({ itemId, custody: expect.objectContaining({ expeditionId: 'expedition-a' }) }))
+    await transitionItemAtomic(userIds[7]!, 'mongo-return-a', 1, { operation: 'return', itemId, targetId: 'expedition-a' })
+    await transitionItemAtomic(userIds[7]!, 'mongo-loan-b', 2, { operation: 'loan', itemId, targetId: 'expedition-b' })
+
+    const materials = await getPersistedGameV3(userIds[8]!)
+    const dismantledId = materials.stash[0]!
+    await transitionItemAtomic(userIds[8]!, 'mongo-dismantle', 0, { operation: 'dismantle', itemId: dismantledId, targetId: 'scrap' })
+    const persisted = await collection.findOne({ userId: userIds[8] })
+    expect(persisted?.ledger[0].materialDeltas.scrap).toBe(persisted?.materials.scrap)
+  })
+
+  it('recovers the committed response after the repository driver throws', async () => {
+    const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3(userIds[9]!)
+    const itemId = initial.stash[0]!
+    initial.expeditionsById['uncertain-expedition'] = { id: 'uncertain-expedition', itemIds: [] }
+    await collection.replaceOne({ userId: userIds[9] }, initial)
+    repositoryCollection = {
+      findOne: (...args: Parameters<Collection['findOne']>) => collection.findOne(...args),
+      replaceOne: async (...args: Parameters<Collection['replaceOne']>) => {
+        await collection.replaceOne(...args)
+        throw new Error('simulated Mongo network loss after acknowledged server commit')
+      }
+    } as unknown as Collection
+    try {
+      const response = await transitionItemAtomic(userIds[9]!, 'mongo-uncertain', 0, { operation: 'loan', itemId, targetId: 'uncertain-expedition' })
+      expect(response.revision).toBe(1)
+      expect((await collection.findOne({ userId: userIds[9] }))?.ledger).toHaveLength(1)
+    } finally {
+      repositoryCollection = collection
+    }
+  })
+
+  it('rejects a declared V3 document with legacy or incomplete nested fields', async () => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const corrupt = await getPersistedGameV3(userIds[10]!)
+    const itemId = corrupt.stash[0]!
+    corrupt.itemsById[itemId] = { id: itemId } as never
+    await collection.replaceOne({ userId: userIds[10] }, { ...corrupt, processedRequests: [] })
+    await expect(getPersistedGameV3(userIds[10]!)).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
 
   it.each([
