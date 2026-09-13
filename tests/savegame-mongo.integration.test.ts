@@ -6,18 +6,17 @@ const mongoUri = process.env.MONGO_TEST_URI
 const suite = mongoUri ? describe : describe.skip
 let client: MongoClient
 let collection: Collection
-const userIds = ['alta16-cas-reload', 'alta16-legacy-reset']
+const prefix = `alta43-${process.pid}`
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`]
 
-vi.mock('../server/utils/db', () => ({
-  saveGamesCollection: async () => collection
-}))
+vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => collection }))
 
-suite('save aggregate with real MongoDB', () => {
+suite('PersistedGameV3 against isolated real MongoDB', () => {
   beforeAll(async () => {
     client = new MongoClient(mongoUri!)
     await client.connect()
-    collection = client.db('diablo_tavern_alta16_integration').collection('savegames')
-    await collection.createIndex({ userId: 1 }, { unique: true })
+    collection = client.db('diablo_tavern_alta43_integration').collection('savegames')
+    await collection.createIndex({ userId: 1 }, { unique: true, name: 'userId_unique' })
     await collection.deleteMany({ userId: { $in: userIds } })
   })
 
@@ -27,44 +26,59 @@ suite('save aggregate with real MongoDB', () => {
     await client.close()
   })
 
-  it('serializes concurrent retries once and reloads the exact persisted aggregate', async () => {
+  it('commits concurrent retries once and reloads the exact public response', async () => {
     const { getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
-    const created = await getSaveGame(userIds[0]!)
-    const visitorId = created.visitRound.slots[0]!.visitor!.id
-    const operationKey = `mongo-credit:${visitorId}`
+    await getSaveGame(userIds[0]!)
+    const command = { amount: 37 }
     const mutate = (save: SaveGame) => { save.gold += 37 }
-
     const [first, retry] = await Promise.all([
-      mutateSaveGameAtomic(userIds[0]!, 'mongo-request-1', operationKey, 0, mutate),
-      mutateSaveGameAtomic(userIds[0]!, 'mongo-request-1', operationKey, 0, mutate)
+      mutateSaveGameAtomic(userIds[0]!, 'mongo-request-1', 'mongo-credit:one', 0, command, mutate),
+      mutateSaveGameAtomic(userIds[0]!, 'mongo-request-1', 'mongo-credit:one', 0, command, mutate)
     ])
     const reloaded = await getSaveGame(userIds[0]!)
-
+    const persisted = await collection.findOne({ userId: userIds[0] })
+    expect(first).toEqual(retry)
+    expect(reloaded).toEqual(first)
     expect(first.gold).toBe(487)
-    expect(retry.gold).toBe(487)
-    expect(reloaded).toEqual(retry)
-    expect(reloaded.processedRequests).toEqual([{ requestId: 'mongo-request-1', operationKey }])
-    expect(reloaded.revision).toBe(1)
+    expect(persisted?.requestRecords).toHaveLength(1)
+    expect(persisted?.ledger).toHaveLength(1)
   })
 
-  it('replaces an incompatible document instead of importing legacy wealth or heroes', async () => {
-    const { getSaveGame } = await import('../server/utils/savegame')
-    await collection.insertOne({
-      userId: userIds[1],
-      gold: 999_999,
-      heroes: [{ id: 'old-hero' }],
-      activeExpeditions: [{ id: 'old-run' }],
-      createdAt: '2025-01-01T00:00:00.000Z',
-      updatedAt: '2025-01-01T00:00:00.000Z'
-    })
+  it('rejects stale CAS and a second requestId for one permanent business key', async () => {
+    const { BusinessKeyConflictError, mutateSaveGameAtomic, RevisionConflictError } = await import('../server/utils/savegame')
+    await mutateSaveGameAtomic(userIds[2]!, 'business-a', 'business:one', 0, {}, () => {})
+    await expect(mutateSaveGameAtomic(userIds[2]!, 'stale', 'business:other', 0, {}, () => {}))
+      .rejects.toBeInstanceOf(RevisionConflictError)
+    await expect(mutateSaveGameAtomic(userIds[2]!, 'business-b', 'business:one', 1, {}, () => {}))
+      .rejects.toBeInstanceOf(BusinessKeyConflictError)
+  })
 
+  it.each([
+    ['sell', 'loan', userIds[3]!],
+    ['sell', 'dismantle', userIds[4]!],
+    ['service', 'loan', userIds[5]!]
+  ])('allows one Mongo CAS winner for %s versus %s', async (firstName, secondName, userId) => {
+    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const results = await Promise.allSettled([
+      mutateSaveGameAtomic(userId, `${firstName}-request`, `${firstName}:item`, 0, { operation: firstName }, (save) => { save.gold -= 1 }),
+      mutateSaveGameAtomic(userId, `${secondName}-request`, `${secondName}:item`, 0, { operation: secondName }, (save) => { save.gold -= 2 })
+    ])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    const persisted = await collection.findOne({ userId })
+    expect(persisted?.ledger).toHaveLength(1)
+    expect(persisted?.revision).toBe(1)
+  })
+
+  it('resets schema 2 without importing its economy and keeps the unique index', async () => {
+    const { getSaveGame } = await import('../server/utils/savegame')
+    await collection.insertOne({ userId: userIds[1], schemaVersion: 2, revision: 4, gold: 999_999, heroes: [{ id: 'old' }] })
     const recreated = await getSaveGame(userIds[1]!)
     const persisted = await collection.findOne({ userId: userIds[1] })
-
+    const indexes = await collection.indexes()
     expect(recreated.gold).toBe(450)
-    expect(recreated.schemaVersion).toBe(3)
-    expect(recreated).not.toHaveProperty('heroes')
+    expect(recreated.revision).toBe(5)
     expect(persisted).not.toHaveProperty('heroes')
-    expect(persisted).not.toHaveProperty('activeExpeditions')
+    expect(persisted?.itemsById).toBeDefined()
+    expect(indexes).toContainEqual(expect.objectContaining({ name: 'userId_unique', unique: true }))
   })
 })

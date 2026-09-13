@@ -1,7 +1,7 @@
 import { requireUser } from '~/server/utils/auth'
-import { getSaveGame } from '~/server/utils/savegame'
+import { getGameView } from '~/server/domain/game-view'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
-  return getSaveGame(user.id)
+  return getGameView(user.id)
 })

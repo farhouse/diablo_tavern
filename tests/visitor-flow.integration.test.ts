@@ -8,28 +8,36 @@ import { quests } from '../utils/game-data'
 import { visitorOperationKey } from '../server/utils/visitor-api'
 import { useGameStore } from '../stores/game'
 import type { SaveGame } from '../types/game'
+import type { PersistedGameV3 } from '../server/utils/savegame'
 
 const visitors = (save: SaveGame) => save.visitRound.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])
 
 let persistedSave: SaveGame
+let persistedDocument: PersistedGameV3 | undefined
 const collection = {
-  findOne: vi.fn(async () => structuredClone(persistedSave)),
+  findOne: vi.fn(async () => {
+    const { buildPersistedFromPublic } = await import('../server/utils/savegame')
+    persistedDocument ??= buildPersistedFromPublic(persistedSave)
+    return structuredClone(persistedDocument)
+  }),
   updateOne: vi.fn(async () => ({ upsertedCount: 0 })),
-  replaceOne: vi.fn(async (rawFilter: unknown, replacement: SaveGame) => {
+  replaceOne: vi.fn(async (rawFilter: unknown, replacement: PersistedGameV3) => {
     const filter = rawFilter as {
       revision?: number
       $or?: Array<{ revision: number | { $exists: boolean } }>
       processedRequestIds?: { $ne: string }
     }
     const revisionMatches = typeof filter.revision === 'number'
-      ? persistedSave.revision === filter.revision
+      ? persistedDocument?.revision === filter.revision
       : !filter.$or || filter.$or.some((entry) => typeof entry.revision === 'number'
-        ? persistedSave.revision === entry.revision
-        : entry.revision.$exists === ('revision' in persistedSave))
+        ? persistedDocument?.revision === entry.revision
+        : entry.revision.$exists === Boolean(persistedDocument && 'revision' in persistedDocument))
     const requestMatches = !filter.processedRequestIds
-      || !persistedSave.processedRequestIds.includes(filter.processedRequestIds.$ne)
+      || !persistedDocument?.requestRecords.some((entry) => entry.requestId === filter.processedRequestIds?.$ne)
     if (!revisionMatches || !requestMatches) return { modifiedCount: 0 }
-    persistedSave = structuredClone(replacement)
+    persistedDocument = structuredClone(replacement)
+    const { hydratePersistedGame } = await import('../server/utils/savegame')
+    persistedSave = hydratePersistedGame(persistedDocument)
     return { modifiedCount: 1 }
   })
 }
@@ -57,6 +65,7 @@ describe('visitor HTTP/store/UI journey', () => {
     vi.stubGlobal('readBody', (event: TestEvent) => event.body)
     vi.stubGlobal('createError', (details: { statusCode: number; statusMessage: string }) => Object.assign(new Error(details.statusMessage), details))
     vi.clearAllMocks()
+    persistedDocument = undefined
   })
 
   afterEach(() => {
@@ -232,11 +241,9 @@ describe('visitor HTTP/store/UI journey', () => {
     await flushPromises()
     expect(claimRequestIds).toHaveLength(3)
     expect(claimRequestIds[2]).toBe(claimRequestIds[1])
-    expect(persistedSave.processedRequestIds.filter((id) => id === claimRequestIds[1])).toHaveLength(1)
-    expect(persistedSave.processedRequests.filter((entry) => entry.requestId === claimRequestIds[1])).toEqual([{
-      requestId: claimRequestIds[1],
-      operationKey: visitorOperationKey('claim', visitorIds[1]!)
-    }])
+    expect(persistedDocument!.requestRecords.filter((entry) => entry.requestId === claimRequestIds[1])).toHaveLength(1)
+    expect(persistedDocument!.businessKeys[visitorOperationKey('claim', visitorIds[1]!)])
+      .toBe(claimRequestIds[1])
     expect(persistedSave.gold).toBe(goldBeforeClaim + 136)
     expect(persistedSave.stash.map((item) => item.id)).toEqual(stashBeforeRoundRenewingClaim)
     expect(persistedSave.visitHistory).toHaveLength(2)

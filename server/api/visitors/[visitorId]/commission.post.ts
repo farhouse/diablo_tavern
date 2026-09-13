@@ -15,6 +15,7 @@ export default defineEventHandler(async (event) => {
       body.requestId,
       visitorOperationKey('commission', visitorId, selection),
       body.expectedRevision,
+      body,
       (save) => assignVisitorCommission(save, visitorId, selection)
     )
   } catch (error) {

@@ -10,8 +10,8 @@ export const LEGACY_SAVE_FIELDS = [
 const rarePrefixes = ['Storm', 'Blood', 'Dread', 'Rune', 'Grim', 'Havoc']
 const rareSuffixes = ['Loop', 'Grasp', 'Shelter', 'Song', 'Brand', 'Guard']
 
-export function createSaveGame(userId: string): SaveGame {
-  const now = new Date().toISOString()
+export function createSaveGame(userId: string, nowDate = new Date(), random = Math.random): SaveGame {
+  const now = nowDate.toISOString()
   const save: SaveGame = {
     schemaVersion: SAVE_SCHEMA_VERSION,
     userId,
@@ -32,7 +32,7 @@ export function createSaveGame(userId: string): SaveGame {
     createdAt: now,
     updatedAt: now
   }
-  save.visitRound = createVisitRound(save, 1, new Date(now))
+  save.visitRound = createVisitRound(save, 1, nowDate, random)
   return save
 }
 

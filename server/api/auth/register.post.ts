@@ -1,8 +1,7 @@
 import { createAccessToken, createRefreshToken, hashPassword, hashRefreshToken, publicUser } from '~/server/utils/auth'
-import { usersCollection } from '~/server/utils/db'
+import { type DbSaveGame, saveGamesCollection, usersCollection } from '~/server/utils/db'
 import { readRequiredBody, requireString } from '~/server/utils/body'
-import { createSaveGame } from '~/utils/game-logic'
-import { saveGamesCollection } from '~/server/utils/db'
+import { createPersistedGameV3 } from '~/server/utils/savegame'
 
 export default defineEventHandler(async (event) => {
   const body = await readRequiredBody(event)
@@ -31,8 +30,7 @@ export default defineEventHandler(async (event) => {
   await users.updateOne({ _id: userResult.insertedId }, { $set: { refreshTokenHash: await hashRefreshToken(refreshToken) } })
 
   const saves = await saveGamesCollection()
-  const { _id, ...save } = createSaveGame(String(userResult.insertedId))
-  await saves.insertOne(save)
+  await saves.insertOne(createPersistedGameV3(String(userResult.insertedId)) as unknown as DbSaveGame)
 
   return {
     user: publicUser(user),

@@ -7,7 +7,7 @@ export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
   const body = await readMutation(event)
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('reset'), body.expectedRevision, () => createSaveGame(user.id))
+    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('reset'), body.expectedRevision, body, () => createSaveGame(user.id))
   } catch (error) {
     mutationError(error, 'Cannot reset save')
   }

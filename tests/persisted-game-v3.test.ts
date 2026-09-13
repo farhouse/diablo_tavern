@@ -13,7 +13,7 @@ describe('PersistedGameV3 invariants', () => {
     for (const round of [persisted.visitRound, ...persisted.visitHistory]) {
       for (const visitor of round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])) {
         expect(visitor.offers.every((offer) => !Object.hasOwn(offer, 'item') && Boolean(offer.itemId))).toBe(true)
-        expect(visitor.commission).not.toHaveProperty('rewardItem')
+        if (visitor.commission) expect(visitor.commission).not.toHaveProperty('rewardItem')
       }
     }
   })
@@ -26,6 +26,20 @@ describe('PersistedGameV3 invariants', () => {
     for (const key of ['userId', 'itemsById', 'itemPlacements', 'requestRecords', 'businessKeys', 'ledger']) {
       expect(view).not.toHaveProperty(key)
     }
+  })
+
+  it('uses injected clock, RNG and UUID sources deterministically', () => {
+    let seed = 7
+    const dependencies = {
+      now: () => new Date('2030-01-02T03:04:05.000Z'),
+      random: () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32),
+      uuid: () => 'fixed-uuid'
+    }
+    const save = createSaveGame('injected-user', dependencies.now(), dependencies.random)
+    save.stash[0]!.id = ''
+    const persisted = buildPersistedFromPublic(save, undefined, dependencies)
+    expect(persisted.createdAt).toBe('2030-01-02T03:04:05.000Z')
+    expect(persisted.itemsById['item-fixed-uuid']).toBeDefined()
   })
 
   it('preserves identity, ownership and resource deltas over deterministic generated sequences', () => {

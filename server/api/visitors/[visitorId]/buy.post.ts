@@ -15,6 +15,7 @@ export default defineEventHandler(async (event) => {
       body.requestId,
       visitorOperationKey('buy', visitorId, offerId),
       body.expectedRevision,
+      body,
       (save) => buyFromVisitor(save, visitorId, offerId, body.requestId)
     )
   } catch (error) {

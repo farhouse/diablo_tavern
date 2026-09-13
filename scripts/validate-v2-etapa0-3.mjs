@@ -1,9 +1,12 @@
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 
-const schemaPath = new URL('../contracts/v2-etapa0-3/v2-etapa0-3.schema.json', import.meta.url)
-const fixturesPath = new URL('../contracts/v2-etapa0-3/v2-etapa0-3.fixtures.json', import.meta.url)
+const schemaPath = new URL('../contracts/v2-etapa0-3/schema.json', import.meta.url)
+const fixturesPath = new URL('../contracts/v2-etapa0-3/fixtures.json', import.meta.url)
+const require = createRequire(import.meta.url)
+const ajvVersion = require('ajv/package.json').version
 const schema = JSON.parse(fs.readFileSync(schemaPath))
 const fixtures = JSON.parse(fs.readFileSync(fixturesPath))
 const ajv = new Ajv2020({ strict: true, allErrors: true })
@@ -224,4 +227,4 @@ for (const fixture of fixtures.negativeCases) {
   negatives++
 }
 
-console.log(JSON.stringify({ ajv: '8.17.1', strict: true, schemaDraft: '2020-12', retainedPositive: retained, integratedPositive: integrated, negativeRejected: negatives }))
+console.log(JSON.stringify({ ajv: ajvVersion, strict: true, schemaDraft: '2020-12', retainedPositive: retained, integratedPositive: integrated, negativeRejected: negatives }))

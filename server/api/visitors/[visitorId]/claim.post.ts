@@ -13,6 +13,7 @@ export default defineEventHandler(async (event) => {
       body.requestId,
       visitorOperationKey('claim', visitorId),
       body.expectedRevision,
+      body,
       (save) => claimVisitorCommission(save, visitorId)
     )
   } catch (error) {
