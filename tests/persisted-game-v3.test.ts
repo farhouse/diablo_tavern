@@ -189,6 +189,11 @@ describe('PersistedGameV3 invariants', () => {
     expect(persisted.expeditionsById[visitor.commission.id]).toBeDefined()
     expect(persisted.settlementsById[visitor.commission.id]?.itemIds).toEqual([])
     expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: visitor.commission.id }))
+
+    const corrupt = structuredClone(persisted)
+    const projection = corrupt.settlementsById[visitor.commission.id]!.projection
+    if (projection?.kind === 'settlement') projection.outcome = outcome === 'failed' ? 'returned' : 'death'
+    expect(isPersistedCanonical(corrupt)).toBe(false)
   })
 
   it('projects a completed commission settlement when effective capacity leaves no reward slot', () => {

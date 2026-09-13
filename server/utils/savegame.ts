@@ -673,11 +673,14 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
         && container.projection.contractId === visitor.commission!.id)
     if (expeditions.length === 0) return false
     if (visitor.commission.status !== 'active' && visitor.commission.outcome) {
-      const settledExpeditionIds = new Set(expeditions.map((expedition) => expedition.id))
-      const hasSettlement = Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)
-        .some((settlement) => settlement.projection?.kind === 'settlement'
-          && settledExpeditionIds.has(settlement.projection.expeditionId))
-      if (!hasSettlement) return false
+      const settlement = (candidate.settlementsById as Record<string, PersistedCustodyContainer>)[visitor.commission.id]
+      const expectedOutcome = visitor.commission.outcome === 'failed'
+        ? 'death'
+        : visitor.commission.outcome === 'partial' ? 'retreated' : 'returned'
+      if (settlement?.projection?.kind !== 'settlement'
+        || settlement.projection.expeditionId !== visitor.commission.id
+        || settlement.projection.outcome !== expectedOutcome
+        || settlement.projection.appliedAt !== visitor.commission.finishesAt) return false
     }
   }
   for (const container of Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)) {
