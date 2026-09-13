@@ -217,8 +217,7 @@ export function assignVisitorCommission(
   return touch(save, now)
 }
 
-export function claimVisitorCommission(save: SaveGame, visitorId: string, now = new Date(), random: RandomSource = Math.random): SaveGame {
-  refreshVisitRound(save, now, random)
+export function claimVisitorCommission(save: SaveGame, visitorId: string, now = new Date()): SaveGame {
   const visitor = findVisitor(save, visitorId)
   const commission = visitor.commission
   if (!commission || visitor.state !== 'returned' || commission.status !== 'ready') throw domainError('Commission is not ready to claim')

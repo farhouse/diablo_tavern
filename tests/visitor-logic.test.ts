@@ -301,7 +301,8 @@ describe('visitor trade and commission loop', () => {
     expect(visitors(reloaded)[0]!.commission!.outcomeRoll).toBe(sealedRoll)
     expect(() => claimVisitorCommission(save, visitor.id, start)).toThrow('not ready')
     const finished = new Date(visitor.commission!.finishesAt)
-    claimVisitorCommission(save, visitor.id, finished, seeded(5))
+    refreshVisitRound(save, finished, seeded(5))
+    claimVisitorCommission(save, visitor.id, finished)
     expect(visitor.commission!.outcomeRoll).toBe(sealedRoll)
     expect(visitor.commission!.status).toBe('claimed')
     expect(save.visitHistory[0]!.slots.flatMap((slot) => slot.visitor ? [slot.visitor.id] : [])).toContain(visitor.id)
@@ -317,6 +318,7 @@ describe('visitor trade and commission loop', () => {
     save._effectiveCapacityUsed = save.stash.length
 
     const finishedAt = new Date(visitor.commission!.finishesAt)
+    expect(() => claimVisitorCommission(save, visitor.id, finishedAt)).toThrow('not ready')
     refreshVisitRound(save, finishedAt, () => 0)
     const pendingItemId = visitor.commission!.rewardItem?.id
 
@@ -325,7 +327,7 @@ describe('visitor trade and commission loop', () => {
     expect(save.stash.some((item) => item.id === pendingItemId)).toBe(false)
     expect(save._effectiveCapacityUsed).toBe(save.stash.length + 1)
 
-    claimVisitorCommission(save, visitor.id, finishedAt, () => 0.99)
+    claimVisitorCommission(save, visitor.id, finishedAt)
     expect(save.stash.filter((item) => item.id === pendingItemId)).toHaveLength(1)
     expect(save._effectiveCapacityUsed).toBe(save.stash.length)
   })

@@ -116,7 +116,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: commission.id }))
     expect(ready.itemPlacements[rewardItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'settlement' })
     await mutateSaveGameAtomic(userIds[11]!, 'mongo-claim-flow', 'commission:claim:mongo-flow', ready.revision, {}, (save) => {
-      claimVisitorCommission(save, visitorId, new Date(finish), () => 0.99)
+      claimVisitorCommission(save, visitorId, new Date(finish))
     }, reconcileDependencies)
     const claimed = await getPersistedGameV3(userIds[11]!)
     expect(claimed.stash.filter((itemId) => itemId === rewardItemId)).toHaveLength(1)

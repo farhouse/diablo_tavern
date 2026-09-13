@@ -179,7 +179,7 @@ describe('atomic persisted-game mutation', () => {
     document = applyItemTransition(initial, { operation: 'loan', itemId: loanedId, targetId: 'capacity-expedition' }).game
 
     const result = await mutateSaveGameAtomic('atomic-user', 'capacity-claim', 'claim:capacity', 0, {}, (draft) => {
-      claimVisitorCommission(draft, visitor.id, new Date('2026-09-13T00:02:00.000Z'), () => 0.5)
+      claimVisitorCommission(draft, visitor.id, new Date('2026-09-13T00:02:00.000Z'))
     })
     expect(result.stash).toHaveLength(initial.stashLimit - 1)
     expect(result.stash).toContainEqual(expect.objectContaining({ id: 'pending-capacity-reward' }))
@@ -214,7 +214,7 @@ describe('atomic persisted-game mutation', () => {
     expect(view.items).toContainEqual(expect.objectContaining({ itemId: rewardItemId, custody: expect.objectContaining({ kind: 'settlement' }) }))
 
     await mutateSaveGameAtomic('atomic-user', 'claim-flow', 'commission:claim:flow', ready.revision, {}, (save) => {
-      claimVisitorCommission(save, visitorId, new Date(finish), () => 0.99)
+      claimVisitorCommission(save, visitorId, new Date(finish))
     }, reconcileDependencies)
     const claimed = await getPersistedGameV3('atomic-user')
     expect(claimed.stash.filter((itemId) => itemId === rewardItemId)).toHaveLength(1)
