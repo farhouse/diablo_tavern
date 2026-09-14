@@ -167,9 +167,6 @@ async function completeAppraisal() {
   word-break: break-word;
 }
 .appraiser-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0.85rem; padding: 1rem; }
-.service-row h2,
-.service-row p,
-.service-action span { overflow-wrap: anywhere; }
 .queue-list { display: grid; gap: 0.5rem; }
 .queue-row { align-items: center; background: #14120f; border-radius: 6px; display: flex; justify-content: space-between; min-width: 0; padding: 0.65rem; }
 .queue-row span {

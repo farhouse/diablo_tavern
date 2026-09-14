@@ -23,6 +23,7 @@ type Scenario = {
   readySelector: string
   disabledCheck: (page: Page) => Promise<void>
   loadingSetup: (page: Page) => Promise<Locator>
+  loadingName: string
   mutateRouteUrl: string
   mutateSaveResponse: Record<string, unknown>
 }
@@ -206,7 +207,6 @@ const scenarios: Scenario[] = [
     geometrySelectors: [
       '.tavern-page',
       '.visitor-grid',
-      '.visitor-slot--empty',
       '.visitor-post',
       '.visitor-identity',
       '.visitor-title-row',
@@ -218,7 +218,8 @@ const scenarios: Scenario[] = [
       '.trade-item',
       '.trade-item strong',
       '.trade-item p',
-      '.mission-option'
+      '.mission-option',
+      '.visitor-post .btn'
     ],
     readySelector: '.visitor-grid',
     disabledCheck: async (page) => {
@@ -234,6 +235,7 @@ const scenarios: Scenario[] = [
       await confirm.click()
       return confirm
     },
+    loadingName: 'Sending…',
     mutateRouteUrl: '**/api/visitors/*/commission',
     mutateSaveResponse: tavernSave
   },
@@ -253,6 +255,7 @@ const scenarios: Scenario[] = [
       '.item-heading-copy p',
       '.item-actions',
       '.item-actions .btn',
+      '.item .btn',
       '.salvage-details',
       '.salvage-details p'
     ],
@@ -264,11 +267,12 @@ const scenarios: Scenario[] = [
     loadingSetup: async (page) => {
       const longIdentifyDisplay = page.getByText(new RegExp(stashLongIdentify, 'i'))
       const actionCard = page.locator('.item').filter({ has: longIdentifyDisplay })
-      const identifyButton = actionCard.getByRole('button', { name: /^Identify/ })
+      const identifyButton = actionCard.locator('.item-actions > .btn').first()
       await expect(identifyButton).toBeVisible()
       await identifyButton.click()
       return identifyButton
     },
+    loadingName: 'Identifying…',
     mutateRouteUrl: '**/api/items/identify-target/identify',
     mutateSaveResponse: stashSave
   },
@@ -285,7 +289,8 @@ const scenarios: Scenario[] = [
       '.service-row > div:nth-child(2)',
       '.service-action',
       '.queue-row',
-      '.appraiser-panel'
+      '.appraiser-panel',
+      '.caravan-page .btn'
     ],
     readySelector: '.caravan-status',
     disabledCheck: async (page) => {
@@ -294,11 +299,12 @@ const scenarios: Scenario[] = [
       await expect(upgradeButton).toBeDisabled()
     },
     loadingSetup: async (page) => {
-      const processButton = page.getByRole('button', { name: 'Process ready items' })
+      const processButton = page.locator('.appraiser-panel > .btn')
       await expect(processButton).toBeVisible()
       await processButton.click()
       return processButton
     },
+    loadingName: 'Checking…',
     mutateRouteUrl: '**/api/appraiser/complete',
     mutateSaveResponse: caravanSave
   }
@@ -325,11 +331,11 @@ async function collectLayoutGeometry(page: Page, selectors: string[]): Promise<L
         const parentBounds = node.parentElement?.getBoundingClientRect()
         maxWidth = Math.max(maxWidth, Math.ceil(bounds.width))
 
-        if (bounds.width > window.innerWidth + tolerance) {
-          off.push(`${selector}[${index}] exceeds viewport width (${Math.ceil(bounds.width)} > ${Math.ceil(window.innerWidth)})`)
+        if (bounds.left < -tolerance || bounds.right > window.innerWidth + tolerance) {
+          off.push(`${selector}[${index}] escapes viewport bounds (${Math.floor(bounds.left)}..${Math.ceil(bounds.right)} outside 0..${Math.ceil(window.innerWidth)})`)
         }
-        if (parentBounds && bounds.width > parentBounds.width + tolerance) {
-          off.push(`${selector}[${index}] exceeds parent width (${Math.ceil(bounds.width)} > ${Math.ceil(parentBounds.width)})`)
+        if (parentBounds && (bounds.left < parentBounds.left - tolerance || bounds.right > parentBounds.right + tolerance)) {
+          off.push(`${selector}[${index}] escapes parent bounds (${Math.floor(bounds.left)}..${Math.ceil(bounds.right)} outside ${Math.floor(parentBounds.left)}..${Math.ceil(parentBounds.right)})`)
         }
       })
     }
@@ -342,6 +348,14 @@ async function collectLayoutGeometry(page: Page, selectors: string[]): Promise<L
       violations: off
     }
   }, selectors)
+}
+
+function expectBoundedLayout(snapshot: LayoutSnapshot, selectors: string[]) {
+  expect(snapshot.scrollWidth).toBeLessThanOrEqual(snapshot.innerWidth)
+  expect(snapshot.violations).toHaveLength(0)
+  for (const selector of selectors) {
+    expect(snapshot.selectorCounts[selector], `${selector} must match at least one element`).toBeGreaterThan(0)
+  }
 }
 
 const responsiveAuth = {
@@ -366,8 +380,13 @@ for (const viewport of viewports) {
         await page.route('**/api/savegame', (route) => {
           void route.fulfill({ json: scenario.save })
         })
-        await page.route(scenario.mutateRouteUrl, (route) => {
-          void route.fulfill({ json: scenario.mutateSaveResponse })
+        let releaseMutation!: () => void
+        const mutationGate = new Promise<void>((resolve) => {
+          releaseMutation = resolve
+        })
+        await page.route(scenario.mutateRouteUrl, async (route) => {
+          await mutationGate
+          await route.fulfill({ json: scenario.mutateSaveResponse })
         })
 
         await page.goto('/login')
@@ -384,8 +403,7 @@ for (const viewport of viewports) {
         await expect(page.locator(scenario.readySelector)).toBeVisible()
 
         const initialGeometry = await collectLayoutGeometry(page, scenario.geometrySelectors)
-        expect(initialGeometry.scrollWidth).toBeLessThanOrEqual(initialGeometry.innerWidth)
-        expect(initialGeometry.violations).toHaveLength(0)
+        expectBoundedLayout(initialGeometry, scenario.geometrySelectors)
 
         const initialPath = test.info().outputPath(`${scenario.slug}-${viewport.name}-initial.png`)
         await page.screenshot({ path: initialPath, fullPage: true })
@@ -396,15 +414,21 @@ for (const viewport of viewports) {
 
         await expect(loadingButton).toBeVisible()
         await page.waitForTimeout(150)
+        await expect(loadingButton).toHaveText(scenario.loadingName)
+        await expect(loadingButton).toBeDisabled()
+
+        const loadingGeometry = await collectLayoutGeometry(page, scenario.geometrySelectors)
+        expectBoundedLayout(loadingGeometry, scenario.geometrySelectors)
 
         const beforePath = test.info().outputPath(`${scenario.slug}-${viewport.name}-loading.png`)
         await page.screenshot({ path: beforePath, fullPage: true })
 
+        releaseMutation()
         await page.waitForLoadState('networkidle')
+        await expect(loadingButton).not.toHaveText(scenario.loadingName)
 
         const stableGeometry = await collectLayoutGeometry(page, scenario.geometrySelectors)
-        expect(stableGeometry.scrollWidth).toBeLessThanOrEqual(stableGeometry.innerWidth)
-        expect(stableGeometry.violations).toHaveLength(0)
+        expectBoundedLayout(stableGeometry, scenario.geometrySelectors)
 
         const finalPath = test.info().outputPath(`${scenario.slug}-${viewport.name}-final.png`)
         await page.screenshot({ path: finalPath, fullPage: true })
