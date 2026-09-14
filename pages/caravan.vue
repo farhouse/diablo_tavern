@@ -159,12 +159,24 @@ async function completeAppraisal() {
 .service-row > div:nth-child(2) { display: grid; flex: 1 1 14rem; gap: 0.3rem; min-width: 0; }
 .service-action { align-items: end; display: grid; gap: 0.35rem; justify-items: end; min-width: 0; }
 .service-action .btn { min-width: 0; white-space: normal; }
+.service-row h2,
+.service-row p,
+.service-action span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .appraiser-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0.85rem; padding: 1rem; }
 .service-row h2,
 .service-row p,
 .service-action span { overflow-wrap: anywhere; }
 .queue-list { display: grid; gap: 0.5rem; }
-.queue-row { align-items: center; background: #14120f; border-radius: 6px; display: flex; justify-content: space-between; padding: 0.65rem; }
+.queue-row { align-items: center; background: #14120f; border-radius: 6px; display: flex; justify-content: space-between; min-width: 0; padding: 0.65rem; }
+.queue-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 @media (max-width: 600px) {
   .caravan-status { display: grid; grid-template-columns: repeat(3, 1fr); }
   .caravan-status > div { min-width: 0; padding: 0.8rem; }

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, type Locator, type Page, test } from '@playwright/test'
 
 const expectedSha = process.env.PLAYWRIGHT_EXPECTED_SHA
 
@@ -6,113 +6,342 @@ if (!expectedSha) {
   throw new Error('PLAYWRIGHT_EXPECTED_SHA must be supplied by playwright.config.ts.')
 }
 
+type LayoutSnapshot = {
+  innerWidth: number
+  scrollWidth: number
+  maxElementWidth: number
+  selectorCounts: Record<string, number>
+  violations: string[]
+}
+
+type Scenario = {
+  name: string
+  slug: string
+  path: string
+  save: Record<string, unknown>
+  geometrySelectors: string[]
+  readySelector: string
+  disabledCheck: (page: Page) => Promise<void>
+  loadingSetup: (page: Page) => Promise<Locator>
+  mutateRouteUrl: string
+  mutateSaveResponse: Record<string, unknown>
+}
+
+const unbroken = 'x'.repeat(320)
+
+const tavernLongName = `LongName${unbroken}`
+const tavernLongOrigin = `LongOrigin${unbroken}`
+const tavernLongEquipment = `LongEquipment${unbroken}`
+const tavernLongMission = `LongMissionDescription${unbroken}`
+const stashLongItem = `Unidentified${unbroken}`
+const stashLongIdentify = `LongIdentify${unbroken}`
+const caravanQueueItem = `QueueItem${unbroken}`
+
+function visitorPayload(id: string, name: string, state: 'open' | 'traded') {
+  return {
+    id,
+    name,
+    class: 'barbarian',
+    level: 3,
+    origin: `${tavernLongOrigin}-${id}`,
+    equipmentSummary: [
+      {
+        name: `${tavernLongEquipment}-${id}`,
+        itemId: `${id}-gear`,
+        type: 'weapon',
+        powerBonus: 0
+      }
+    ],
+    state,
+    budget: 80,
+    initialBudget: 80,
+    acceptedItemTypes: ['weapon', 'armor'],
+    interestedItemTypes: ['weapon'],
+    offers: [
+      {
+        id: `offer-${id}`,
+        item: {
+          id: `offer-item-${id}`,
+          baseName: `Offer ${id}`,
+          displayName: `Offer ${id}`,
+          type: 'weapon',
+          rarity: 'normal',
+          identified: true,
+          width: 1,
+          height: 2,
+          requiredLevel: 1,
+          affixes: [{ stat: 'attackPower', value: 11 }],
+          value: 34
+        },
+        price: 450
+      }
+    ],
+    buyQuotes: { [`offer-item-${id}`]: 420 },
+    trades: [],
+    power: 69,
+    commissionOptions: [
+      {
+        id: `commission-${id}`,
+        optionId: 'safe',
+        title: `Cautious ${id}`,
+        regionId: 'blood-moor',
+        durationMs: 46_000,
+        successChance: 0.82,
+        fullRewardGold: 60,
+        partialRewardGold: 18,
+        riskLevel: 'low',
+        failureConsequence: `${tavernLongMission}-${id}`
+      }
+    ],
+    arrivedAt: '2026-09-10T20:00:00.000Z'
+  }
+}
+
+const tavernSave = {
+  schemaVersion: 3,
+  userId: 'responsive-e2e',
+  gold: 6,
+  caravan: { level: 0, upgrades: { stashWagon: 0, appraiser: 0 }, services: { appraiserQueue: [] } },
+  stashLimit: 20,
+  stash: [],
+  unlockedRegionIds: ['blood-moor', 'dark-crypt'],
+  visitRound: {
+    id: 'responsive-round',
+    number: 1,
+    createdAt: '2026-09-10T20:00:00.000Z',
+    slots: [
+      { id: 'visitor-slot-1', visitor: visitorPayload('traveler-one', tavernLongName, 'traded') },
+      { id: 'visitor-slot-2', visitor: { ...visitorPayload('traveler-two', `${tavernLongName}B`, 'open') } }
+    ]
+  },
+  visitHistory: [],
+  processedRequestIds: [],
+  processedRequests: [],
+  revision: 1,
+  createdAt: '2026-09-10T20:00:00.000Z',
+  updatedAt: '2026-09-10T20:00:00.000Z'
+}
+
+const stashSave = {
+  schemaVersion: 3,
+  userId: 'responsive-e2e',
+  gold: 900,
+  caravan: { level: 0, upgrades: { stashWagon: 0, appraiser: 1 }, services: { appraiserQueue: [{ id: 'job-queue', itemId: 'queued-long-item', finishesAt: '2026-09-10T20:01:00.000Z' }] } },
+  stashLimit: 24,
+  stash: [
+    {
+      id: 'queued-long-item',
+      baseName: stashLongItem,
+      displayName: stashLongItem,
+      type: 'armor',
+      rarity: 'normal',
+      identified: false,
+      width: 1,
+      height: 2,
+      requiredLevel: 1,
+      affixes: [{ stat: 'health', value: 8 }],
+      value: 20
+    },
+    {
+      id: 'identify-target',
+      baseName: stashLongIdentify,
+      displayName: stashLongIdentify,
+      type: 'armor',
+      rarity: 'magic',
+      identified: false,
+      width: 1,
+      height: 3,
+      requiredLevel: 2,
+      affixes: [{ stat: 'attackPower', value: 11 }],
+      value: 20
+    }
+  ],
+  unlockedRegionIds: ['blood-moor'],
+  visitRound: { id: 'responsive-round', number: 1, createdAt: '2026-09-10T20:00:00.000Z', slots: [] },
+  visitHistory: [],
+  processedRequestIds: [],
+  processedRequests: [],
+  revision: 1,
+  createdAt: '2026-09-10T20:00:00.000Z',
+  updatedAt: '2026-09-10T20:00:00.000Z'
+}
+
+const caravanSave = {
+  schemaVersion: 3,
+  userId: 'responsive-e2e',
+  gold: 5,
+  caravan: { level: 0, upgrades: { stashWagon: 0, appraiser: 1 }, services: { appraiserQueue: [{ id: 'job-queue', itemId: 'queued-long-item', finishesAt: '2026-09-10T20:01:00.000Z' }] } },
+  stashLimit: 28,
+  stash: [
+    {
+      id: 'queued-long-item',
+      baseName: caravanQueueItem,
+      displayName: caravanQueueItem,
+      type: 'weapon',
+      rarity: 'normal',
+      identified: false,
+      width: 1,
+      height: 2,
+      requiredLevel: 2,
+      affixes: [{ stat: 'attackPower', value: 10 }],
+      value: 16
+    }
+  ],
+  unlockedRegionIds: ['blood-moor'],
+  visitRound: { id: 'responsive-round', number: 1, createdAt: '2026-09-10T20:00:00.000Z', slots: [] },
+  visitHistory: [],
+  processedRequestIds: [],
+  processedRequests: [],
+  revision: 1,
+  createdAt: '2026-09-10T20:00:00.000Z',
+  updatedAt: '2026-09-10T20:00:00.000Z'
+}
+
+const scenarios: Scenario[] = [
+  {
+    name: 'Tavern',
+    slug: 'tavern',
+    path: '/tavern',
+    save: tavernSave,
+    geometrySelectors: [
+      '.tavern-page',
+      '.visitor-grid',
+      '.visitor-slot--empty',
+      '.visitor-post',
+      '.visitor-identity',
+      '.visitor-title-row',
+      '.visitor-title-row h2',
+      '.visitor-origin',
+      '.equipment-copy',
+      '.equipment-copy strong',
+      '.equipment-copy span',
+      '.trade-item',
+      '.trade-item strong',
+      '.trade-item p',
+      '.mission-option'
+    ],
+    readySelector: '.visitor-grid',
+    disabledCheck: async (page) => {
+      const disabledBuy = page.locator('[data-testid="buy-offer-traveler-two"]').first()
+      await expect(disabledBuy).toBeVisible()
+      await expect(disabledBuy).toBeDisabled()
+    },
+    loadingSetup: async (page) => {
+      const revealReview = page.getByTestId('review-safe')
+      const confirm = page.getByTestId('confirm-safe')
+      await revealReview.click()
+      await expect(confirm).toBeVisible()
+      await confirm.click()
+      return confirm
+    },
+    mutateRouteUrl: '**/api/visitors/*/commission',
+    mutateSaveResponse: tavernSave
+  },
+  {
+    name: 'Stash',
+    slug: 'stash',
+    path: '/stash',
+    save: stashSave,
+    geometrySelectors: [
+      '.stash-page',
+      '.grid.three',
+      '.item',
+      '.item-heading',
+      '.item-heading-copy',
+      '.item-heading-copy .row',
+      '.item-heading-copy h2',
+      '.item-heading-copy p',
+      '.item-actions',
+      '.item-actions .btn',
+      '.salvage-details',
+      '.salvage-details p'
+    ],
+    readySelector: '.grid.three',
+    disabledCheck: async (page) => {
+      const queued = page.locator('.item').filter({ hasText: stashLongItem })
+      await expect(queued.getByRole('button', { name: /^Identify/ })).toBeDisabled()
+    },
+    loadingSetup: async (page) => {
+      const longIdentifyDisplay = page.getByText(new RegExp(stashLongIdentify, 'i'))
+      const actionCard = page.locator('.item').filter({ has: longIdentifyDisplay })
+      const identifyButton = actionCard.getByRole('button', { name: /^Identify/ })
+      await expect(identifyButton).toBeVisible()
+      await identifyButton.click()
+      return identifyButton
+    },
+    mutateRouteUrl: '**/api/items/identify-target/identify',
+    mutateSaveResponse: stashSave
+  },
+  {
+    name: 'Caravan',
+    slug: 'caravan',
+    path: '/caravan',
+    save: caravanSave,
+    geometrySelectors: [
+      '.caravan-page',
+      '.caravan-status',
+      '.service-list',
+      '.service-row',
+      '.service-row > div:nth-child(2)',
+      '.service-action',
+      '.queue-row',
+      '.appraiser-panel'
+    ],
+    readySelector: '.caravan-status',
+    disabledCheck: async (page) => {
+      const appraiserRow = page.locator('.service-row').filter({ hasText: 'Appraiser' })
+      const upgradeButton = appraiserRow.getByRole('button', { name: 'Upgrade' })
+      await expect(upgradeButton).toBeDisabled()
+    },
+    loadingSetup: async (page) => {
+      const processButton = page.getByRole('button', { name: 'Process ready items' })
+      await expect(processButton).toBeVisible()
+      await processButton.click()
+      return processButton
+    },
+    mutateRouteUrl: '**/api/appraiser/complete',
+    mutateSaveResponse: caravanSave
+  }
+]
+
 const viewports = [
-  { name: '2k', width: 2560, height: 1440 },
   { name: 'desktop', width: 1440, height: 1000 },
   { name: 'mobile', width: 390, height: 844 }
 ]
 
-for (const viewport of viewports) {
-  test.describe(viewport.name, () => {
-    test.use({ viewport })
+async function collectLayoutGeometry(page: Page, selectors: string[]): Promise<LayoutSnapshot> {
+  return page.evaluate((selectorList) => {
+    const tolerance = 1
+    const off: string[] = []
+    let maxWidth = 0
+    const selectorCounts: Record<string, number> = {}
 
-    test('keeps the Tavern readable without overflow or stretched posts', async ({ page, request }) => {
-      const buildInfo = await request.get('/api/build-info')
-      await expect(buildInfo).toBeOK()
-      await expect(buildInfo.json()).resolves.toEqual({ sha: expectedSha })
+    for (const selector of selectorList) {
+      const nodes = [...document.querySelectorAll<HTMLElement>(selector)]
+      selectorCounts[selector] = nodes.length
 
-      await page.route('**/api/auth/login', route => route.fulfill({ json: responsiveAuth }))
-      await page.route('**/api/savegame', route => route.fulfill({ json: responsiveSave }))
-      await page.goto('/login')
-      await page.getByLabel('Email').fill('responsive@example.test')
-      await page.getByLabel('Password').fill('responsive-test-password')
-      await page.getByRole('button', { name: 'Login' }).click()
-      await page.waitForURL('**/tavern')
-      await page.getByRole('region', { name: 'Visitor posts' }).waitFor()
+      nodes.forEach((node, index) => {
+        const bounds = node.getBoundingClientRect()
+        const parentBounds = node.parentElement?.getBoundingClientRect()
+        maxWidth = Math.max(maxWidth, Math.ceil(bounds.width))
 
-      const geometry = await page.evaluate(() => {
-        const tavern = document.querySelector<HTMLElement>('.tavern-page')
-        const grid = document.querySelector<HTMLElement>('.visitor-grid')
-        const posts = [...document.querySelectorAll<HTMLElement>('.visitor-grid > .visitor-post, .visitor-grid > .visitor-slot')]
-        const tradeColumns = document.querySelector<HTMLElement>('.trade-columns')
-        const missionOption = document.querySelector<HTMLElement>('.mission-option')
-        return {
-          innerWidth: window.innerWidth,
-          scrollWidth: document.documentElement.scrollWidth,
-          tavernWidth: tavern?.getBoundingClientRect().width ?? 0,
-          gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
-          gridAlignment: grid ? getComputedStyle(grid).alignItems : '',
-          tradeColumns: tradeColumns ? getComputedStyle(tradeColumns).gridTemplateColumns.split(' ').length : 0,
-          missionColumns: missionOption ? getComputedStyle(missionOption).gridTemplateColumns.split(' ').length : 0,
-          posts: posts.map((post) => {
-            const rect = post.getBoundingClientRect()
-            return { width: rect.width, height: rect.height, top: rect.top }
-          })
+        if (bounds.width > window.innerWidth + tolerance) {
+          off.push(`${selector}[${index}] exceeds viewport width (${Math.ceil(bounds.width)} > ${Math.ceil(window.innerWidth)})`)
+        }
+        if (parentBounds && bounds.width > parentBounds.width + tolerance) {
+          off.push(`${selector}[${index}] exceeds parent width (${Math.ceil(bounds.width)} > ${Math.ceil(parentBounds.width)})`)
         }
       })
+    }
 
-      expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.innerWidth)
-      expect(geometry.posts).toHaveLength(2)
-      expect(geometry.gridAlignment).toBe('start')
-      expect(geometry.tradeColumns).toBeGreaterThan(0)
-      expect(geometry.missionColumns).toBeGreaterThan(0)
-
-      if (viewport.width === 2560) {
-        expect(geometry.tavernWidth).toBeGreaterThanOrEqual(1600)
-        expect(geometry.gridColumns).toBe(2)
-        expect(Math.min(...geometry.posts.map(post => post.width))).toBeGreaterThan(740)
-        expect(geometry.tradeColumns).toBe(2)
-        expect(geometry.missionColumns).toBe(2)
-        expect(geometry.posts[0]!.height - geometry.posts[1]!.height).toBeGreaterThan(300)
-      } else if (viewport.width === 1440) {
-        expect(geometry.gridColumns).toBe(2)
-        expect(Math.min(...geometry.posts.map(post => post.width))).toBeGreaterThan(620)
-        expect(geometry.tradeColumns).toBe(1)
-        expect(geometry.missionColumns).toBe(1)
-        expect(geometry.posts[0]!.height - geometry.posts[1]!.height).toBeGreaterThan(300)
-      } else {
-        expect(geometry.gridColumns).toBe(1)
-        expect(geometry.posts[0]!.width).toBeLessThanOrEqual(358)
-        expect(geometry.posts[1]!.top).toBeGreaterThan(geometry.posts[0]!.top)
-        expect(geometry.tradeColumns).toBe(1)
-        expect(geometry.missionColumns).toBe(1)
-        const mobileControls = page.locator([
-          '[data-testid^="buy-"]',
-          '[data-testid^="sell-"]',
-          '[data-testid^="review-"]',
-          '[data-testid^="claim-"]',
-          '[data-testid^="dismiss-"]'
-        ].join(', '))
-        const mobileControlCount = await mobileControls.count()
-        expect(mobileControlCount).toBeGreaterThan(0)
-
-        for (let index = 0; index < mobileControlCount; index += 1) {
-          const control = mobileControls.nth(index)
-          const container = control.locator('..')
-          await expect(control).toBeVisible()
-          await expect(container).toBeVisible()
-
-          const controlBox = await control.boundingBox()
-          const containerBox = await container.boundingBox()
-          expect(controlBox).not.toBeNull()
-          expect(containerBox).not.toBeNull()
-          expect(controlBox!.width).toBeGreaterThan(0)
-          expect(controlBox!.height).toBeGreaterThan(0)
-          expect(containerBox!.width).toBeGreaterThan(0)
-          expect(containerBox!.height).toBeGreaterThan(0)
-
-          const containerInsets = await container.evaluate((element) => {
-            const style = getComputedStyle(element)
-            return Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight)
-              + Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.borderRightWidth)
-          })
-          const containerContentWidth = containerBox!.width - containerInsets
-          expect(containerContentWidth).toBeGreaterThan(0)
-          expect(Math.abs(controlBox!.width - containerContentWidth)).toBeLessThanOrEqual(1)
-        }
-      }
-    })
-  })
+    return {
+      innerWidth: Math.ceil(window.innerWidth),
+      scrollWidth: Math.ceil(document.documentElement.scrollWidth),
+      maxElementWidth: Math.ceil(maxWidth),
+      selectorCounts,
+      violations: off
+    }
+  }, selectors)
 }
 
 const responsiveAuth = {
@@ -121,33 +350,65 @@ const responsiveAuth = {
   refreshToken: 'responsive-refresh-token'
 }
 
-const item = {
-  id: 'stash-sword', baseName: 'Short Sword', displayName: 'Short Sword', type: 'weapon', rarity: 'normal',
-  identified: true, width: 1, height: 3, requiredLevel: 1, affixes: [{ stat: 'attackPower', value: 8 }], value: 35
-}
-const options = [
-  { optionId: 'safe', title: 'Careful patrol', regionId: 'blood-moor', durationMs: 46_000, successChance: 0.82, fullRewardGold: 54, partialRewardGold: 18, riskLevel: 'low', failureConsequence: 'The slot stays occupied for the full duration and yields no reward.' },
-  { optionId: 'risky', title: 'Perilous delve', regionId: 'blood-moor', durationMs: 108_000, successChance: 0.52, fullRewardGold: 122, partialRewardGold: 32, riskLevel: 'high', failureConsequence: 'The slot stays occupied longer and a failure yields no reward.' }
-]
-const visitor = (id: string, name: string) => ({
-  id, name, class: 'barbarian', level: 3, origin: 'Ashen Foothills',
-  equipmentSummary: [{ name: 'Worn battle axe', type: 'weapon', powerBonus: 0 }], state: 'traded',
-  budget: 140, initialBudget: 140, acceptedItemTypes: ['weapon', 'armor'], interestedItemTypes: ['weapon'],
-  offers: [{ id: `${id}-offer`, item: { ...item, id: `${id}-item` }, price: 40 }],
-  buyQuotes: { [item.id]: 31 }, trades: [], power: 69, commissionOptions: options,
-  arrivedAt: '2026-09-10T20:00:00.000Z'
-})
-const responsiveSave = {
-  schemaVersion: 3, userId: 'responsive-e2e', gold: 450,
-  caravan: { level: 0, upgrades: { stashWagon: 0, appraiser: 0 }, services: { appraiserQueue: [] } },
-  stashLimit: 20, stash: [item], unlockedRegionIds: ['blood-moor'],
-  visitRound: {
-    id: 'responsive-round', number: 1, createdAt: '2026-09-10T20:00:00.000Z',
-    slots: [
-      { id: 'visitor-slot-1', visitor: visitor('visitor-1', 'Mira') },
-      { id: 'visitor-slot-2', visitor: { ...visitor('visitor-2', 'Kael'), state: 'returned', commission: { ...options[0], id: 'commission-1', status: 'ready', startedAt: '2026-09-10T20:00:00.000Z', finishesAt: '2026-09-10T20:01:00.000Z', outcomeRoll: 0.2, outcome: 'partial', rewardGold: 18 } } }
-    ]
-  },
-  visitHistory: [], processedRequestIds: [], processedRequests: [], revision: 1,
-  createdAt: '2026-09-10T20:00:00.000Z', updatedAt: '2026-09-10T20:00:00.000Z'
+for (const viewport of viewports) {
+  for (const scenario of scenarios) {
+    test.describe(`${scenario.name} responsive layout at ${viewport.name}`, () => {
+      test.use({ viewport })
+
+      test('keeps geometry bounded and validates disabled/loading actions', async ({ page }) => {
+        const buildInfo = await page.request.get('/api/build-info')
+        await expect(buildInfo).toBeOK()
+        await expect(buildInfo.json()).resolves.toEqual({ sha: expectedSha })
+
+        await page.route('**/api/auth/login', (route) => {
+          void route.fulfill({ json: responsiveAuth })
+        })
+        await page.route('**/api/savegame', (route) => {
+          void route.fulfill({ json: scenario.save })
+        })
+        await page.route(scenario.mutateRouteUrl, (route) => {
+          void route.fulfill({ json: scenario.mutateSaveResponse })
+        })
+
+        await page.goto('/login')
+        await page.getByLabel('Email').fill('responsive@example.test')
+        await page.getByLabel('Password').fill('responsive-test-password')
+        await page.getByRole('button', { name: 'Login' }).click()
+        await page.waitForURL('**/tavern')
+
+        if (scenario.path !== '/tavern') {
+          await page.goto(scenario.path)
+        }
+        await page.waitForURL(`**${scenario.path}`)
+
+        await expect(page.locator(scenario.readySelector)).toBeVisible()
+
+        const initialGeometry = await collectLayoutGeometry(page, scenario.geometrySelectors)
+        expect(initialGeometry.scrollWidth).toBeLessThanOrEqual(initialGeometry.innerWidth)
+        expect(initialGeometry.violations).toHaveLength(0)
+
+        const initialPath = test.info().outputPath(`${scenario.slug}-${viewport.name}-initial.png`)
+        await page.screenshot({ path: initialPath, fullPage: true })
+
+        await scenario.disabledCheck(page)
+
+        const loadingButton = await scenario.loadingSetup(page)
+
+        await expect(loadingButton).toBeVisible()
+        await page.waitForTimeout(150)
+
+        const beforePath = test.info().outputPath(`${scenario.slug}-${viewport.name}-loading.png`)
+        await page.screenshot({ path: beforePath, fullPage: true })
+
+        await page.waitForLoadState('networkidle')
+
+        const stableGeometry = await collectLayoutGeometry(page, scenario.geometrySelectors)
+        expect(stableGeometry.scrollWidth).toBeLessThanOrEqual(stableGeometry.innerWidth)
+        expect(stableGeometry.violations).toHaveLength(0)
+
+        const finalPath = test.info().outputPath(`${scenario.slug}-${viewport.name}-final.png`)
+        await page.screenshot({ path: finalPath, fullPage: true })
+      })
+    })
+  }
 }

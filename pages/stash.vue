@@ -170,7 +170,12 @@ function capitalize(value: string): string {
 .item-heading { align-items: flex-start; display: flex; gap: 0.8rem; flex-wrap: wrap; }
 .item-heading-copy { flex: 1; min-width: 0; }
 .item-heading-copy .row, .item-heading-copy p { margin: 0; }
-.item-heading-copy .row { min-width: 0; }
+.item-heading-copy .row,
+.item-heading-copy p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .item-heading-copy h2 { overflow-wrap: anywhere; }
 .affix-list { color: var(--ok); }
 .item-actions { align-items: stretch; display: flex; flex-wrap: wrap; gap: 0.5rem; }
