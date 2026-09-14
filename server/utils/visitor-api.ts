@@ -47,7 +47,11 @@ export function requireMutationEnum<const T extends string>(
 }
 
 export function visitorOperationKey(operation: string, ...identifiers: string[]): string {
-  return JSON.stringify([operation, ...identifiers])
+  const key = JSON.stringify([operation, ...identifiers])
+  if (key.length > 128) {
+    throw new V2ValidationError('Mutation identifiers are too long')
+  }
+  return key
 }
 
 function requireExpectedRevision(value: unknown): number {

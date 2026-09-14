@@ -92,7 +92,7 @@ export function getMaxUpgradeLevel(upgradeId: CaravanUpgradeId): number {
 export function upgradeCaravan(save: SaveGame, upgradeId: CaravanUpgradeId, now = new Date()): SaveGame {
   save = normalizeSaveGame(save, { refreshVisitors: false })
   const currentLevel = save.caravan.upgrades[upgradeId]
-  if (currentLevel >= getMaxUpgradeLevel(upgradeId)) throw gameError('Upgrade is already at max level')
+  if (currentLevel >= getMaxUpgradeLevel(upgradeId)) throw gameError('Upgrade is already at max level', 'TERMINAL_ENTITY')
   const cost = getUpgradeCost(upgradeId, currentLevel)
   if (!cost) throw gameError('Upgrade cost not found')
   if (save.gold < cost.gold) throw gameError('Not enough gold')
@@ -110,12 +110,12 @@ export function startAppraisal(save: SaveGame, itemId: string, now = new Date(),
   if (queueSize <= 0) throw gameError('Appraiser not available. Upgrade your caravan.', 'SERVICE_LOCKED')
   const item = save.stash.find((entry) => entry.id === itemId)
   if (!item) throw gameError('Item not found in stash', 'ITEM_NOT_OWNED')
-  if (item.identified) throw gameError('Item is already identified')
+  if (item.identified) throw gameError('Item is already identified', 'OPTION_STALE')
   if (save.caravan.services.appraiserQueue.some((job) => job.itemId === itemId)) throw gameError('Item is already in the appraiser queue', 'ITEM_IN_USE')
   if (save.caravan.services.appraiserQueue.length >= queueSize) throw gameError('Appraiser queue is full', 'CAPACITY_FULL')
 
   const durationMinutes = item.rarity === 'magic' ? 5 : item.rarity === 'rare' ? 15 : item.rarity === 'unique' ? 30 : 0
-  if (durationMinutes <= 0) throw gameError('Item does not need appraisal')
+  if (durationMinutes <= 0) throw gameError('Item does not need appraisal', 'OPTION_STALE')
   const job: AppraisalJob = {
     id: uuid(),
     itemId,

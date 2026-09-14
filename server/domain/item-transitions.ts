@@ -43,7 +43,7 @@ export function applyItemTransition(
 
   if (command.operation === 'return') {
     if (from.ownerKind !== 'caravan' || from.custodyKind === 'stash') throw transitionError('Only an item away from stash can return', 'ITEM_NOT_OWNED')
-    if (from.custodyId !== command.targetId) throw transitionError('Return target does not match current authoritative custody')
+    if (from.custodyId !== command.targetId) throw transitionError('Return target does not match current authoritative custody', 'OPTION_STALE')
     to = { ownerKind: 'caravan', custodyKind: 'stash' }
     if (!game.stash.includes(command.itemId)) game.stash.push(command.itemId)
   } else {
@@ -117,7 +117,7 @@ function addToCustodyContainer(game: PersistedGameV3, itemId: string, placement:
   const containers = maps[placement.custodyKind as keyof typeof maps]
   const id = placement.custodyId!
   const existing = containers[id]
-  if (!existing) throw transitionError(`Authoritative ${placement.custodyKind} target does not exist`)
+  if (!existing) throw transitionError(`Authoritative ${placement.custodyKind} target does not exist`, 'OPTION_STALE')
   existing.itemIds.push(itemId)
 }
 
@@ -130,7 +130,7 @@ function requireAuthoritativeTarget(game: PersistedGameV3, command: ItemTransiti
   const containers = maps[command.operation as keyof typeof maps]
   const target = containers?.[command.targetId]
   if (containers && !target) {
-    throw transitionError(`Authoritative ${command.operation} target does not exist`)
+    throw transitionError(`Authoritative ${command.operation} target does not exist`, 'OPTION_STALE')
   }
   if (command.operation === 'service' && target!.itemIds.length > 0) {
     throw transitionError('Authoritative service target already has an item', 'ITEM_IN_USE')

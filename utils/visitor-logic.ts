@@ -140,7 +140,7 @@ export function normalizeVisitorDetails(save: Pick<SaveGame, 'visitRound' | 'vis
 
 export function buyFromVisitor(save: SaveGame, visitorId: string, offerId: string, requestId: string, now = new Date()): SaveGame {
   const visitor = requireTradeableVisitor(save, visitorId)
-  if (visitor.trades.some((trade) => trade.kind === 'player_bought')) throw domainError('Visitor already completed a sale to the player')
+  if (visitor.trades.some((trade) => trade.kind === 'player_bought')) throw domainError('Visitor already completed a sale to the player', 'OPTION_STALE')
   const offer = visitor.offers.find((entry) => entry.id === offerId)
   if (!offer) throw domainError('Offer not found', 'OPTION_STALE')
   if (offer.purchasedAt) throw domainError('Offer was already purchased', 'OPTION_STALE')
@@ -159,7 +159,7 @@ export function buyFromVisitor(save: SaveGame, visitorId: string, offerId: strin
 
 export function sellToVisitor(save: SaveGame, visitorId: string, itemId: string, requestId: string, now = new Date()): SaveGame {
   const visitor = requireTradeableVisitor(save, visitorId)
-  if (visitor.trades.some((trade) => trade.kind === 'player_sold')) throw domainError('Visitor already completed a purchase from the player')
+  if (visitor.trades.some((trade) => trade.kind === 'player_sold')) throw domainError('Visitor already completed a purchase from the player', 'OPTION_STALE')
   const itemIndex = save.stash.findIndex((item) => item.id === itemId)
   if (itemIndex < 0) throw domainError('Item not found in stash', 'ITEM_NOT_OWNED')
   const item = save.stash[itemIndex]!
@@ -203,7 +203,7 @@ export function assignVisitorCommission(
   const visitor = findVisitor(save, visitorId)
   if (visitor.state !== 'traded') throw domainError('Visitor must complete a trade before accepting a commission', 'VISITOR_NOT_AVAILABLE')
   const activeCount = currentVisitors(save).filter((entry) => entry.commission && entry.commission.status !== 'claimed').length
-  if (activeCount >= MAX_ACTIVE_COMMISSIONS) throw domainError('Active commission limit reached')
+  if (activeCount >= MAX_ACTIVE_COMMISSIONS) throw domainError('Active commission limit reached', 'CAPACITY_FULL')
   const option = visitor.commissionOptions.find((entry) => entry.optionId === optionId)
   if (!option) throw domainError('Commission option is not available for this visitor', 'OPTION_STALE')
 

@@ -338,8 +338,8 @@ describe('visitor HTTP/store/UI journey', () => {
     await flushPromises()
     expect(visitors(persistedSave)[0]!.trades.map((trade) => trade.kind)).toEqual(['player_bought', 'player_sold'])
 
-    await expect(useGameStore().buyFromVisitor(currentVisitor.id, 'duplicate-buy')).rejects.toThrow('already completed a sale')
-    await expect(useGameStore().sellToVisitor(currentVisitor.id, 'duplicate-sale')).rejects.toThrow('already completed a purchase')
+    await expect(useGameStore().buyFromVisitor(currentVisitor.id, 'duplicate-buy')).rejects.toThrow('The requested action is unavailable')
+    await expect(useGameStore().sellToVisitor(currentVisitor.id, 'duplicate-sale')).rejects.toThrow('The requested action is unavailable')
     await wrapper.get(`[data-testid="dismiss-${currentVisitor.id}"]`).trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Network disconnected after dismiss commit')
