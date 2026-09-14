@@ -1,5 +1,5 @@
 import type { PublicApiError, PublicApiErrorEnvelope } from '~/shared/types/v2-api-error'
-import { ActionUnavailableError, UncertainOperationError } from '~/server/domain/v2-errors'
+import { ActionUnavailableError, UncertainOperationError, V2ValidationError } from '~/server/domain/v2-errors'
 import {
   BusinessKeyConflictError,
   IdempotencyConflictError,
@@ -38,6 +38,11 @@ export function toPublicApiError(error: unknown): PublicApiErrorDefinition {
   if (error instanceof PersistedGameCorruptError) {
     return definition(500, 'Stored game state is unavailable', {
       code: 'internal_corruption', retryable: false
+    })
+  }
+  if (error instanceof V2ValidationError) {
+    return definition(400, 'The request is invalid', {
+      code: 'validation_error', retryable: false
     })
   }
   if (isClientDomainError(error)) {

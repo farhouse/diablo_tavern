@@ -5,6 +5,7 @@ import type { PersistedGameV3 } from '../server/utils/savegame'
 
 let document: PersistedGameV3 | Record<string, unknown> | undefined
 let uncertainCommit = false
+let forceCasMiss = false
 
 const collection = {
   findOne: vi.fn(async () => document ? structuredClone(document) : null),
@@ -14,6 +15,7 @@ const collection = {
     return { upsertedCount: 1, modifiedCount: 0 }
   }),
   replaceOne: vi.fn(async (rawFilter: unknown, replacement: PersistedGameV3) => {
+    if (forceCasMiss) return { modifiedCount: 0 }
     const filter = rawFilter as { revision?: number; $or?: Array<{ revision: number | { $exists: boolean } }> }
     if (!document) return { modifiedCount: 0 }
     const revision = typeof document.revision === 'number' ? document.revision : undefined
@@ -39,6 +41,7 @@ describe('atomic persisted-game mutation', () => {
     const { buildPersistedFromPublic } = await import('../server/utils/savegame')
     document = buildPersistedFromPublic(createSaveGame('atomic-user'))
     uncertainCommit = false
+    forceCasMiss = false
     vi.clearAllMocks()
   })
 
@@ -99,6 +102,17 @@ describe('atomic persisted-game mutation', () => {
     expect(result.gold).toBe(459)
     expect(mutate).toHaveBeenCalledOnce()
     expect(collection.replaceOne).toHaveBeenCalledOnce()
+  })
+
+  it('maps exhausted deterministic CAS misses to a revision conflict', async () => {
+    const { mutateSaveGameAtomic, RevisionConflictError } = await import('../server/utils/savegame')
+    forceCasMiss = true
+
+    await expect(mutateSaveGameAtomic(
+      'atomic-user', 'cas-exhausted', 'credit:cas-exhausted', 0, { amount: 1 },
+      (save) => { save.gold += 1 }
+    )).rejects.toBeInstanceOf(RevisionConflictError)
+    expect(collection.replaceOne).toHaveBeenCalledTimes(5)
   })
 
   it('keeps business keys permanent across request IDs', async () => {

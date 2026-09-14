@@ -10,10 +10,12 @@ import type {
   VisitorEquipmentSummaryItem
 } from '~/types/game'
 import { affixPool, itemBases, quests, uniqueItems } from '~/utils/game-data'
+import type { UnavailableReason } from '~/shared/types/v2-game-view'
+import { V2DomainRuleError } from '~/shared/errors/v2-domain'
 
 export type RandomSource = () => number
 
-export class VisitorDomainError extends Error {
+export class VisitorDomainError extends V2DomainRuleError {
   override name = 'VisitorDomainError'
 }
 
@@ -140,10 +142,10 @@ export function buyFromVisitor(save: SaveGame, visitorId: string, offerId: strin
   const visitor = requireTradeableVisitor(save, visitorId)
   if (visitor.trades.some((trade) => trade.kind === 'player_bought')) throw domainError('Visitor already completed a sale to the player')
   const offer = visitor.offers.find((entry) => entry.id === offerId)
-  if (!offer) throw domainError('Offer not found')
-  if (offer.purchasedAt) throw domainError('Offer was already purchased')
+  if (!offer) throw domainError('Offer not found', 'OPTION_STALE')
+  if (offer.purchasedAt) throw domainError('Offer was already purchased', 'OPTION_STALE')
   if (save.gold < offer.price) throw domainError('Not enough gold')
-  if (effectiveCaravanCapacityUsed(save) >= save.stashLimit) throw domainError('Stash is full')
+  if (effectiveCaravanCapacityUsed(save) >= save.stashLimit) throw domainError('Stash is full', 'CAPACITY_FULL')
 
   save.gold -= offer.price
   visitor.budget += offer.price
@@ -159,7 +161,7 @@ export function sellToVisitor(save: SaveGame, visitorId: string, itemId: string,
   const visitor = requireTradeableVisitor(save, visitorId)
   if (visitor.trades.some((trade) => trade.kind === 'player_sold')) throw domainError('Visitor already completed a purchase from the player')
   const itemIndex = save.stash.findIndex((item) => item.id === itemId)
-  if (itemIndex < 0) throw domainError('Item not found in stash')
+  if (itemIndex < 0) throw domainError('Item not found in stash', 'ITEM_NOT_OWNED')
   const item = save.stash[itemIndex]!
   if (!item.identified) throw domainError('Item must be identified before a visitor can buy it')
   if (!visitor.acceptedItemTypes.includes(item.type)) throw domainError('Visitor is not interested in this item type')
@@ -199,11 +201,11 @@ export function assignVisitorCommission(
 ): SaveGame {
   refreshVisitRound(save, now, random)
   const visitor = findVisitor(save, visitorId)
-  if (visitor.state !== 'traded') throw domainError('Visitor must complete a trade before accepting a commission')
+  if (visitor.state !== 'traded') throw domainError('Visitor must complete a trade before accepting a commission', 'VISITOR_NOT_AVAILABLE')
   const activeCount = currentVisitors(save).filter((entry) => entry.commission && entry.commission.status !== 'claimed').length
   if (activeCount >= MAX_ACTIVE_COMMISSIONS) throw domainError('Active commission limit reached')
   const option = visitor.commissionOptions.find((entry) => entry.optionId === optionId)
-  if (!option) throw domainError('Commission option is not available for this visitor')
+  if (!option) throw domainError('Commission option is not available for this visitor', 'OPTION_STALE')
 
   visitor.commission = {
     ...option,
@@ -220,7 +222,7 @@ export function assignVisitorCommission(
 export function claimVisitorCommission(save: SaveGame, visitorId: string, now = new Date()): SaveGame {
   const visitor = findVisitor(save, visitorId)
   const commission = visitor.commission
-  if (!commission || visitor.state !== 'returned' || commission.status !== 'ready') throw domainError('Commission is not ready to claim')
+  if (!commission || visitor.state !== 'returned' || commission.status !== 'ready') throw domainError('Commission is not ready to claim', 'EXPEDITION_NOT_READY')
 
   const rewardGold = commission.rewardGold ?? 0
   save.gold += rewardGold
@@ -241,8 +243,8 @@ export function claimVisitorCommission(save: SaveGame, visitorId: string, now = 
 export function dismissVisitor(save: SaveGame, visitorId: string, now = new Date(), random: RandomSource = Math.random): SaveGame {
   refreshVisitRound(save, now, random)
   const visitor = findVisitor(save, visitorId)
-  if (visitor.state === 'commissioned' || visitor.state === 'returned') throw domainError('Commission must be claimed before the visitor can leave')
-  if (visitor.state === 'departed') throw domainError('Visitor has already departed')
+  if (visitor.state === 'commissioned' || visitor.state === 'returned') throw domainError('Commission must be claimed before the visitor can leave', 'SETTLEMENT_PENDING')
+  if (visitor.state === 'departed') throw domainError('Visitor has already departed', 'TERMINAL_ENTITY')
   visitor.state = 'departed'
   visitor.departedAt = now.toISOString()
   archiveVisitor(save, visitor)
@@ -252,10 +254,10 @@ export function dismissVisitor(save: SaveGame, visitorId: string, now = new Date
 
 export function salvageItem(save: SaveGame, itemId: string, now = new Date()): SaveGame {
   if (save.caravan.services.appraiserQueue.some((job) => job.itemId === itemId)) {
-    throw domainError('Item is in the appraiser queue')
+    throw domainError('Item is in the appraiser queue', 'ITEM_IN_USE')
   }
   const itemIndex = save.stash.findIndex((item) => item.id === itemId)
-  if (itemIndex < 0) throw domainError('Item not found in stash')
+  if (itemIndex < 0) throw domainError('Item not found in stash', 'ITEM_NOT_OWNED')
   const [item] = save.stash.splice(itemIndex, 1)
   adjustEffectiveCapacity(save, -1)
   save.gold += Math.max(1, Math.floor(item!.value * 0.25))
@@ -492,13 +494,13 @@ function archiveVisitor(save: SaveGame, visitor: Visitor): void {
 
 function requireTradeableVisitor(save: SaveGame, visitorId: string): Visitor {
   const visitor = findVisitor(save, visitorId)
-  if (visitor.state !== 'open' && visitor.state !== 'traded') throw domainError('Visitor is no longer available for trade')
+  if (visitor.state !== 'open' && visitor.state !== 'traded') throw domainError('Visitor is no longer available for trade', 'VISITOR_NOT_AVAILABLE')
   return visitor
 }
 
 function findVisitor(save: SaveGame, visitorId: string): Visitor {
   const visitor = currentVisitors(save).find((entry) => entry.id === visitorId)
-  if (!visitor) throw domainError('Visitor not found in current round')
+  if (!visitor) throw domainError('Visitor not found in current round', 'VISITOR_NOT_AVAILABLE')
   return visitor
 }
 
@@ -622,6 +624,6 @@ function touch(save: SaveGame, now: Date): SaveGame {
   return save
 }
 
-function domainError(message: string): VisitorDomainError {
-  return new VisitorDomainError(message)
+function domainError(message: string, unavailableReason?: UnavailableReason): VisitorDomainError {
+  return new VisitorDomainError(message, unavailableReason)
 }

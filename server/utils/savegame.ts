@@ -365,7 +365,7 @@ export async function mutateSaveGameAtomic(
     // replay; any other winner makes expectedRevision stale.
   }
 
-  throw new Error('Save changed concurrently; retry with the same requestId')
+  throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 }
 
 export class IdempotencyConflictError extends Error {

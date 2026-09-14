@@ -1,4 +1,5 @@
 import type { UnavailableReason } from '~/shared/types/v2-game-view'
+export { V2DomainRuleError } from '~/shared/errors/v2-domain'
 
 export class ActionUnavailableError extends Error {
   override name = 'ActionUnavailableError'
@@ -10,6 +11,10 @@ export class ActionUnavailableError extends Error {
   ) {
     super(message)
   }
+}
+
+export class V2ValidationError extends Error {
+  override name = 'V2ValidationError'
 }
 
 export class UncertainOperationError extends Error {
