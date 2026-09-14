@@ -489,11 +489,14 @@ function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
 
 function backfillRetainedVisitorIdentity(document: PersistedDbDocument): PersistedGameV3 | undefined {
   const candidate = toPersistedGame(document)
-  const currentVisitors = [candidate.visitRound, ...(candidate.visitHistory ?? [])]
+  const candidateRounds: unknown[] = [candidate.visitRound, ...(Array.isArray(candidate.visitHistory) ? candidate.visitHistory : [])]
+  const currentVisitors = candidateRounds.filter(isPersistedRound)
     .flatMap((round) => round?.slots?.flatMap((slot) => slot.visitor ? [slot.visitor] : []) ?? [])
   const currentVisitorIds = new Set(currentVisitors.map((visitor) => visitor.id))
-  const replayVisitors = [...(candidate.requestRecords ?? [])].reverse().flatMap((record) => {
-    const response = record.response
+  const replayRecords = Array.isArray(document.requestRecords) ? [...document.requestRecords].reverse() : []
+  const replayVisitors = replayRecords.flatMap((record) => {
+    if (!isPlainRecord(record) || !isPublicSaveGame(record.response)) return []
+    const response = record.response as PublicSaveGame
     return [response.visitRound, ...(response.visitHistory ?? [])]
       .flatMap((round) => round?.slots?.flatMap((slot) => slot.visitor ? [slot.visitor] : []) ?? [])
   })
