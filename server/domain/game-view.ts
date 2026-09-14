@@ -79,11 +79,12 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
   for (const expedition of Object.values(game.expeditionsById)) {
     const target = expedition.projection
     if (target?.kind !== 'expedition' || projectedVisitorIds.has(target.visitorId)) continue
+    if (!target.retainedVisitor) throw new Error(`Missing retained visitor identity for ${expedition.id}`)
     visitors.push({
       visitorId: target.visitorId,
-      name: { key: `visitor.${target.visitorId}`, fallback: 'Visitante archivado' },
+      name: { key: `visitor.${target.visitorId}`, fallback: target.retainedVisitor.name },
       state: 'departed',
-      departedAt: game.updatedAt,
+      departedAt: target.retainedVisitor.departedAt,
       lastExpeditionId: expedition.id,
       actions: []
     })

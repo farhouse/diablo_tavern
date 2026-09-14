@@ -140,29 +140,33 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
   })
 
   it('returns the final retained loan after its visitor ages out and prunes the lifecycle', async () => {
-    const { getPersistedGameV3, mutateSaveGameAtomic, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { buildPersistedFromPublic, getPersistedGameV3, hydratePersistedGame, mutateSaveGameAtomic, transitionItemAtomic } = await import('../server/utils/savegame')
     const { applyItemTransition } = await import('../server/domain/item-transitions')
     const initial = await getPersistedGameV3(userIds[13]!)
     addExpedition(initial, 'retained-expedition')
     const visitor = initial.visitRound.slots.find((slot) => slot.visitor?.commission)?.visitor!
     const itemId = initial.stash[0]!
     const loaned = applyItemTransition(initial, { operation: 'loan', itemId, targetId: 'retained-expedition' }).game
-    loaned.visitHistory = [structuredClone(loaned.visitRound)]
-    loaned.visitRound = {
+    const historicalName = visitor.name
+    const departedAt = new Date(Date.parse(visitor.commission!.finishesAt) + 60_000).toISOString()
+    const aged = hydratePersistedGame(loaned)
+    const expeditionProjection = loaned.expeditionsById['retained-expedition']!.projection
+    if (expeditionProjection?.kind !== 'expedition') throw new Error('Expected retained expedition projection')
+    expeditionProjection.retainedVisitor = { name: historicalName, departedAt }
+    aged.visitHistory = []
+    aged.visitRound = {
       id: 'empty-current', number: 99,
-      slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: loaned.updatedAt
+      slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: aged.updatedAt
     }
-    for (let index = 0; index < 20; index += 1) {
-      loaned.visitHistory.unshift({
-        id: `empty-history-${index}`, number: 98 - index,
-        slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: loaned.updatedAt
-      })
-    }
-    await collection.replaceOne({ userId: userIds[13] }, loaned)
-    await mutateSaveGameAtomic(userIds[13]!, 'prune-visitor', 'history:prune', 0, {}, () => {})
+    const retainedLifecycle = buildPersistedFromPublic(aged, loaned)
+    await collection.replaceOne({ userId: userIds[13] }, retainedLifecycle)
+    await mutateSaveGameAtomic(userIds[13]!, 'unrelated-gold', 'generic:retained-stability', 0, {}, (save) => { save.gold += 1 })
     const retained = await getPersistedGameV3(userIds[13]!)
     expect(retained.visitHistory.flatMap((round) => round.slots).some((slot) => slot.visitor?.id === visitor.id)).toBe(false)
     expect(retained.expeditionsById['retained-expedition']?.itemIds).toEqual([itemId])
+    expect(retained.expeditionsById['retained-expedition']?.projection).toEqual(expect.objectContaining({
+      retainedVisitor: { name: historicalName, departedAt }
+    }))
 
     vi.doMock('../server/utils/auth', () => ({
       requireUser: async () => ({ id: userIds[13]!, email: 'retained@example.test' })
@@ -172,7 +176,9 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const retainedView = await getGameHandler({} as never)
     expect(retainedView.visitors).toContainEqual(expect.objectContaining({
       visitorId: visitor.id,
+      name: { key: `visitor.${visitor.id}`, fallback: historicalName },
       state: 'departed',
+      departedAt,
       lastExpeditionId: 'retained-expedition'
     }))
     expect(retainedView.expeditions).toContainEqual(expect.objectContaining({

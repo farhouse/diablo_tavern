@@ -56,7 +56,13 @@ export interface PersistedCustodyContainer {
   id: string
   itemIds: string[]
   projection?:
-    | { kind: 'expedition'; visitorId: string; contractId: string; startsAt: string }
+    | {
+        kind: 'expedition'
+        visitorId: string
+        contractId: string
+        startsAt: string
+        retainedVisitor?: { name: string; departedAt: string }
+      }
     | { kind: 'settlement'; expeditionId: string; outcome: 'returned' | 'retreated' | 'death'; appliedAt: string }
     | { kind: 'recovery'; sourceExpeditionId: string; resolvedAt: string }
     | { kind: 'service'; service: 'blacksmith' | 'enchanter'; queuedAt: string; startsAt: string }
@@ -558,7 +564,12 @@ export function buildPersistedFromPublic(
         id: commission.id,
         itemIds: [...(expedition?.itemIds ?? [])],
         projection: {
-          kind: 'expedition', visitorId: visitor.id, contractId: commission.id, startsAt: commission.startedAt
+          kind: 'expedition', visitorId: visitor.id, contractId: commission.id, startsAt: commission.startedAt,
+          retainedVisitor: visitor.departedAt
+            ? { name: visitor.name, departedAt: visitor.departedAt }
+            : expedition?.projection?.kind === 'expedition'
+              ? expedition.projection.retainedVisitor
+              : undefined
         }
       }
       if (commission.status !== 'active' && commission.outcome) {
@@ -678,12 +689,18 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   const settlements = Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)
   const recoveries = Object.values(candidate.recoveriesById as Record<string, PersistedCustodyContainer>)
   for (const container of expeditions) {
-    if (container.projection?.kind !== 'expedition') return false
-    if (!visitorIds.has(container.projection.visitorId)) {
-      if (!hasRetainedExpeditionDependency(container, settlements, recoveries)) return false
+    const projection = container.projection
+    if (projection?.kind !== 'expedition') return false
+    if (!visitorIds.has(projection.visitorId)) {
+      if (!projection.retainedVisitor
+        || !hasRetainedExpeditionDependency(container, settlements, recoveries)) return false
       continue
     }
-    if (visitorContracts.get(container.projection.visitorId) !== container.projection.contractId) return false
+    const visitor = visitors.find((entry) => entry.id === projection.visitorId)!
+    if (projection.retainedVisitor
+      && (visitor.name !== projection.retainedVisitor.name
+        || visitor.departedAt !== projection.retainedVisitor.departedAt)) return false
+    if (visitorContracts.get(projection.visitorId) !== projection.contractId) return false
   }
   for (const visitor of visitors) {
     if (!visitor.commission) {
@@ -1024,9 +1041,13 @@ function isContainerMap(value: unknown): value is Record<string, PersistedCustod
 function isCustodyProjection(value: unknown): boolean {
   if (!isPlainRecord(value) || typeof value.kind !== 'string') return false
   if (value.kind === 'legacy_appraiser') return hasOnlyKeys(value, ['kind'])
-  if (value.kind === 'expedition') return hasOnlyKeys(value, ['kind', 'visitorId', 'contractId', 'startsAt'])
+  if (value.kind === 'expedition') return hasOnlyKeys(value, ['kind', 'visitorId', 'contractId', 'startsAt', 'retainedVisitor'])
     && typeof value.visitorId === 'string' && Boolean(value.visitorId) && typeof value.contractId === 'string' && Boolean(value.contractId)
     && Number.isFinite(Date.parse(String(value.startsAt)))
+    && (value.retainedVisitor === undefined || (isPlainRecord(value.retainedVisitor)
+      && hasOnlyKeys(value.retainedVisitor, ['name', 'departedAt'])
+      && typeof value.retainedVisitor.name === 'string' && Boolean(value.retainedVisitor.name)
+      && Number.isFinite(Date.parse(String(value.retainedVisitor.departedAt)))))
   if (value.kind === 'settlement') return hasOnlyKeys(value, ['kind', 'expeditionId', 'outcome', 'appliedAt'])
     && typeof value.expeditionId === 'string' && Boolean(value.expeditionId) && ['returned', 'retreated', 'death'].includes(String(value.outcome))
     && Number.isFinite(Date.parse(String(value.appliedAt)))
