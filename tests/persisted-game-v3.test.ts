@@ -334,28 +334,52 @@ describe('PersistedGameV3 invariants', () => {
     }
     const itemId = persisted.stash[0]!
     const loaned = applyItemTransition(persisted, { operation: 'loan', itemId, targetId: 'retained-contract' }).game
-    loaned.visitHistory = [structuredClone(loaned.visitRound)]
-    loaned.visitRound = {
+    const departedAt = new Date(Date.parse(visitor.commission!.finishesAt) + 60_000).toISOString()
+    const historicalName = visitor.name
+    const departedVisitor = loaned.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)?.visitor!
+    departedVisitor.state = 'departed'
+    departedVisitor.departedAt = departedAt
+    departedVisitor.commission!.status = 'claimed'
+    departedVisitor.commission!.outcome = 'partial'
+    departedVisitor.commission!.rewardGold = departedVisitor.commission!.partialRewardGold
+    departedVisitor.commission!.claimedAt = departedAt
+    loaned.settlementsById['retained-contract'] = {
+      id: 'retained-contract', itemIds: [],
+      projection: {
+        kind: 'settlement', expeditionId: 'retained-contract', outcome: 'retreated',
+        appliedAt: departedVisitor.commission!.finishesAt
+      }
+    }
+    const { hydratePersistedGame } = await import('../server/utils/savegame')
+    const departed = buildPersistedFromPublic(hydratePersistedGame(loaned), loaned)
+    const aged = hydratePersistedGame(departed)
+    aged.visitHistory = [structuredClone(aged.visitRound)]
+    aged.visitRound = {
       id: 'empty-current', number: 99,
-      slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: loaned.updatedAt
+      slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: aged.updatedAt
     }
     for (let index = 0; index < 20; index += 1) {
-      loaned.visitHistory.unshift({
+      aged.visitHistory.unshift({
         id: `empty-history-${index}`, number: 98 - index,
-        slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: loaned.updatedAt
+        slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: aged.updatedAt
       })
     }
 
-    const { hydratePersistedGame } = await import('../server/utils/savegame')
-    const rebuilt = buildPersistedFromPublic(hydratePersistedGame(loaned), loaned)
+    const rebuilt = buildPersistedFromPublic(aged, departed)
     expect(rebuilt.visitHistory.flatMap((round) => round.slots).some((slot) => slot.visitor?.id === visitor.id)).toBe(false)
     expect(rebuilt.expeditionsById['retained-contract']?.itemIds).toEqual([itemId])
+    expect(rebuilt.expeditionsById['retained-contract']?.projection).toEqual(expect.objectContaining({
+      retainedVisitor: { name: historicalName, departedAt }
+    }))
     expect(isPersistedCanonical(rebuilt)).toBe(true)
 
+    rebuilt.updatedAt = '2026-06-07T08:09:10.000Z'
     const retainedView = mapPersistedGameToGameView(rebuilt, new Date(rebuilt.updatedAt))
     expect(retainedView.visitors).toContainEqual(expect.objectContaining({
       visitorId: visitor.id,
+      name: { key: `visitor.${visitor.id}`, fallback: historicalName },
       state: 'departed',
+      departedAt,
       lastExpeditionId: 'retained-contract'
     }))
     expect(retainedView.items).toContainEqual(expect.objectContaining({
