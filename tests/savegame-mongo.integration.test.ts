@@ -145,22 +145,48 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const initial = await getPersistedGameV3(userIds[13]!)
     addExpedition(initial, 'retained-expedition')
     const visitor = initial.visitRound.slots.find((slot) => slot.visitor?.commission)?.visitor!
+    visitor.commission!.id = 'retained-expedition'
+    const initialProjection = initial.expeditionsById['retained-expedition']!.projection
+    if (initialProjection?.kind !== 'expedition') throw new Error('Expected retained expedition projection')
+    initialProjection.contractId = 'retained-expedition'
     const itemId = initial.stash[0]!
     const loaned = applyItemTransition(initial, { operation: 'loan', itemId, targetId: 'retained-expedition' }).game
     const historicalName = visitor.name
     const departedAt = new Date(Date.parse(visitor.commission!.finishesAt) + 60_000).toISOString()
-    const aged = hydratePersistedGame(loaned)
-    const expeditionProjection = loaned.expeditionsById['retained-expedition']!.projection
-    if (expeditionProjection?.kind !== 'expedition') throw new Error('Expected retained expedition projection')
-    expeditionProjection.retainedVisitor = { name: historicalName, departedAt }
+    const departedVisitor = loaned.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)?.visitor!
+    departedVisitor.state = 'departed'
+    departedVisitor.departedAt = departedAt
+    departedVisitor.commission!.status = 'claimed'
+    departedVisitor.commission!.outcome = 'partial'
+    departedVisitor.commission!.rewardGold = departedVisitor.commission!.partialRewardGold
+    departedVisitor.commission!.claimedAt = departedAt
+    loaned.settlementsById['retained-expedition'] = {
+      id: 'retained-expedition', itemIds: [],
+      projection: {
+        kind: 'settlement', expeditionId: 'retained-expedition', outcome: 'retreated',
+        appliedAt: departedVisitor.commission!.finishesAt
+      }
+    }
+    const departed = buildPersistedFromPublic(hydratePersistedGame(loaned), loaned)
+    await collection.replaceOne({ userId: userIds[13] }, departed)
+    await mutateSaveGameAtomic(userIds[13]!, 'capture-departed', 'generic:capture-departed', 0, {}, () => {})
+    const withReplay = await getPersistedGameV3(userIds[13]!)
+    const aged = hydratePersistedGame(withReplay)
     aged.visitHistory = []
     aged.visitRound = {
       id: 'empty-current', number: 99,
       slots: [{ id: 'visitor-slot-1' }, { id: 'visitor-slot-2' }], createdAt: aged.updatedAt
     }
-    const retainedLifecycle = buildPersistedFromPublic(aged, loaned)
+    const retainedLifecycle = buildPersistedFromPublic(aged, withReplay)
+    const legacyProjection = retainedLifecycle.expeditionsById['retained-expedition']!.projection
+    if (legacyProjection?.kind !== 'expedition') throw new Error('Expected retained expedition projection')
+    delete legacyProjection.retainedVisitor
     await collection.replaceOne({ userId: userIds[13] }, retainedLifecycle)
-    await mutateSaveGameAtomic(userIds[13]!, 'unrelated-gold', 'generic:retained-stability', 0, {}, (save) => { save.gold += 1 })
+    const backfilled = await getPersistedGameV3(userIds[13]!)
+    expect(backfilled.expeditionsById['retained-expedition']?.projection).toEqual(expect.objectContaining({
+      retainedVisitor: { name: historicalName, departedAt }
+    }))
+    await mutateSaveGameAtomic(userIds[13]!, 'unrelated-gold', 'generic:retained-stability', 1, {}, (save) => { save.gold += 1 })
     const retained = await getPersistedGameV3(userIds[13]!)
     expect(retained.visitHistory.flatMap((round) => round.slots).some((slot) => slot.visitor?.id === visitor.id)).toBe(false)
     expect(retained.expeditionsById['retained-expedition']?.itemIds).toEqual([itemId])

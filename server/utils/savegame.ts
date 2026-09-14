@@ -130,7 +130,16 @@ export async function getPersistedGameV3(userId: string, dependencies = defaultD
     }
 
     if (existing.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(existing) || !isPersistedCanonical(existing))) {
-      throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
+      const backfilled = !hasLegacyFields(existing) ? backfillRetainedVisitorIdentity(existing) : undefined
+      if (!backfilled || !isPersistedCanonical(backfilled)) {
+        throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
+      }
+      const result = await saves.replaceOne(
+        { userId, revision: existing.revision } as Filter<DbSaveGame>,
+        backfilled as unknown as DbSaveGame
+      )
+      if (result.modifiedCount === 1) return backfilled
+      continue
     }
 
     const existingIsLegacy = existing.schemaVersion !== SAVE_SCHEMA_VERSION
@@ -233,7 +242,15 @@ export async function mutateSaveGameAtomic(
     }
 
     if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(currentDocument) || !isPersistedCanonical(currentDocument))) {
-      throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
+      const backfilled = !hasLegacyFields(currentDocument) ? backfillRetainedVisitorIdentity(currentDocument) : undefined
+      if (!backfilled || !isPersistedCanonical(backfilled)) {
+        throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
+      }
+      await saves.replaceOne(
+        { userId, revision: currentDocument.revision } as Filter<DbSaveGame>,
+        backfilled as unknown as DbSaveGame
+      )
+      continue
     }
 
     const persisted = toPersistedGame(currentDocument)
@@ -468,6 +485,32 @@ function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
       ? [...((document as { ledger: PersistedLedgerEntry[] }).ledger)]
       : []
   }
+}
+
+function backfillRetainedVisitorIdentity(document: PersistedDbDocument): PersistedGameV3 | undefined {
+  const candidate = toPersistedGame(document)
+  const currentVisitors = [candidate.visitRound, ...(candidate.visitHistory ?? [])]
+    .flatMap((round) => round?.slots?.flatMap((slot) => slot.visitor ? [slot.visitor] : []) ?? [])
+  const currentVisitorIds = new Set(currentVisitors.map((visitor) => visitor.id))
+  const replayVisitors = [...(candidate.requestRecords ?? [])].reverse().flatMap((record) => {
+    const response = record.response
+    return [response.visitRound, ...(response.visitHistory ?? [])]
+      .flatMap((round) => round?.slots?.flatMap((slot) => slot.visitor ? [slot.visitor] : []) ?? [])
+  })
+  let changed = false
+
+  for (const expedition of Object.values(candidate.expeditionsById ?? {})) {
+    const projection = expedition.projection
+    if (projection?.kind !== 'expedition' || projection.retainedVisitor || currentVisitorIds.has(projection.visitorId)) continue
+    const historical = replayVisitors.find((visitor) => visitor.id === projection.visitorId
+      && visitor.commission?.id === projection.contractId
+      && typeof visitor.departedAt === 'string')
+    if (!historical?.departedAt) return undefined
+    projection.retainedVisitor = { name: historical.name, departedAt: historical.departedAt }
+    changed = true
+  }
+
+  return changed ? candidate : undefined
 }
 
 export function hydratePersistedGame(document: PersistedGameV3): SaveGame {

@@ -53,7 +53,8 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
       actions: []
     }
     if (visitor.state === 'departed') {
-      return [{ ...base, state: 'departed', departedAt: visitor.departedAt ?? game.updatedAt, lastExpeditionId: visitor.commission?.id ?? `legacy-${visitor.id}` }]
+      if (!visitor.departedAt) throw new Error(`Missing authoritative departure time for ${visitor.id}`)
+      return [{ ...base, state: 'departed', departedAt: visitor.departedAt, lastExpeditionId: visitor.commission?.id ?? `legacy-${visitor.id}` }]
     }
     if (visitor.state === 'commissioned' || visitor.state === 'returned') {
       return [{ ...base, state: 'contracted', contractId: visitor.commission?.id ?? `legacy-${visitor.id}` }]
