@@ -1,7 +1,6 @@
 import type { H3Event } from 'h3'
 import { readRequiredBody, requireString } from '~/server/utils/body'
-import { VisitorDomainError } from '~/utils/visitor-logic'
-import { BusinessKeyConflictError, IdempotencyConflictError, RevisionConflictError } from '~/server/utils/savegame'
+import { throwPublicApiError } from '~/server/utils/public-api-error'
 
 export interface MutationRequestBody {
   requestId: string
@@ -29,17 +28,8 @@ function requireExpectedRevision(value: unknown): number {
 }
 
 export function visitorMutationError(error: unknown, fallback: string): never {
-  if (error instanceof VisitorDomainError || (error instanceof Error && error.name === 'GameDomainError')) {
-    throw createError({ statusCode: 400, statusMessage: error.message })
-  }
-  if (error instanceof IdempotencyConflictError) throw createError({ statusCode: 409, statusMessage: error.message })
-  if (error instanceof BusinessKeyConflictError) throw createError({ statusCode: 409, statusMessage: error.message })
-  if (error instanceof RevisionConflictError) throw createError({ statusCode: 409, statusMessage: error.message })
-  if (error instanceof Error && error.message.includes('concurrently')) {
-    throw createError({ statusCode: 409, statusMessage: error.message })
-  }
-  console.error('Unexpected visitor mutation failure', error)
-  throw createError({ statusCode: 500, statusMessage: fallback })
+  void fallback
+  return throwPublicApiError(error)
 }
 
 export const readMutation = readVisitorMutation

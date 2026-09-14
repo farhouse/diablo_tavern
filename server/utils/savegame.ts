@@ -4,6 +4,7 @@ import type { Item, SaveGame, VisitRound, Visitor, VisitorCommission, VisitorOff
 import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
 import { refreshVisitRound } from '~/utils/visitor-logic'
 import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
+import { UncertainOperationError } from '~/server/domain/v2-errors'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -344,12 +345,17 @@ export async function mutateSaveGameAtomic(
         nextPersisted as unknown as DbSaveGame
       )
     } catch (error) {
-      const afterError = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+      let afterError: PersistedDbDocument | null = null
+      try {
+        afterError = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+      } catch {
+        // The write outcome stays uncertain when the verification read also fails.
+      }
       if (afterError && isPersistedCanonical(afterError)) {
         const replay = afterError.requestRecords.find((record) => record.requestId === requestId)
         if (replay?.commandHash === requestHash) return replay.response as unknown as SaveGame
       }
-      throw error
+      throw new UncertainOperationError(requestId, { cause: error })
     }
     if (replaceResult.modifiedCount === 1) {
       return sanitizeGameResponse(validated)
@@ -434,12 +440,17 @@ export async function transitionItemAtomic(
       transitioned as unknown as DbSaveGame
     )
   } catch (error) {
-    const afterError = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+    let afterError: PersistedDbDocument | null = null
+    try {
+      afterError = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+    } catch {
+      // The write outcome stays uncertain when the verification read also fails.
+    }
     if (afterError && isPersistedCanonical(afterError)) {
       const exactReplay = afterError.requestRecords.find((record) => record.requestId === requestId)
       if (exactReplay?.commandHash === commandHash) return exactReplay.response
     }
-    throw error
+    throw new UncertainOperationError(requestId, { cause: error })
   }
   if (result.modifiedCount === 1) return response
   const winner = await getPersistedGameV3(userId, dependencies)

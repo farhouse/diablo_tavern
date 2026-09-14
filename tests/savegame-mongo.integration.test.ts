@@ -79,8 +79,9 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     await collection.replaceOne({ userId: userIds[7] }, custody)
     await transitionItemAtomic(userIds[7]!, 'mongo-loan-a', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
     const projected = mapPersistedGameToGameView(await getPersistedGameV3(userIds[7]!), new Date('2026-09-13T12:00:00.000Z'))
-    expect(projected.expeditions).toContainEqual(expect.objectContaining({ expeditionId: 'expedition-a' }))
-    expect(projected.items).toContainEqual(expect.objectContaining({ itemId, custody: expect.objectContaining({ expeditionId: 'expedition-a' }) }))
+    expect(projected.expeditions).toEqual([])
+    expect(projected.items).not.toContainEqual(expect.objectContaining({ itemId }))
+    expect(projected.capacity.used).toBe(custody.stash.length)
     await transitionItemAtomic(userIds[7]!, 'mongo-return-a', 1, { operation: 'return', itemId, targetId: 'expedition-a' })
     expect((await getPersistedGameV3(userIds[7]!)).expeditionsById['expedition-a']).toBeDefined()
     await transitionItemAtomic(userIds[7]!, 'mongo-loan-b', 2, { operation: 'loan', itemId, targetId: 'expedition-b' })
@@ -113,7 +114,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const commission = ready.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
     const rewardItemId = commission.rewardItemId!
     const view = mapPersistedGameToGameView(ready, new Date(finish))
-    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: commission.id }))
+    expect(view.settlements).toEqual([])
+    expect(view.items).not.toContainEqual(expect.objectContaining({ itemId: rewardItemId }))
     expect(ready.itemPlacements[rewardItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'settlement' })
     await mutateSaveGameAtomic(userIds[11]!, 'mongo-claim-flow', 'commission:claim:mongo-flow', ready.revision, {}, (save) => {
       claimVisitorCommission(save, visitorId, new Date(finish))
@@ -168,9 +170,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
       departedAt,
       lastExpeditionId: 'retained-expedition'
     }))
-    expect(retainedView.expeditions).toContainEqual(expect.objectContaining({
-      expeditionId: 'retained-expedition', visitorId
-    }))
+    expect(retainedView.expeditions).toEqual([])
+    expect(retainedView.items).not.toContainEqual(expect.objectContaining({ itemId }))
 
     const revisionBeforeReturn = (await getPersistedGameV3(userIds[13]!)).revision
     await transitionItemAtomic(userIds[13]!, 'return-retained', revisionBeforeReturn, { operation: 'return', itemId, targetId: 'retained-expedition' })

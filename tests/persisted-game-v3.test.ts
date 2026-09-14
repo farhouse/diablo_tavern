@@ -24,11 +24,8 @@ describe('PersistedGameV3 invariants', () => {
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
     expect(view.contractVersion).toBe('v2-etapa0-3')
     expect(view.capacity.used).toBe(effectiveCapacityUsed(persisted))
-    expect(view.visitors).toHaveLength(2)
-    expect(view.items).toContainEqual(expect.objectContaining({
-      owner: expect.objectContaining({ kind: 'visitor' }),
-      custody: expect.objectContaining({ kind: 'visitor' })
-    }))
+    expect(view.visitors).toEqual([])
+    expect(view.items.every((item) => item.owner.kind === 'caravan' && item.custody.kind === 'stash')).toBe(true)
     for (const key of ['userId', 'itemsById', 'itemPlacements', 'requestRecords', 'businessKeys', 'ledger', 'serviceJobsById']) {
       expect(view).not.toHaveProperty(key)
     }
@@ -69,28 +66,17 @@ describe('PersistedGameV3 invariants', () => {
     expect(isPersistedCanonical(unknown)).toBe(false)
   })
 
-  it.each(['loan', 'service', 'recover'] as const)('projects %s custody with its public target and item', (operation) => {
+  it.each(['loan', 'service', 'recover'] as const)('omits %s custody until its authoritative V2 lifecycle exists', (operation) => {
     const persisted = buildPersistedFromPublic(createSaveGame(`projection-${operation}`))
     const itemId = persisted.stash[0]!
     const targetId = `${operation}-target`
     addTarget(persisted, operation, targetId)
     const transitioned = applyItemTransition(persisted, { operation, itemId, targetId }).game
     const view = mapPersistedGameToGameView(transitioned, new Date('2026-09-13T12:00:00.000Z'))
-    expect(view.items).toContainEqual(expect.objectContaining({ itemId }))
+    expect(view.items).not.toContainEqual(expect.objectContaining({ itemId }))
     const collection = operation === 'loan' ? view.expeditions : operation === 'service' ? view.serviceJobs : view.recoveries
-    expect(collection).toContainEqual(expect.objectContaining(
-      operation === 'loan' ? { expeditionId: targetId }
-        : operation === 'service' ? { jobId: targetId }
-          : { recoveryId: targetId }
-    ))
-    if (operation === 'loan') {
-      const visitorId = persisted.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id
-      expect(view.items).toContainEqual(expect.objectContaining({
-        itemId,
-        custody: expect.objectContaining({ expeditionId: targetId, visitorId })
-      }))
-      expect(view.expeditions).toContainEqual(expect.objectContaining({ expeditionId: targetId, visitorId }))
-    }
+    expect(collection).toEqual([])
+    expect(view.capacity.used).toBe(effectiveCapacityUsed(transitioned))
   })
 
   it('preserves normative service custody through compatibility round trips', async () => {
@@ -255,7 +241,8 @@ describe('PersistedGameV3 invariants', () => {
     expect(persisted.itemPlacements['pending-reward-item']).toMatchObject({ ownerKind: 'caravan' })
     expect(effectiveCapacityUsed(persisted)).toBe(save.stash.length + 1)
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
-    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: 'commission-reward' }))
+    expect(view.settlements).toEqual([])
+    expect(view.items).not.toContainEqual(expect.objectContaining({ itemId: 'pending-reward-item' }))
   })
 
   it.each(['partial', 'failed'] as const)('projects %s commission lifecycle without fabricating an item', (outcome) => {
@@ -271,7 +258,7 @@ describe('PersistedGameV3 invariants', () => {
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
     expect(persisted.expeditionsById[visitor.commission.id]).toBeDefined()
     expect(persisted.settlementsById[visitor.commission.id]?.itemIds).toEqual([])
-    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: visitor.commission.id }))
+    expect(view.settlements).toEqual([])
 
     const corrupt = structuredClone(persisted)
     const projection = corrupt.settlementsById[visitor.commission.id]!.projection
@@ -293,7 +280,7 @@ describe('PersistedGameV3 invariants', () => {
     const persisted = buildPersistedFromPublic(save)
     const view = mapPersistedGameToGameView(persisted, new Date(visitor.commission!.finishesAt))
     expect(persisted.settlementsById[visitor.commission!.id]?.itemIds).toEqual([])
-    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: visitor.commission!.id }))
+    expect(view.settlements).toEqual([])
   })
 
   it('prunes empty lifecycle after its visitor ages out of bounded history', async () => {
@@ -382,12 +369,7 @@ describe('PersistedGameV3 invariants', () => {
       departedAt,
       lastExpeditionId: 'retained-contract'
     }))
-    expect(retainedView.items).toContainEqual(expect.objectContaining({
-      itemId,
-      custody: expect.objectContaining({
-        kind: 'expedition', expeditionId: 'retained-contract', visitorId: visitor.id
-      })
-    }))
+    expect(retainedView.items).not.toContainEqual(expect.objectContaining({ itemId }))
   })
 
   it('deeply strips private rolls from compatibility responses', () => {

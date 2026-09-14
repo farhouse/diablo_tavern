@@ -240,8 +240,8 @@ describe('atomic persisted-game mutation', () => {
     const rewardItemId = readyVisitor.commission!.rewardItemId!
     const view = mapPersistedGameToGameView(ready, new Date(finish))
     expect(ready.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'settlement', custodyId: readyVisitor.commission!.id })
-    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: readyVisitor.commission!.id }))
-    expect(view.items).toContainEqual(expect.objectContaining({ itemId: rewardItemId, custody: expect.objectContaining({ kind: 'settlement' }) }))
+    expect(view.settlements).toEqual([])
+    expect(view.items).not.toContainEqual(expect.objectContaining({ itemId: rewardItemId }))
 
     await mutateSaveGameAtomic('atomic-user', 'claim-flow', 'commission:claim:flow', ready.revision, {}, (save) => {
       claimVisitorCommission(save, visitorId, new Date(finish))
@@ -250,6 +250,8 @@ describe('atomic persisted-game mutation', () => {
     expect(claimed.stash.filter((itemId) => itemId === rewardItemId)).toHaveLength(1)
     expect(claimed.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
     expect(claimed.expeditionsById[readyVisitor.commission!.id]).toBeDefined()
+    expect(mapPersistedGameToGameView(claimed, new Date(finish)).items)
+      .toContainEqual(expect.objectContaining({ itemId: rewardItemId, custody: { kind: 'stash' } }))
   })
 
   it('recovers an exact replay when replaceOne throws after committing', async () => {
@@ -263,6 +265,54 @@ describe('atomic persisted-game mutation', () => {
     const result = await mutateSaveGameAtomic('atomic-user', 'thrown-uncertain', 'credit:thrown', 0, { amount: 11 }, mutate)
     expect(result.gold).toBe(461)
     expect(mutate).toHaveBeenCalledOnce()
+  })
+
+  it('surfaces a retryable uncertain result when a write error cannot be reconciled', async () => {
+    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { UncertainOperationError } = await import('../server/domain/v2-errors')
+    collection.replaceOne.mockRejectedValueOnce(new Error('network timeout with unknown commit state'))
+
+    await expect(mutateSaveGameAtomic(
+      'atomic-user', 'uncertain-unconfirmed', 'credit:unknown', 0, { amount: 3 },
+      (save) => { save.gold += 3 }
+    )).rejects.toMatchObject({
+      name: 'UncertainOperationError',
+      requestId: 'uncertain-unconfirmed'
+    })
+  })
+
+  it('preserves uncertain request identity when both mutation write and verification read fail', async () => {
+    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    collection.findOne
+      .mockResolvedValueOnce(structuredClone(document!))
+      .mockRejectedValueOnce(new Error('verification read failed'))
+    collection.replaceOne.mockRejectedValueOnce(new Error('write result unknown'))
+
+    await expect(mutateSaveGameAtomic(
+      'atomic-user', 'double-failure-mutation', 'credit:double-failure', 0, { amount: 3 },
+      (save) => { save.gold += 3 }
+    )).rejects.toMatchObject({
+      name: 'UncertainOperationError',
+      requestId: 'double-failure-mutation'
+    })
+  })
+
+  it('preserves uncertain request identity when item write and verification read both fail', async () => {
+    const { transitionItemAtomic } = await import('../server/utils/savegame')
+    const persisted = structuredClone(document) as PersistedGameV3
+    const itemId = persisted.stash[0]!
+    const visitorId = persisted.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
+    collection.findOne
+      .mockResolvedValueOnce(persisted)
+      .mockRejectedValueOnce(new Error('verification read failed'))
+    collection.replaceOne.mockRejectedValueOnce(new Error('write result unknown'))
+
+    await expect(transitionItemAtomic(
+      'atomic-user', 'double-failure-item', 0, { operation: 'sell', itemId, targetId: visitorId }
+    )).rejects.toMatchObject({
+      name: 'UncertainOperationError',
+      requestId: 'double-failure-item'
+    })
   })
 
   it('removes completed appraiser custody before persisting', async () => {
