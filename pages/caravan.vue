@@ -168,12 +168,14 @@ async function completeAppraisal() {
 }
 .appraiser-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0.85rem; padding: 1rem; }
 .queue-list { display: grid; gap: 0.5rem; }
-.queue-row { align-items: center; background: #14120f; border-radius: 6px; display: flex; justify-content: space-between; min-width: 0; padding: 0.65rem; }
-.queue-row span {
+.queue-row { align-items: center; background: #14120f; border-radius: 6px; display: flex; gap: 0.5rem; justify-content: space-between; min-width: 0; padding: 0.65rem; }
+.queue-row > span:first-child {
+  flex: 1 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.queue-row .tag { flex: 0 0 auto; white-space: nowrap; }
 @media (max-width: 600px) {
   .caravan-status { display: grid; grid-template-columns: repeat(3, 1fr); }
   .caravan-status > div { min-width: 0; padding: 0.8rem; }

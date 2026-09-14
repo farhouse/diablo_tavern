@@ -23,6 +23,7 @@ type Scenario = {
   readySelector: string
   disabledCheck: (page: Page) => Promise<void>
   loadingSetup: (page: Page) => Promise<Locator>
+  layoutCheck?: (page: Page) => Promise<void>
   loadingName: string
   mutateRouteUrl: string
   mutateSaveResponse: Record<string, unknown>
@@ -304,6 +305,31 @@ const scenarios: Scenario[] = [
       await processButton.click()
       return processButton
     },
+    layoutCheck: async (page) => {
+      const tagGeometry = await page.locator('.queue-row').first().evaluate((row) => {
+        const tag = row.querySelector<HTMLElement>('.tag')
+        if (!tag) throw new Error('Expected an appraiser queue status tag')
+
+        const rowBounds = row.getBoundingClientRect()
+        const tagBounds = tag.getBoundingClientRect()
+        const textRange = document.createRange()
+        textRange.selectNodeContents(tag)
+        const lineTops = [...textRange.getClientRects()]
+          .filter((bounds) => bounds.width > 0 && bounds.height > 0)
+          .map((bounds) => Math.round(bounds.top))
+        return {
+          lineCount: new Set(lineTops).size,
+          rowLeft: rowBounds.left,
+          rowRight: rowBounds.right,
+          tagLeft: tagBounds.left,
+          tagRight: tagBounds.right
+        }
+      })
+
+      expect(tagGeometry.lineCount, 'queue status tag must remain on one line').toBe(1)
+      expect(tagGeometry.tagLeft, 'queue status tag must stay inside the row').toBeGreaterThanOrEqual(tagGeometry.rowLeft - 1)
+      expect(tagGeometry.tagRight, 'queue status tag must stay inside the row').toBeLessThanOrEqual(tagGeometry.rowRight + 1)
+    },
     loadingName: 'Checking…',
     mutateRouteUrl: '**/api/appraiser/complete',
     mutateSaveResponse: caravanSave
@@ -404,6 +430,7 @@ for (const viewport of viewports) {
 
         const initialGeometry = await collectLayoutGeometry(page, scenario.geometrySelectors)
         expectBoundedLayout(initialGeometry, scenario.geometrySelectors)
+        await scenario.layoutCheck?.(page)
 
         const initialPath = test.info().outputPath(`${scenario.slug}-${viewport.name}-initial.png`)
         await page.screenshot({ path: initialPath, fullPage: true })
@@ -419,6 +446,7 @@ for (const viewport of viewports) {
 
         const loadingGeometry = await collectLayoutGeometry(page, scenario.geometrySelectors)
         expectBoundedLayout(loadingGeometry, scenario.geometrySelectors)
+        await scenario.layoutCheck?.(page)
 
         const beforePath = test.info().outputPath(`${scenario.slug}-${viewport.name}-loading.png`)
         await page.screenshot({ path: beforePath, fullPage: true })
@@ -429,6 +457,7 @@ for (const viewport of viewports) {
 
         const stableGeometry = await collectLayoutGeometry(page, scenario.geometrySelectors)
         expectBoundedLayout(stableGeometry, scenario.geometrySelectors)
+        await scenario.layoutCheck?.(page)
 
         const finalPath = test.info().outputPath(`${scenario.slug}-${viewport.name}-final.png`)
         await page.screenshot({ path: finalPath, fullPage: true })
