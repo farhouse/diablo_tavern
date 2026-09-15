@@ -24,9 +24,11 @@ describe('PersistedGameV3 invariants', () => {
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
     expect(view.contractVersion).toBe('v2-etapa0-3')
     expect(view.capacity.used).toBe(effectiveCapacityUsed(persisted))
-    expect(view.visitors).toEqual([])
-    expect(view.items.every((item) => item.owner.kind === 'caravan' && item.custody.kind === 'stash')).toBe(true)
-    for (const key of ['userId', 'itemsById', 'itemPlacements', 'requestRecords', 'businessKeys', 'ledger', 'serviceJobsById']) {
+    expect(view.visitors).toHaveLength(2)
+    expect(view.visitors.every((visitor) => visitor.state === 'available')).toBe(true)
+    expect(view.items).toContainEqual(expect.objectContaining({ owner: { kind: 'caravan' }, custody: { kind: 'stash' } }))
+    expect(view.items.every((item) => item.owner.kind === 'caravan' || item.owner.kind === 'visitor')).toBe(true)
+    for (const key of ['userId', 'itemsById', 'itemPlacements', 'requestRecords', 'businessKeys', 'ledger', 'serviceJobsById', 'visitorCycle']) {
       expect(view).not.toHaveProperty(key)
     }
   })

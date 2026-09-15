@@ -1,21 +1,13 @@
 import { requireUser } from '~/server/utils/auth'
-import { mutateSaveGameAtomic } from '~/server/utils/savegame'
-import { handleVisitorMutation, readVisitorMutation, requireMutationEnum, requireMutationString, visitorOperationKey } from '~/server/utils/visitor-api'
-import { assignVisitorCommission } from '~/utils/visitor-logic'
+import { ActionUnavailableError } from '~/server/domain/v2-errors'
+import { handleVisitorMutation, readVisitorMutation, requireMutationEnum, requireMutationString } from '~/server/utils/visitor-api'
 
 export default defineEventHandler(async (event) => {
-  const user = await requireUser(event)
+  await requireUser(event)
   return handleVisitorMutation(async () => {
-    const visitorId = requireMutationString(getRouterParam(event, 'visitorId'), 'visitorId')
+    requireMutationString(getRouterParam(event, 'visitorId'), 'visitorId')
     const body = await readVisitorMutation(event)
-    const selection = requireMutationEnum(body.optionId, 'optionId', ['safe', 'risky'] as const)
-    return await mutateSaveGameAtomic(
-      user.id,
-      body.requestId,
-      visitorOperationKey('commission', visitorId, selection),
-      body.expectedRevision,
-      body,
-      (save, deps) => assignVisitorCommission(save, visitorId, selection, deps.random, deps.now())
-    )
+    requireMutationEnum(body.optionId, 'optionId', ['safe', 'risky'] as const)
+    throw new ActionUnavailableError('TERMINAL_ENTITY', 'Legacy commissions were replaced by V2 contracts')
   })
 })

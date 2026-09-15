@@ -65,7 +65,12 @@ export function createVisitRound(
   }
 }
 
-export function refreshVisitRound(save: SaveGame, now = new Date(), random: RandomSource = Math.random): SaveGame {
+export function refreshVisitRound(
+  save: SaveGame,
+  now = new Date(),
+  random: RandomSource = Math.random,
+  options: { resolveLegacyCommissions?: boolean } = {}
+): SaveGame {
   for (const slot of save.visitRound.slots) {
     const visitor = slot.visitor
     if (!visitor && slot.nextArrivalCheckAt && new Date(slot.nextArrivalCheckAt).getTime() <= now.getTime()) {
@@ -82,7 +87,10 @@ export function refreshVisitRound(save: SaveGame, now = new Date(), random: Rand
       }
     }
     if (!visitor) continue
-    if (visitor.state === 'commissioned' && visitor.commission && new Date(visitor.commission.finishesAt).getTime() <= now.getTime()) {
+    if (options.resolveLegacyCommissions !== false
+      && visitor.state === 'commissioned'
+      && visitor.commission
+      && new Date(visitor.commission.finishesAt).getTime() <= now.getTime()) {
       visitor.state = 'returned'
       visitor.commission.status = 'ready'
       const result = resolveOutcome(visitor.commission.outcomeRoll, visitor.commission.successChance)
@@ -241,8 +249,12 @@ export function claimVisitorCommission(save: SaveGame, visitorId: string, now = 
 }
 
 export function dismissVisitor(save: SaveGame, visitorId: string, now = new Date(), random: RandomSource = Math.random): SaveGame {
-  refreshVisitRound(save, now, random)
+  refreshVisitRound(save, now, random, { resolveLegacyCommissions: false })
   const visitor = findVisitor(save, visitorId)
+  const v2State = save._v2VisitorStates?.[visitorId]
+  if (v2State && v2State !== 'available' && v2State !== 'negotiating') {
+    throw domainError('Visitor cannot be dismissed while contracted or away', 'VISITOR_NOT_AVAILABLE')
+  }
   if (visitor.state === 'commissioned' || visitor.state === 'returned') throw domainError('Commission must be claimed before the visitor can leave', 'SETTLEMENT_PENDING')
   if (visitor.state === 'departed') throw domainError('Visitor has already departed', 'TERMINAL_ENTITY')
   visitor.state = 'departed'
@@ -494,6 +506,10 @@ function archiveVisitor(save: SaveGame, visitor: Visitor): void {
 
 function requireTradeableVisitor(save: SaveGame, visitorId: string): Visitor {
   const visitor = findVisitor(save, visitorId)
+  const v2State = save._v2VisitorStates?.[visitorId]
+  if (v2State && v2State !== 'available' && v2State !== 'negotiating') {
+    throw domainError('Visitor is not available while contracted or away', 'VISITOR_NOT_AVAILABLE')
+  }
   if (visitor.state !== 'open' && visitor.state !== 'traded') throw domainError('Visitor is no longer available for trade', 'VISITOR_NOT_AVAILABLE')
   return visitor
 }

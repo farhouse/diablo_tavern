@@ -20,64 +20,36 @@ import type {
 } from '~/shared/types/v2-game-view'
 export type { GameView } from '~/shared/types/v2-game-view'
 import { validateGameView } from '~/server/utils/game-view-validator'
+import { projectVisitorCycle } from '~/server/domain/visitor-cycle'
 import {
-  getSaveGame,
   getPersistedGameV3,
   type PersistedGameV3,
   type PersistedItemPlacement
 } from '~/server/utils/savegame'
 
 export async function getGameView(userId: string, now = new Date()): Promise<GameView> {
-  await getSaveGame(userId, { now: () => now, random: Math.random, uuid: crypto.randomUUID })
   const persisted = await getPersistedGameV3(userId)
   return mapPersistedGameToGameView(persisted, now)
 }
 
 export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date()): GameView {
-  const visitors: VisitorView[] = [game.visitRound, ...game.visitHistory].flatMap<VisitorView>((round) => round.slots.flatMap<VisitorView>((slot) => {
-    const visitor = slot.visitor
-    if (!visitor) return []
-    const base = {
-      visitorId: visitor.id,
-      name: { key: `visitor.${visitor.id}`, fallback: visitor.name },
-      actions: []
-    }
-    if (visitor.state === 'departed') {
-      if (!visitor.departedAt || !visitor.commission?.id) return []
-      return [{ ...base, state: 'departed', departedAt: visitor.departedAt, lastExpeditionId: visitor.commission.id }]
-    }
-    // Stage 1 persists legacy visitor records but not authoritative V2
-    // contract options or lifecycle discriminants. Omit them until the later
-    // domain stages persist a complete public projection.
-    return []
-  }))
+  const cycle = projectVisitorCycle(game, now)
+  const visitors: VisitorView[] = cycle.visitors
   const projectedVisitorIds = new Set(visitors.map((visitor) => visitor.visitorId))
-  for (const expedition of Object.values(game.expeditionsById)) {
-    const target = expedition.projection
-    if (target?.kind !== 'expedition' || projectedVisitorIds.has(target.visitorId) || !target.retainedVisitor) continue
-    visitors.push({
-      visitorId: target.visitorId,
-      name: { key: `visitor.${target.visitorId}`, fallback: target.retainedVisitor.name },
-      state: 'departed',
-      departedAt: target.retainedVisitor.departedAt,
-      lastExpeditionId: expedition.id,
-      actions: []
-    })
-    projectedVisitorIds.add(target.visitorId)
-  }
-  const transitions = collectTransitions(game).filter((timestamp) => Date.parse(timestamp) > now.getTime()).sort()
-  // These persisted Stage 1 containers intentionally carry only identity and
-  // custody bookkeeping. They do not yet carry enough facts to select a V2
-  // lifecycle variant without inventing state, so the public collections stay
-  // empty until their owning domain stages persist exact projections.
-  const expeditions: ExpeditionView[] = []
-  const settlements: SettlementView[] = []
-  const recoveries: RecoveryView[] = []
+  const transitions = [...collectTransitions(game), ...cycle.transitions]
+    .filter((timestamp) => Date.parse(timestamp) > now.getTime()).sort()
+  const expeditions: ExpeditionView[] = cycle.expeditions
+  const settlements: SettlementView[] = cycle.settlements
+  const recoveries: RecoveryView[] = cycle.recoveries
   const serviceJobs: ServiceJobView[] = []
   const items = Object.entries(game.itemsById).flatMap<ItemView>(([itemId, item]) => {
     const placement = game.itemPlacements[itemId]
     if (!placement || placement.custodyKind === 'tombstone') return []
-    if (placement.custodyKind === 'stash' && placement.ownerKind === 'caravan') {
+    const custodyIsProjected = placement.custodyKind === 'stash'
+      || (placement.custodyKind === 'expedition' && Boolean(game.visitorCycle.expeditions[placement.custodyId ?? '']))
+      || (placement.custodyKind === 'settlement' && Boolean(game.visitorCycle.settlements[placement.custodyId ?? '']))
+      || (placement.custodyKind === 'recovery' && Boolean(game.visitorCycle.recoveries[placement.custodyId ?? '']))
+    if (placement.ownerKind === 'caravan' && custodyIsProjected) {
       return [mapItem(item, placement, game)]
     }
     if (placement.custodyKind === 'visitor' && placement.ownerKind === 'visitor'
@@ -105,7 +77,7 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     recoveries,
     serviceJobs,
     items,
-    actions: []
+    actions: cycle.actions
   }
   validateGameView(view)
   validateSemanticGameView(view)
@@ -262,7 +234,6 @@ function collectTransitions(game: PersistedGameV3): string[] {
   for (const round of [game.visitRound, ...game.visitHistory]) {
     for (const slot of round.slots) {
       if (slot.nextArrivalCheckAt) result.push(slot.nextArrivalCheckAt)
-      if (slot.visitor?.commission?.finishesAt) result.push(slot.visitor.commission.finishesAt)
     }
   }
   for (const job of game.caravan.services.appraiserQueue) result.push(job.finishesAt)

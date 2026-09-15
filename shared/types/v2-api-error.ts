@@ -1,4 +1,17 @@
 import type { UnavailableReason } from './v2-game-view.generated'
+import type { GameView } from './v2-game-view.generated'
+
+export interface CommandEnvelope<T> {
+  requestId: string
+  expectedRevision: number
+  payload: T
+}
+
+export interface CommandSuccess {
+  requestId: string
+  revision: number
+  game: GameView
+}
 
 export type PublicApiError =
   | { code: 'revision_conflict'; retryable: true; requestId?: string }
