@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SaveGame } from '../types/game'
 import { createSaveGame } from '../utils/game-logic'
 import type { PersistedGameV3 } from '../server/utils/savegame'
+import { generateLootForZone, LOOT_CONFIG_VERSION } from '../server/domain/loot-v2'
 
 let document: PersistedGameV3 | Record<string, unknown> | undefined
 let uncertainCommit = false
@@ -226,7 +227,13 @@ describe('atomic persisted-game mutation', () => {
       claimVisitorCommission(draft, visitor.id, new Date('2026-09-13T00:02:00.000Z'))
     })
     expect(result.stash).toHaveLength(initial.stashLimit - 1)
-    expect(result.stash).toContainEqual(expect.objectContaining({ id: 'pending-capacity-reward' }))
+    const generatedReward = result.stash.find((item) => item.id.startsWith('loot-'))
+    expect(generatedReward).toBeDefined()
+    expect((document as PersistedGameV3).itemV2ById[generatedReward!.id]?.provenance).toMatchObject({
+      zoneId: visitor.commission.regionId,
+      businessKey: `loot:${visitor.commission.id}:reward`,
+      configVersion: LOOT_CONFIG_VERSION
+    })
     expect(Object.keys((document as PersistedGameV3).itemsById)).toHaveLength(Object.keys(initial.itemsById).length)
   })
 
@@ -250,13 +257,25 @@ describe('atomic persisted-game mutation', () => {
     expect(assigned.settlementsById[assignedCommission.id]).toBeUndefined()
     const finish = assignedCommission.finishesAt
     const reconcileDependencies = { ...dependencies, now: () => new Date(finish) }
-    await getSaveGame('atomic-user', reconcileDependencies)
+    const reconciledPublic = await getSaveGame('atomic-user', reconcileDependencies)
 
     const ready = await getPersistedGameV3('atomic-user')
     const readyVisitor = ready.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
     const rewardItemId = readyVisitor.commission!.rewardItemId!
+    const rewardState = ready.itemV2ById[rewardItemId]!
+    const publicRewardId = reconciledPublic.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)?.visitor?.commission?.rewardItem?.id
     const view = mapPersistedGameToGameView(ready, new Date(finish))
+    expect(publicRewardId).toBe(rewardItemId)
     expect(ready.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'settlement', custodyId: readyVisitor.commission!.id })
+    expect(rewardState).toMatchObject({
+      sealedAffixes: ready.itemsById[rewardItemId]!.affixes,
+      provenance: {
+        zoneId: readyVisitor.commission!.regionId,
+        configVersion: LOOT_CONFIG_VERSION,
+        businessKey: `loot:${readyVisitor.commission!.id}:reward`,
+        droppedAt: finish
+      }
+    })
     expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: readyVisitor.commission!.id }))
     expect(view.items).toContainEqual(expect.objectContaining({ itemId: rewardItemId, custody: expect.objectContaining({ kind: 'settlement' }) }))
 
@@ -266,6 +285,8 @@ describe('atomic persisted-game mutation', () => {
     const claimed = await getPersistedGameV3('atomic-user')
     expect(claimed.stash.filter((itemId) => itemId === rewardItemId)).toHaveLength(1)
     expect(claimed.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
+    expect(Object.entries(claimed.itemV2ById).filter(([, state]) => state.provenance?.businessKey === `loot:${readyVisitor.commission!.id}:reward`))
+      .toHaveLength(1)
     expect(claimed.expeditionsById[readyVisitor.commission!.id]).toBeDefined()
   })
 
@@ -990,6 +1011,64 @@ describe('atomic persisted-game mutation', () => {
   })
 })
 
+describe('equipment V2 loot generation', () => {
+  it('repeats identity affixes and provenance for the same injected seed sequence', () => {
+    const first = generateLootForZone({
+      zoneId: 'cold-plains',
+      businessKey: 'loot:test-repeat',
+      droppedAt: '2026-09-15T12:00:00.000Z'
+    }, sequenceDeps([0.99, 0.1, 0.5, 0.9], ['repeat-id']))
+    const second = generateLootForZone({
+      zoneId: 'cold-plains',
+      businessKey: 'loot:test-repeat',
+      droppedAt: '2026-09-15T12:00:00.000Z'
+    }, sequenceDeps([0.99, 0.1, 0.5, 0.9], ['repeat-id']))
+
+    expect(second).toEqual(first)
+    expect(first.item.id).toBe('loot-repeat-id')
+    expect(first.state.sealedAffixes).toEqual(first.item.affixes)
+    expect(first.state.provenance).toMatchObject({
+      zoneId: 'cold-plains',
+      lootTableId: 'act1-mid',
+      configVersion: LOOT_CONFIG_VERSION,
+      businessKey: 'loot:test-repeat',
+      combinationId: 'wanderer-set',
+      imperfectPieceId: 'cracked-gem'
+    })
+  })
+
+  it('conserves generated item identity over deterministic property samples', () => {
+    for (let seed = 0; seed < 24; seed += 1) {
+      const randoms = Array.from({ length: 8 }, (_, index) => ((seed * 17 + index * 23) % 97) / 97)
+      const generated = generateLootForZone({
+        zoneId: seed % 2 === 0 ? 'blood-moor' : 'forgotten-tower',
+        businessKey: `loot:property:${seed}`,
+        droppedAt: '2026-09-15T12:00:00.000Z'
+      }, sequenceDeps(randoms, [`property-${seed}`]))
+
+      expect(generated.item.id).toBe(`loot-property-${seed}`)
+      expect(generated.item.affixes).toEqual(generated.state.sealedAffixes)
+      expect(generated.item.value).toBeGreaterThan(0)
+      expect(generated.state.provenance?.businessKey).toBe(`loot:property:${seed}`)
+      expect(generated.state.provenance?.configVersion).toBe(LOOT_CONFIG_VERSION)
+    }
+  })
+
+  it('attaches a pending boss imprint to act boss loot', () => {
+    const generated = generateLootForZone({
+      zoneId: 'act-boss',
+      businessKey: 'loot:boss',
+      droppedAt: '2026-09-15T12:00:00.000Z'
+    }, sequenceDeps([0.2, 0.3, 0.4, 0.5], ['boss-id']))
+
+    expect(generated.state.pendingImprint).toEqual({
+      imprintId: 'boss-act-boss',
+      label: 'Act boss imprint',
+      grantedAt: '2026-09-15T12:00:00.000Z'
+    })
+  })
+})
+
 function executionOption(view: { items: unknown[] }, itemId: string, action: string) {
   const item = view.items.find((candidate) => (candidate as { itemId?: string }).itemId === itemId) as { actions?: unknown[] } | undefined
   const availability = item?.actions?.find((candidate) => (candidate as { action?: string }).action === action) as { execution?: { options?: unknown[] } } | undefined
@@ -1000,4 +1079,14 @@ function executionOption(view: { items: unknown[] }, itemId: string, action: str
 
 function fixedDeps(now = new Date('2026-09-15T12:00:00.000Z')) {
   return { now: () => now, uuid: () => 'fixed-id', random: () => 0.5 }
+}
+
+function sequenceDeps(randoms: number[], uuids: string[]) {
+  let randomIndex = 0
+  let uuidIndex = 0
+  return {
+    now: () => new Date('2026-09-15T12:00:00.000Z'),
+    random: () => randoms[randomIndex++] ?? randoms.at(-1) ?? 0,
+    uuid: () => uuids[uuidIndex++] ?? uuids.at(-1) ?? 'id'
+  }
 }

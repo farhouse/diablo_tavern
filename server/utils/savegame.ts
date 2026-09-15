@@ -5,6 +5,7 @@ import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERS
 import { refreshVisitRound } from '~/utils/visitor-logic'
 import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
 import { applyEquipmentV2Command, authorizeEquipmentV2Command, type EquipmentV2Command } from '~/server/domain/equipment-v2'
+import { generateLootForZone } from '~/server/domain/loot-v2'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -79,7 +80,7 @@ export interface PersistedItemV2State {
   activeImprint?: { imprintId: string; label: string; grantedAt: string }
   pendingImprint?: { imprintId: string; label: string; grantedAt: string }
   imprintHistory?: Array<{ imprintId: string; label: string; grantedAt: string; replacedAt?: string }>
-  provenance?: { zoneId: string; combinationId?: string; imperfectPieceId?: string; droppedAt: string }
+  provenance?: { zoneId: string; lootTableId?: string; configVersion?: string; businessKey?: string; combinationId?: string; imperfectPieceId?: string; droppedAt: string }
 }
 
 export interface PersistedServiceJobState {
@@ -331,7 +332,7 @@ export async function mutateSaveGameAtomic(
       operationKey,
       businessKey,
       commandHash: requestHash,
-      response: sanitizeGameResponse(validated),
+      response: sanitizeGameResponse(hydratePersistedGame(next)),
       revision: nextRevision,
       createdAt: now,
       updatedAt: now
@@ -381,7 +382,7 @@ export async function mutateSaveGameAtomic(
       throw error
     }
     if (replaceResult.modifiedCount === 1) {
-      return sanitizeGameResponse(validated)
+      return sanitizeGameResponse(hydratePersistedGame(nextPersisted))
     }
 
     // Reload after a lost CAS. The next iteration can only return an exact
@@ -788,8 +789,9 @@ export function buildPersistedFromPublic(
     if (!serviceJob && !preservesNormativeService) stash.push(item.id)
   }
 
-  const visitRound = persistRound(normalized.visitRound, itemsById, itemPlacements)
-  const visitHistory = normalized.visitHistory.map((round) => persistRound(round, itemsById, itemPlacements))
+  const generatedItemStates: Record<string, PersistedItemV2State> = {}
+  const visitRound = persistRound(normalized.visitRound, itemsById, itemPlacements, previous, generatedItemStates, dependencies)
+  const visitHistory = normalized.visitHistory.map((round) => persistRound(round, itemsById, itemPlacements, previous, generatedItemStates, dependencies))
   for (const round of [visitRound, ...visitHistory]) {
     for (const visitor of round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])) {
       for (const trade of visitor.trades.filter((entry) => entry.kind === 'player_sold')) {
@@ -870,7 +872,7 @@ export function buildPersistedFromPublic(
     recoveriesById,
     settlementsById,
     serviceJobsById,
-    itemV2ById: structuredClone(previous?.itemV2ById ?? {}),
+    itemV2ById: { ...structuredClone(previous?.itemV2ById ?? {}), ...generatedItemStates },
     serviceJobStateById: structuredClone(previous?.serviceJobStateById ?? {}),
     requestRecords: structuredClone(previous?.requestRecords ?? []),
     businessKeys: structuredClone(previous?.businessKeys ?? {}),
@@ -1339,8 +1341,11 @@ function isItemV2Map(value: unknown): value is Record<string, PersistedItemV2Sta
     if (entry.imprintHistory !== undefined && (!Array.isArray(entry.imprintHistory)
       || !entry.imprintHistory.every((imprint) => isImprint(imprint, true)))) return false
     return entry.provenance === undefined || (isPlainRecord(entry.provenance)
-      && hasOnlyKeys(entry.provenance, ['zoneId', 'combinationId', 'imperfectPieceId', 'droppedAt'])
+      && hasOnlyKeys(entry.provenance, ['zoneId', 'lootTableId', 'configVersion', 'businessKey', 'combinationId', 'imperfectPieceId', 'droppedAt'])
       && typeof entry.provenance.zoneId === 'string' && Boolean(entry.provenance.zoneId)
+      && (entry.provenance.lootTableId === undefined || typeof entry.provenance.lootTableId === 'string')
+      && (entry.provenance.configVersion === undefined || typeof entry.provenance.configVersion === 'string')
+      && (entry.provenance.businessKey === undefined || typeof entry.provenance.businessKey === 'string')
       && (entry.provenance.combinationId === undefined || typeof entry.provenance.combinationId === 'string')
       && (entry.provenance.imperfectPieceId === undefined || typeof entry.provenance.imperfectPieceId === 'string')
       && Number.isFinite(Date.parse(String(entry.provenance.droppedAt))))
@@ -1480,7 +1485,10 @@ function registerItem(
 function persistRound(
   round: VisitRound,
   items: Record<string, Item>,
-  placements: Record<string, PersistedItemPlacement>
+  placements: Record<string, PersistedItemPlacement>,
+  previous: PersistedGameV3 | undefined,
+  generatedItemStates: Record<string, PersistedItemV2State>,
+  dependencies: PersistenceDependencies
 ): PersistedVisitRound {
   return {
     ...structuredClone(round),
@@ -1496,16 +1504,40 @@ function persistRound(
       let commission: PersistedVisitorCommission | undefined
       if (visitor.commission) {
         const { rewardItem, ...rest } = visitor.commission
-        if (rewardItem) {
-          registerItem(items, placements, rewardItem, {
+        const loot = rewardItem ? rewardLootForCommission(visitor.commission, previous, generatedItemStates, dependencies) : undefined
+        if (loot) {
+          registerItem(items, placements, loot.item, {
             ownerKind: 'visitor', ownerId: visitor.id, custodyKind: 'visitor', custodyId: visitor.id
           })
         }
-        commission = { ...structuredClone(rest), ...(rewardItem ? { rewardItemId: rewardItem.id } : {}) }
+        commission = { ...structuredClone(rest), ...(loot ? { rewardItemId: loot.item.id } : {}) }
       }
       return { ...structuredClone(slot), visitor: { ...structuredClone(visitor), offers, commission } }
     })
   }
+}
+
+function rewardLootForCommission(
+  commission: VisitorCommission,
+  previous: PersistedGameV3 | undefined,
+  generatedItemStates: Record<string, PersistedItemV2State>,
+  dependencies: PersistenceDependencies
+): { item: Item; state: PersistedItemV2State } {
+  const businessKey = `loot:${commission.id}:reward`
+  const existing = previous && Object.entries(previous.itemV2ById)
+    .find(([, state]) => state.provenance?.businessKey === businessKey)
+  if (existing) {
+    const [itemId, state] = existing
+    const item = previous.itemsById[itemId]
+    if (item) return { item: structuredClone(item), state: structuredClone(state) }
+  }
+  const generated = generateLootForZone({
+    zoneId: commission.regionId,
+    businessKey,
+    droppedAt: commission.finishesAt
+  }, dependencies)
+  generatedItemStates[generated.item.id] = generated.state
+  return generated
 }
 
 function hydrateRound(round: PersistedVisitRound, items: Record<string, Item>): VisitRound {

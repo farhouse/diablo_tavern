@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -265,6 +265,115 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     }
   })
 
+  it('replays an equipment V2 snapshot after reload and later commits', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[17]!
+    const initial = await getPersistedGameV3(userId)
+    const itemId = initial.stash[0]!
+    initial.itemsById[itemId]!.identified = false
+    initial.itemsById[itemId]!.rarity = 'magic'
+    await collection.replaceOne({ userId }, initial)
+    const deps = fixedDeps()
+    const identify = executionOption(mapPersistedGameToGameView(initial, deps.now()), itemId, 'identify_item')
+    const first = await mutateEquipmentV2Atomic(userId, 'mongo-identify-replay', 0, {
+      action: 'identify_item', itemId, optionId: identify.optionId
+    }, deps)
+    await mutateSaveGameAtomic(userId, 'mongo-after-equipment', 'mongo:after-equipment', 1, {}, (save) => { save.gold += 1 }, deps)
+
+    const replay = await mutateEquipmentV2Atomic(userId, 'mongo-identify-replay', 0, {
+      action: 'identify_item', itemId, optionId: identify.optionId
+    }, deps)
+
+    expect(replay.revision).toBe(first.revision)
+    expect(replay.gold).toBe(first.gold)
+    expect(replay.itemsById[itemId]!.identified).toBe(true)
+  })
+
+  it('recovers an uncertain equipment V2 response after Mongo acknowledges then throws', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[18]!
+    const initial = await getPersistedGameV3(userId)
+    const itemId = initial.stash[0]!
+    initial.itemsById[itemId]!.identified = false
+    initial.itemsById[itemId]!.rarity = 'magic'
+    await collection.replaceOne({ userId }, initial)
+    const deps = fixedDeps()
+    const identify = executionOption(mapPersistedGameToGameView(initial, deps.now()), itemId, 'identify_item')
+    repositoryCollection = {
+      findOne: (...args: Parameters<Collection['findOne']>) => collection.findOne(...args),
+      replaceOne: async (...args: Parameters<Collection['replaceOne']>) => {
+        await collection.replaceOne(...args)
+        throw new Error('simulated Mongo network loss after equipment commit')
+      }
+    } as unknown as Collection
+    try {
+      const response = await mutateEquipmentV2Atomic(userId, 'mongo-equipment-uncertain', 0, {
+        action: 'identify_item', itemId, optionId: identify.optionId
+      }, deps)
+      expect(response.revision).toBe(1)
+      expect((await collection.findOne({ userId }))?.ledger).toHaveLength(1)
+    } finally {
+      repositoryCollection = collection
+    }
+  })
+
+  it('allows one Mongo CAS winner for concurrent equipment commands', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[19]!
+    const initial = await getPersistedGameV3(userId)
+    const itemId = initial.stash[0]!
+    initial.itemsById[itemId]!.identified = false
+    initial.itemsById[itemId]!.rarity = 'magic'
+    await collection.replaceOne({ userId }, initial)
+    const deps = fixedDeps()
+    const view = mapPersistedGameToGameView(initial, deps.now())
+    const identify = executionOption(view, itemId, 'identify_item')
+    const dismantle = executionOption(view, itemId, 'dismantle_item')
+
+    const results = await Promise.allSettled([
+      mutateEquipmentV2Atomic(userId, 'mongo-equipment-identify', 0, {
+        action: 'identify_item', itemId, optionId: identify.optionId
+      }, deps),
+      mutateEquipmentV2Atomic(userId, 'mongo-equipment-dismantle', 0, {
+        action: 'dismantle_item', itemId, optionId: dismantle.optionId, acknowledgementId: dismantle.acknowledgementId
+      }, deps)
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect((await collection.findOne({ userId }))?.ledger).toHaveLength(1)
+  })
+
+  it('persists equipment job completion and V2 tombstone material deltas', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, reconcilePersistedGameV3 } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[20]!
+    const initial = await getPersistedGameV3(userId)
+    const [jobItemId, tombstoneItemId] = initial.stash
+    if (!jobItemId || !tombstoneItemId) throw new Error('Expected two starter items')
+    const deps = fixedDeps()
+    const blacksmith = executionOption(mapPersistedGameToGameView(initial, deps.now()), jobItemId, 'queue_blacksmith_job')
+    const queued = await mutateEquipmentV2Atomic(userId, 'mongo-queue-blacksmith', 0, {
+      action: 'queue_blacksmith_job', itemId: jobItemId, optionId: blacksmith.optionId
+    }, deps)
+    const jobId = Object.keys(queued.serviceJobStateById)[0]!
+    const completed = await reconcilePersistedGameV3(userId, fixedDeps(new Date('2026-09-15T12:02:00.000Z')))
+    expect(completed.serviceJobStateById[jobId]!.status).toBe('completed')
+    expect(completed.itemPlacements[jobItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'stash' })
+
+    const dismantle = executionOption(mapPersistedGameToGameView(completed, deps.now()), tombstoneItemId, 'dismantle_item')
+    await mutateEquipmentV2Atomic(userId, 'mongo-v2-dismantle', completed.revision, {
+      action: 'dismantle_item', itemId: tombstoneItemId, optionId: dismantle.optionId, acknowledgementId: dismantle.acknowledgementId
+    }, deps)
+    const persisted = await collection.findOne({ userId })
+    expect(persisted?.itemPlacements[tombstoneItemId]).toMatchObject({ ownerKind: 'tombstone', custodyKind: 'tombstone' })
+    expect(persisted?.ledger.at(-1).materialDeltas.scrap).toBeGreaterThan(0)
+  })
+
   it('rejects a declared V3 document with legacy or incomplete nested fields', async () => {
     const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
     const corrupt = await getPersistedGameV3(userIds[10]!)
@@ -330,6 +439,18 @@ function addExpedition(game: PersistedGameV3, id: string, visitorIndex = 0): voi
   game.expeditionsById[id] = {
     id, itemIds: [], projection: { kind: 'expedition', visitorId, contractId, startsAt: game.updatedAt }
   }
+}
+
+function executionOption(view: { items: unknown[] }, itemId: string, action: string) {
+  const item = view.items.find((candidate) => (candidate as { itemId?: string }).itemId === itemId) as { actions?: unknown[] } | undefined
+  const availability = item?.actions?.find((candidate) => (candidate as { action?: string }).action === action) as { execution?: { options?: unknown[] } } | undefined
+  const option = availability?.execution?.options?.[0] as { optionId?: string; acknowledgement?: { acknowledgementId?: string } } | undefined
+  if (!option?.optionId) throw new Error(`Missing ${action} option for ${itemId}`)
+  return { optionId: option.optionId, acknowledgementId: option.acknowledgement?.acknowledgementId }
+}
+
+function fixedDeps(now = new Date('2026-09-15T12:00:00.000Z')) {
+  return { now: () => now, uuid: () => 'mongo-fixed-id', random: () => 0.5 }
 }
 
 async function createLegacyRetainedLifecycle(userId: string): Promise<{

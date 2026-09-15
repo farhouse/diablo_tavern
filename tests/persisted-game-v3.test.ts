@@ -4,6 +4,7 @@ import { buildPersistedFromPublic, isPersistedCanonical, sanitizeGameResponse, t
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
 import { applyItemTransition, effectiveCapacityUsed } from '../server/domain/item-transitions'
 import { assignVisitorCommission, refreshVisitRound } from '../utils/visitor-logic'
+import { LOOT_CONFIG_VERSION } from '../server/domain/loot-v2'
 
 const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
 
@@ -262,8 +263,16 @@ describe('PersistedGameV3 invariants', () => {
     visitor.state = 'returned'
     visitor.commission.rewardGold = visitor.commission.fullRewardGold
     visitor.commission.rewardItem!.id = 'pending-reward-item'
-    const persisted = buildPersistedFromPublic(save)
-    expect(persisted.itemPlacements['pending-reward-item']).toMatchObject({ ownerKind: 'caravan' })
+    const persisted = buildPersistedFromPublic(save, undefined, { now: () => new Date(save.updatedAt), random: () => 0.5, uuid: () => 'pending-reward' })
+    const rewardItemId = visitor.commission.rewardItem!.id
+    const generatedRewardId = persisted.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)?.visitor?.commission?.rewardItemId
+    expect(generatedRewardId).toBe('loot-pending-reward')
+    expect(generatedRewardId).not.toBe(rewardItemId)
+    expect(persisted.itemPlacements[generatedRewardId!]).toMatchObject({ ownerKind: 'caravan' })
+    expect(persisted.itemV2ById[generatedRewardId!]?.provenance).toMatchObject({
+      configVersion: LOOT_CONFIG_VERSION,
+      businessKey: 'loot:commission-reward:reward'
+    })
     expect(effectiveCapacityUsed(persisted)).toBe(save.stash.length + 1)
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
     expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: 'commission-reward' }))
