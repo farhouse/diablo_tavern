@@ -20,6 +20,16 @@ describe('PersistedGameV3 invariants', () => {
     }
   })
 
+  it('uses bounded opaque contract option IDs for long legacy visitor IDs', () => {
+    const save = createSaveGame('long-visitor-id')
+    save.visitRound.slots[0]!.visitor!.id = 'v'.repeat(256)
+    const persisted = buildPersistedFromPublic(save)
+    const optionIds = persisted.visitorCycle.visitors['v'.repeat(256)]!.contractOptions.map((option) => option.optionId)
+
+    expect(optionIds.every((optionId) => optionId.length < 64)).toBe(true)
+    expect(new Set(optionIds).size).toBe(optionIds.length)
+  })
+
   it('never exposes persistence bookkeeping through the contractual GameView', () => {
     const persisted = buildPersistedFromPublic(createSaveGame('projection-user'))
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))

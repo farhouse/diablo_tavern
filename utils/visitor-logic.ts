@@ -248,8 +248,7 @@ export function claimVisitorCommission(save: SaveGame, visitorId: string, now = 
   return touch(save, now)
 }
 
-export function dismissVisitor(save: SaveGame, visitorId: string, now = new Date(), random: RandomSource = Math.random): SaveGame {
-  refreshVisitRound(save, now, random, { resolveLegacyCommissions: false })
+export function dismissVisitor(save: SaveGame, visitorId: string, now = new Date(), _random: RandomSource = Math.random): SaveGame {
   const visitor = findVisitor(save, visitorId)
   const v2State = save._v2VisitorStates?.[visitorId]
   if (v2State && v2State !== 'available' && v2State !== 'negotiating') {

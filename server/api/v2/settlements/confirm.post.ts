@@ -3,8 +3,8 @@ import { executeVisitorCycleCommand, readV2Command, requireInteger, requireStrin
 import { handleVisitorMutation, requireMutationString } from '~/server/utils/visitor-api'
 
 export default defineEventHandler(async (event) => {
+  const user = await requireUser(event)
   return handleVisitorMutation(async () => {
-    const user = await requireUser(event)
     const envelope = await readV2Command(event, ['settlementId', 'previewVersion', 'selectedOptionIds'])
     const settlementId = requireMutationString(envelope.payload.settlementId, 'settlementId')
     const previewVersion = requireInteger(envelope.payload.previewVersion, 'previewVersion')

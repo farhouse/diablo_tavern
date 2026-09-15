@@ -4,7 +4,7 @@ import type { VisitorCycleCommand } from '~/server/domain/visitor-cycle'
 import { mapPersistedGameToGameView } from '~/server/domain/game-view'
 import { V2ValidationError } from '~/server/domain/v2-errors'
 import { mutateVisitorCycleAtomic } from '~/server/utils/savegame'
-import { handleVisitorMutation, requireMutationString, visitorOperationKey } from '~/server/utils/visitor-api'
+import { requireMutationString, visitorOperationKey } from '~/server/utils/visitor-api'
 
 export async function readV2Command<T extends Record<string, unknown>>(
   event: H3Event,
@@ -48,14 +48,14 @@ export async function executeVisitorCycleCommand(
   command: VisitorCycleCommand,
   businessIdentifiers: string[]
 ): Promise<CommandSuccess> {
-  return handleVisitorMutation(() => mutateVisitorCycleAtomic(
+  return mutateVisitorCycleAtomic(
     userId,
     envelope.requestId,
     envelope.expectedRevision,
     command,
     visitorOperationKey('v2-cycle', ...businessIdentifiers),
     mapPersistedGameToGameView
-  ))
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

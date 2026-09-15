@@ -790,11 +790,13 @@ export function buildPersistedFromPublic(
         delete cycleVisitor.settlementId
         delete cycleVisitor.outcome
       }
-      if (visitor.state === 'departed' && visitor.departedAt && cycleVisitor?.state === 'available'
-        && !Object.values(visitorCycle.contracts).some((contract) => contract.visitorId === visitor.id)) {
+      if (visitor.state === 'departed' && visitor.departedAt && cycleVisitor?.state === 'available') {
+        const lastExpedition = Object.values(visitorCycle.expeditions)
+          .filter((expedition) => expedition.visitorId === visitor.id)
+          .at(-1)
         cycleVisitor.state = 'departed'
         cycleVisitor.departedAt = visitor.departedAt
-        cycleVisitor.lastExpeditionId = visitor.commission?.id ?? `legacy-${visitor.id}`
+        cycleVisitor.lastExpeditionId = visitor.commission?.id ?? lastExpedition?.expeditionId ?? `legacy-${visitor.id}`
         cycleVisitor.contractOptions = []
       }
     }
@@ -1003,23 +1005,20 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   }
   for (const contract of Object.values(cycle.contracts)) {
     const expedition = cycle.expeditions[contract.expeditionId]
-    if (!expedition || !contract.loanItemIds.every((itemId) => {
+    if (!expedition || (expedition.state !== 'settled' && !contract.loanItemIds.every((itemId) => {
       const placement = itemPlacements[itemId]
-      if (!placement || placement.ownerKind !== 'caravan') return false
-      return expedition.state === 'settled'
-        ? ['stash', 'recovery', 'tombstone'].includes(placement.custodyKind)
-        : placement.custodyKind === 'expedition' && placement.custodyId === expedition.expeditionId
-    })) return false
+      return placement?.ownerKind === 'caravan'
+        && placement.custodyKind === 'expedition' && placement.custodyId === expedition.expeditionId
+    }))) return false
   }
   for (const settlement of Object.values(cycle.settlements)) {
     const contract = cycle.contracts[cycle.expeditions[settlement.expeditionId]?.contractId ?? '']
     if (!contract || settlement.loanItemIds.length !== contract.loanItemIds.length
       || settlement.loanItemIds.some((itemId) => !contract.loanItemIds.includes(itemId))) return false
-    if (!settlement.rewardItemIds.every((itemId) => {
+    if (settlement.state === 'preview_ready' && !settlement.rewardItemIds.every((itemId) => {
       const placement = itemPlacements[itemId]
-      return placement?.ownerKind === 'caravan' && (settlement.state === 'preview_ready'
-        ? placement.custodyKind === 'settlement' && placement.custodyId === settlement.settlementId
-        : placement.custodyKind === 'stash')
+      return placement?.ownerKind === 'caravan'
+        && placement.custodyKind === 'settlement' && placement.custodyId === settlement.settlementId
     })) return false
   }
   for (const recovery of Object.values(cycle.recoveries)) {
@@ -1028,12 +1027,16 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     if (!sourceSettlement || sourceSettlement.outcome !== 'death'
       || recovery.itemIds.length !== sourceSettlement.loanItemIds.length
       || recovery.itemIds.some((itemId) => !sourceSettlement.loanItemIds.includes(itemId))) return false
-    const expectedCustody = recovery.state === 'open' || recovery.state === 'assigned'
-      ? 'recovery' : recovery.state === 'recovered' ? 'stash' : 'tombstone'
-    if (!recovery.itemIds.every((itemId) => itemPlacements[itemId]?.custodyKind === expectedCustody)) return false
-    const supportCustody = recovery.state === 'assigned' ? 'recovery' : 'stash'
-    if (!recovery.supportLoanItemIds.every((itemId) => itemPlacements[itemId]?.ownerKind === 'caravan'
-      && itemPlacements[itemId]?.custodyKind === supportCustody)) return false
+    if ((recovery.state === 'open' || recovery.state === 'assigned')
+      && !recovery.itemIds.every((itemId) => itemPlacements[itemId]?.ownerKind === 'caravan'
+        && itemPlacements[itemId]?.custodyKind === 'recovery'
+        && itemPlacements[itemId]?.custodyId === recovery.recoveryId)) return false
+    if ((recovery.state === 'failed' || recovery.state === 'abandoned')
+      && !recovery.itemIds.every((itemId) => itemPlacements[itemId]?.ownerKind === 'tombstone'
+        && itemPlacements[itemId]?.custodyKind === 'tombstone')) return false
+    if (recovery.state === 'assigned' && !recovery.supportLoanItemIds.every((itemId) => itemPlacements[itemId]?.ownerKind === 'caravan'
+      && itemPlacements[itemId]?.custodyKind === 'recovery'
+      && itemPlacements[itemId]?.custodyId === recovery.recoveryId)) return false
   }
   if (Object.values(itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length > Number(candidate.stashLimit)) return false
 

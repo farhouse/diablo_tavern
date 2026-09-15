@@ -3,8 +3,8 @@ import { executeVisitorCycleCommand, readV2Command } from '~/server/utils/v2-com
 import { handleVisitorMutation } from '~/server/utils/visitor-api'
 
 export default defineEventHandler(async (event) => {
+  const user = await requireUser(event)
   return handleVisitorMutation(async () => {
-    const user = await requireUser(event)
     const envelope = await readV2Command(event, [])
     return executeVisitorCycleCommand(user.id, envelope, { action: 'reconcile_game' }, ['reconcile', String(envelope.expectedRevision)])
   })

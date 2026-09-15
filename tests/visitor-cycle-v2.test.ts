@@ -3,6 +3,7 @@ import { createSaveGame } from '../utils/game-logic'
 import { buildPersistedFromPublic, hydratePersistedGame, isPersistedCanonical, type PersistenceDependencies, type PersistedGameV3 } from '../server/utils/savegame'
 import { applyVisitorCycleCommand, VisitorCycleError } from '../server/domain/visitor-cycle'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
+import { applyItemTransition } from '../server/domain/item-transitions'
 import { dismissVisitor } from '../utils/visitor-logic'
 
 describe('V2 visitor contract, expedition, settlement and recovery', () => {
@@ -56,6 +57,13 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
       action: 'confirm_settlement', settlementId: settlement.settlementId,
       previewVersion: settlement.previewVersion, selectedOptionIds: []
     }, scenario.dependencies)).toThrow(VisitorCycleError)
+
+    const nextVisitorId = confirmed.visitRound.slots.find((slot) => slot.visitor?.id !== scenario.visitorId)?.visitor?.id!
+    const resold = applyItemTransition(confirmed, {
+      operation: 'sell', itemId: scenario.loanItemId, targetId: nextVisitorId
+    }).game
+    expect(resold.itemPlacements[scenario.loanItemId]).toMatchObject({ ownerKind: 'visitor', ownerId: nextVisitorId })
+    expect(isPersistedCanonical(resold)).toBe(true)
   })
 
   it('rotates sealed options so a staying visitor can accept a later contract', () => {
@@ -77,6 +85,25 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
       action: 'accept_contract', visitorId: scenario.visitorId, optionId: nextOptionId, loanItemIds: []
     }, scenario.dependencies)
     expect(Object.values(contractedAgain.visitorCycle.contracts)).toHaveLength(2)
+  })
+
+  it('synchronizes a voluntary legacy dismissal after all V2 loans returned', () => {
+    const scenario = activeScenario()
+    scenario.game.visitorCycle.expeditions[scenario.expeditionId]!.events = [event(scenario.now, 0)]
+    const preview = apply(scenario.game, { action: 'reconcile_game' }, scenario.dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const settled = apply(preview, {
+      action: 'confirm_settlement', settlementId: settlement.settlementId,
+      previewVersion: settlement.previewVersion, selectedOptionIds: []
+    }, scenario.dependencies)
+    const compatibility = hydratePersistedGame(settled)
+    dismissVisitor(compatibility, scenario.visitorId, scenario.now, () => 0)
+    const rebuilt = buildPersistedFromPublic(compatibility, settled, scenario.dependencies)
+
+    expect(rebuilt.visitorCycle.visitors[scenario.visitorId]).toMatchObject({
+      state: 'departed', lastExpeditionId: scenario.expeditionId
+    })
+    expect(isPersistedCanonical(rebuilt)).toBe(true)
   })
 
   it('applies expiration defaults only through reconcile', () => {
@@ -112,6 +139,13 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(dead.itemPlacements[scenario.loanItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'recovery' })
     expect(dead.visitorCycle.visitors[scenario.visitorId]).toMatchObject({ state: 'dead', recoveryId: recoveries[0]?.recoveryId })
     expect(isPersistedCanonical(dead)).toBe(true)
+
+    const abandoned = apply(dead, {
+      action: 'abandon_recovery', recoveryId: recoveries[0]!.recoveryId,
+      acknowledgementId: `${recoveries[0]!.recoveryId}:abandon`
+    }, scenario.dependencies)
+    expect(abandoned.itemPlacements[scenario.loanItemId]).toMatchObject({ ownerKind: 'tombstone', custodyKind: 'tombstone' })
+    expect(isPersistedCanonical(abandoned)).toBe(true)
   })
 
   it('assigns and resolves recovery without capturing visitor-owned belongings', () => {
@@ -144,6 +178,11 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(resolved.itemPlacements[supportLoan]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
     const visitorOwned = Object.entries(resolved.itemPlacements).filter(([, placement]) => placement.ownerKind === 'visitor')
     expect(visitorOwned.every(([, placement]) => placement.custodyKind === 'visitor')).toBe(true)
+    const dismantled = applyItemTransition(resolved, {
+      operation: 'dismantle', itemId: scenario.loanItemId, targetId: 'scrap'
+    }).game
+    expect(dismantled.itemPlacements[scenario.loanItemId]).toMatchObject({ ownerKind: 'tombstone', custodyKind: 'tombstone' })
+    expect(isPersistedCanonical(dismantled)).toBe(true)
   })
 
   it('archives terminal legacy slots and replenishes the V2 roster only through reconcile', () => {

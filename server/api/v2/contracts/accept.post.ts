@@ -3,14 +3,14 @@ import { executeVisitorCycleCommand, readV2Command, requireStringArray } from '~
 import { handleVisitorMutation, requireMutationString } from '~/server/utils/visitor-api'
 
 export default defineEventHandler(async (event) => {
+  const user = await requireUser(event)
   return handleVisitorMutation(async () => {
-    const user = await requireUser(event)
     const envelope = await readV2Command(event, ['visitorId', 'optionId', 'loanItemIds'])
     const visitorId = requireMutationString(envelope.payload.visitorId, 'visitorId')
     const optionId = requireMutationString(envelope.payload.optionId, 'optionId')
     const loanItemIds = requireStringArray(envelope.payload.loanItemIds, 'loanItemIds')
     return executeVisitorCycleCommand(user.id, envelope, {
       action: 'accept_contract', visitorId, optionId, loanItemIds
-    }, ['contract', visitorId, optionId])
+    }, ['contract', optionId])
   })
 })

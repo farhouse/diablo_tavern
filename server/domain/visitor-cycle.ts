@@ -1,4 +1,5 @@
 import type { Item } from '~/types/game'
+import { createHash } from 'node:crypto'
 import type {
   ActionAvailability,
   ChoiceGroup,
@@ -174,7 +175,7 @@ function migrateLegacyCommission(
   const contractId = commission.id
   const expeditionId = commission.id
   const option: PersistedContractOption = {
-    optionId: `${visitor.visitorId}:legacy:${commission.id}`,
+    optionId: sealedOptionId(visitor.visitorId, commission.id, 'legacy'),
     label: text('contract.legacy', commission.title),
     description: text('contract.legacy.description', commission.failureConsequence),
     durationSeconds: Math.max(1, Math.ceil(commission.durationMs / 1000)),
@@ -771,13 +772,13 @@ function contractOptions(visitorId: string, from: string, sequence: number): Per
   const expiresAt = new Date(Date.parse(from) + CONTRACT_TTL_MS).toISOString()
   return [
     {
-      optionId: `${visitorId}:${sequence}:standard`, label: text('contract.standard', 'Contrato estándar'),
+      optionId: sealedOptionId(visitorId, String(sequence), 'standard'), label: text('contract.standard', 'Contrato estándar'),
       description: text('contract.standard.description', 'Reparto equilibrado con retirada segura'),
       durationSeconds: 90, caravanGoldShareBps: 2500, lootPriority: 'caravan_first', retreatThreshold: 10,
       loanFeeGold: 2, consequences: [], expiresAt
     },
     {
-      optionId: `${visitorId}:${sequence}:bold`, label: text('contract.bold', 'Contrato arriesgado'),
+      optionId: sealedOptionId(visitorId, String(sequence), 'bold'), label: text('contract.bold', 'Contrato arriesgado'),
       description: text('contract.bold.description', 'Más exposición y sin retirada por vida'),
       durationSeconds: 150, caravanGoldShareBps: 2500, lootPriority: 'visitor_first', retreatThreshold: null,
       loanFeeGold: 3, consequences: [], expiresAt
@@ -787,6 +788,11 @@ function contractOptions(visitorId: string, from: string, sequence: number): Per
 
 function contractCount(cycle: PersistedVisitorCycle, visitorId: string): number {
   return Object.values(cycle.contracts).filter((contract) => contract.visitorId === visitorId).length
+}
+
+function sealedOptionId(visitorId: string, generation: string, variant: string): string {
+  const digest = createHash('sha256').update(`${visitorId}\0${generation}\0${variant}`).digest('hex').slice(0, 24)
+  return `contract-option-${digest}-${variant}`
 }
 
 function publicContractOption(option: PersistedContractOption): ContractOptionView {

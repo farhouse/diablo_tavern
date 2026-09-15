@@ -28,7 +28,7 @@ describe('V2 command handlers', () => {
     expect(executeVisitorCycleCommand).toHaveBeenCalledWith(
       'v2-handler-user', expect.objectContaining({ requestId: 'request-1', expectedRevision: 0 }),
       { action: 'accept_contract', visitorId: 'visitor-1', optionId: 'option-1', loanItemIds: ['item-1'] },
-      ['contract', 'visitor-1', 'option-1']
+      ['contract', 'option-1']
     )
   })
 
@@ -56,5 +56,20 @@ describe('V2 command handlers', () => {
       data: { error: { code: 'validation_error', retryable: false } }
     })
     expect(executeVisitorCycleCommand).not.toHaveBeenCalled()
+  })
+
+  it('preserves the public conflict envelope from command execution', async () => {
+    const { RevisionConflictError } = await import('../server/utils/savegame')
+    executeVisitorCycleCommand.mockRejectedValueOnce(new RevisionConflictError('private revision'))
+    vi.stubGlobal('readBody', async () => ({
+      requestId: 'request-1', expectedRevision: 0,
+      payload: { visitorId: 'visitor-1', optionId: 'option-1', loanItemIds: [] }
+    }))
+    const { default: handler } = await import('../server/api/v2/contracts/accept.post')
+
+    await expect(handler({} as never)).rejects.toMatchObject({
+      statusCode: 409,
+      data: { error: { code: 'revision_conflict', retryable: true } }
+    })
   })
 })

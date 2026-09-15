@@ -464,6 +464,19 @@ describe('visitor trade and commission loop', () => {
       .toThrow('Visitor cannot be dismissed while contracted or away')
   })
 
+  it('does not materialize a due arrival as a side effect of legacy dismissal', () => {
+    const save = createSaveGame('dismiss-with-due-slot')
+    const dueSlot = save.visitRound.slots[0]!
+    const dismissed = save.visitRound.slots[1]!.visitor!
+    delete dueSlot.visitor
+    dueSlot.nextArrivalCheckAt = '2026-01-01T00:00:00.000Z'
+
+    dismissVisitor(save, dismissed.id, new Date('2026-01-01T00:01:00.000Z'), () => 0)
+
+    expect(dueSlot.visitor).toBeUndefined()
+    expect(dueSlot.nextArrivalCheckAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
   it('offers exactly two commissions with distinct probability, duration, reward, and risk', () => {
     const save = createSaveGame('commission-options')
     const options = visitors(save)[0]!.commissionOptions
