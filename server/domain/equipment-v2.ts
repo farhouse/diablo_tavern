@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { Affix, Item, ItemRarity, StatKey } from '~/types/game'
 import { applyItemTransition } from '~/server/domain/item-transitions'
 import type { PersistedGameV3, PersistedItemV2State, PersistenceDependencies } from '~/server/utils/savegame'
+import { resolveServerRuntimeConfig } from '~/server/utils/runtime-config'
 
 export type EquipmentV2Action =
   | 'identify_item'
@@ -153,7 +154,6 @@ function queueServiceJob(
   dependencies: PersistenceDependencies
 ): void {
   const item = requireStashItem(game, itemId)
-  if (!item.identified) throw domainError('Item must be identified before artisan service')
   const state = ensureItemState(game, itemId)
   const option = service === 'blacksmith' ? getBlacksmithOption(item, state) : getEnchanterOption(item, state)
   const action = service === 'blacksmith' ? 'queue_blacksmith_job' : 'queue_enchanter_job'
@@ -301,7 +301,10 @@ function sameToken(expected: string, actual: string): boolean {
 }
 
 function equipmentTokenSecret(): string {
-  return process.env.JWT_SECRET || 'dev-secret-change-me'
+  const runtimeConfig = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : {}
+  const secret = resolveServerRuntimeConfig(runtimeConfig).jwtSecret
+  if (!secret || secret === 'dev-secret-change-me') throw domainError('equipment token secret is not configured')
+  return secret
 }
 
 function requireStashItem(game: PersistedGameV3, itemId: string): Item {

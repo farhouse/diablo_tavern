@@ -144,9 +144,9 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
       return [{
         ...base,
         ...(state?.status === 'failed'
-          ? { state: 'failed', failedAt: state.completedAt ?? state.completesAt, reasonText: text(`service.${container.id}.failed`, 'El servicio no pudo completarse'), consequences: [] }
+          ? { state: 'failed', failedAt: state.failedAt, reasonText: text(`service.${container.id}.failed`, 'El servicio no pudo completarse'), consequences: [] }
           : state?.status === 'cancelled'
-            ? { state: 'cancelled', cancelledAt: state.completedAt ?? state.completesAt, consequences: [] }
+            ? { state: 'cancelled', cancelledAt: state.cancelledAt, consequences: [] }
             : {
                 state: state?.status === 'active' ? 'active' : 'queued',
                 ...(state?.status === 'active'
@@ -280,7 +280,6 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
       description: text('identify.description', `Cuesta ${option.gold} oro`),
       consequences: option.gold > 0 ? [spendGold(option.gold)] : []
     }]))
-    return actions
   }
 
   const blacksmith = getBlacksmithOption(item, state)
@@ -308,7 +307,7 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
     acknowledgement: { acknowledgementId: sealEquipmentActionToken(game, item.id, 'dismantle_item', dismantle.acknowledgementId, 'acknowledgement', expiresAt), expiresAt, text: text('dismantle.ack', 'Confirmar desmantelado irreversible') }
   }]))
 
-  const imprint = getImprintOption(item, state)
+  const imprint = item.identified ? getImprintOption(item, state) : null
   if (imprint) {
     actions.push(sealedAction(game, 'replace_boss_imprint', item.id, 'Reemplazar impronta', [{
       optionId: sealEquipmentActionToken(game, item.id, 'replace_boss_imprint', imprint.optionId, 'option', expiresAt), expiresAt,

@@ -8,6 +8,7 @@ import { applyEquipmentV2Command, authorizeEquipmentV2Command, type EquipmentV2C
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+const MAX_REQUEST_RECORDS = 100
 const MAX_MUTATE_ATTEMPTS = 5
 const PERSISTENCE_LEGACY_FIELDS = LEGACY_SAVE_FIELDS.filter((field) => field !== 'materials')
 
@@ -82,13 +83,15 @@ export interface PersistedItemV2State {
 }
 
 export interface PersistedServiceJobState {
-  status: 'active' | 'completed' | 'failed' | 'cancelled'
+  status: 'queued' | 'active' | 'completed' | 'failed' | 'cancelled'
   service: 'blacksmith' | 'enchanter'
   itemId: string
   queuedAt: string
   startedAt: string
   completesAt: string
   completedAt?: string
+  failedAt?: string
+  cancelledAt?: string
   result: {
     blacksmithLevel?: number
     enchantCount?: number
@@ -407,6 +410,10 @@ export class PersistedGameCorruptError extends Error {
   override name = 'PersistedGameCorruptError'
 }
 
+export class InvalidMutationRequestError extends Error {
+  override name = 'InvalidMutationRequestError'
+}
+
 export async function transitionItemAtomic(
   userId: string,
   requestId: string,
@@ -484,6 +491,7 @@ export async function mutateEquipmentV2Atomic(
   command: EquipmentV2Command,
   dependencies = defaultDependencies
 ): Promise<PersistedGameV3> {
+  if (!requestId || requestId.length > 128) throw new InvalidMutationRequestError('A valid requestId is required')
   const saves = await saveGamesCollection()
   const operationKey = JSON.stringify(['equipment-v2', command.action, command.itemId ?? command.jobId ?? '', command.optionId ?? ''])
   const businessKey = operationKey
@@ -532,7 +540,8 @@ export async function mutateEquipmentV2Atomic(
     transitioned.updatedAt = now
     const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
     const persistedResponse = createReplaySnapshot(transitioned)
-    transitioned.requestRecords = [...current.requestRecords, {
+    transitioned.requestRecords = pruneRequestRecords(current.requestRecords, now, MAX_REQUEST_RECORDS - 1)
+    transitioned.requestRecords = [...transitioned.requestRecords, {
       requestId, operationKey, businessKey, commandHash, response, persistedResponse,
       revision: transitioned.revision, createdAt: now, updatedAt: now
     }]
@@ -605,6 +614,13 @@ function createReplaySnapshot(game: PersistedGameV3): PersistedGameV3 {
     businessKeys: {},
     ledger: []
   }
+}
+
+function pruneRequestRecords(records: PersistedRequestRecord[], now: string, maxRecords: number): PersistedRequestRecord[] {
+  const cutoff = Date.parse(now) - REQUEST_RECORD_RETENTION_MS
+  return records
+    .filter((entry) => Date.parse(entry.createdAt) >= cutoff)
+    .slice(-maxRecords)
 }
 
 function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
@@ -1035,7 +1051,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     if (!container || container.projection?.kind !== 'service' || container.projection.service !== serviceState.service) return false
     if (!itemsById[serviceState.itemId]) return false
     const placement = itemPlacements[serviceState.itemId]
-    if (serviceState.status === 'active') {
+    if (serviceState.status === 'queued' || serviceState.status === 'active') {
       if (container.itemIds.length !== 1 || container.itemIds[0] !== serviceState.itemId) return false
       if (placement?.ownerKind !== 'caravan' || placement.custodyKind !== 'service' || placement.custodyId !== jobId) return false
     } else {
@@ -1044,8 +1060,9 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     }
     if (Date.parse(serviceState.startedAt) < Date.parse(serviceState.queuedAt)) return false
     if (Date.parse(serviceState.completesAt) < Date.parse(serviceState.startedAt)) return false
-    if (serviceState.status === 'completed' && !serviceState.completedAt) return false
-    if (serviceState.status !== 'completed' && serviceState.completedAt) return false
+    if (serviceState.status === 'completed' ? !serviceState.completedAt : serviceState.completedAt) return false
+    if (serviceState.status === 'failed' ? !serviceState.failedAt : serviceState.failedAt) return false
+    if (serviceState.status === 'cancelled' ? !serviceState.cancelledAt : serviceState.cancelledAt) return false
     if (serviceState.service === 'blacksmith') {
       if (!Number.isInteger(serviceState.result.blacksmithLevel) || serviceState.result.affix !== undefined || serviceState.result.enchantCount !== undefined) return false
     } else if (!serviceState.result.affix || !Number.isInteger(serviceState.result.enchantCount) || serviceState.result.blacksmithLevel !== undefined) return false
@@ -1328,12 +1345,14 @@ function isItemV2Map(value: unknown): value is Record<string, PersistedItemV2Sta
 function isServiceJobStateMap(value: unknown): value is Record<string, PersistedServiceJobState> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   return Object.values(value as Record<string, unknown>).every((entry) => isPlainRecord(entry)
-    && hasOnlyKeys(entry, ['status', 'service', 'itemId', 'queuedAt', 'startedAt', 'completesAt', 'completedAt', 'result'])
-    && ['active', 'completed', 'failed', 'cancelled'].includes(String(entry.status))
+    && hasOnlyKeys(entry, ['status', 'service', 'itemId', 'queuedAt', 'startedAt', 'completesAt', 'completedAt', 'failedAt', 'cancelledAt', 'result'])
+    && ['queued', 'active', 'completed', 'failed', 'cancelled'].includes(String(entry.status))
     && ['blacksmith', 'enchanter'].includes(String(entry.service))
     && typeof entry.itemId === 'string' && Boolean(entry.itemId)
     && ['queuedAt', 'startedAt', 'completesAt'].every((key) => Number.isFinite(Date.parse(String(entry[key]))))
     && (entry.completedAt === undefined || Number.isFinite(Date.parse(String(entry.completedAt))))
+    && (entry.failedAt === undefined || Number.isFinite(Date.parse(String(entry.failedAt))))
+    && (entry.cancelledAt === undefined || Number.isFinite(Date.parse(String(entry.cancelledAt))))
     && isPlainRecord(entry.result)
     && hasOnlyKeys(entry.result, ['blacksmithLevel', 'enchantCount', 'affix'])
     && (entry.result.blacksmithLevel === undefined || (Number.isInteger(entry.result.blacksmithLevel) && Number(entry.result.blacksmithLevel) >= 0))

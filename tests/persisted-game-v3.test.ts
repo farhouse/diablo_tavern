@@ -1,11 +1,22 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createSaveGame } from '../utils/game-logic'
 import { buildPersistedFromPublic, isPersistedCanonical, sanitizeGameResponse, type PersistedGameV3 } from '../server/utils/savegame'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
 import { applyItemTransition, effectiveCapacityUsed } from '../server/domain/item-transitions'
 import { assignVisitorCommission, refreshVisitRound } from '../utils/visitor-logic'
 
+const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
+
 describe('PersistedGameV3 invariants', () => {
+  beforeEach(() => {
+    process.env.JWT_SECRET = 'test-secret-for-equipment-v2'
+  })
+
+  afterEach(() => {
+    if (ORIGINAL_JWT_SECRET === undefined) delete process.env.JWT_SECRET
+    else process.env.JWT_SECRET = ORIGINAL_JWT_SECRET
+  })
+
   it('stores each actionable item once and only references it from containers', () => {
     const persisted = buildPersistedFromPublic(createSaveGame('canonical-user'))
     expect(isPersistedCanonical(persisted)).toBe(true)

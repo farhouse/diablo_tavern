@@ -2,7 +2,7 @@ import type { EquipmentV2Action, EquipmentV2Command } from '~/server/domain/equi
 import { mapPersistedGameToGameView } from '~/server/domain/game-view'
 import { requireUser } from '~/server/utils/auth'
 import { readRequiredBody, requireString } from '~/server/utils/body'
-import { mutateEquipmentV2Atomic, RevisionConflictError, IdempotencyConflictError, BusinessKeyConflictError } from '~/server/utils/savegame'
+import { mutateEquipmentV2Atomic, RevisionConflictError, IdempotencyConflictError, BusinessKeyConflictError, InvalidMutationRequestError } from '~/server/utils/savegame'
 import { EquipmentV2Error } from '~/server/domain/equipment-v2'
 
 const ITEM_ACTIONS = new Set<EquipmentV2Action>([
@@ -58,6 +58,7 @@ function requireExpectedRevision(value: unknown): number {
 
 function mutationError(error: unknown): never {
   if (error instanceof EquipmentV2Error) throw createError({ statusCode: 400, statusMessage: error.message })
+  if (error instanceof InvalidMutationRequestError) throw createError({ statusCode: 400, statusMessage: error.message })
   if (error instanceof IdempotencyConflictError) throw createError({ statusCode: 409, statusMessage: error.message })
   if (error instanceof BusinessKeyConflictError) throw createError({ statusCode: 409, statusMessage: error.message })
   if (error instanceof RevisionConflictError) throw createError({ statusCode: 409, statusMessage: error.message })
