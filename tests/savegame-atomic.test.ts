@@ -38,6 +38,9 @@ vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => collecti
 
 describe('atomic persisted-game mutation', () => {
   beforeEach(async () => {
+    vi.doUnmock('../server/domain/game-view')
+    vi.doUnmock('../server/utils/auth')
+    vi.doUnmock('../server/utils/savegame')
     const { buildPersistedFromPublic } = await import('../server/utils/savegame')
     process.env.JWT_SECRET = 'test-secret-for-equipment-v2'
     delete process.env.NUXT_JWT_SECRET
@@ -51,6 +54,9 @@ describe('atomic persisted-game mutation', () => {
     else process.env.JWT_SECRET = ORIGINAL_JWT_SECRET
     if (ORIGINAL_NUXT_JWT_SECRET === undefined) delete process.env.NUXT_JWT_SECRET
     else process.env.NUXT_JWT_SECRET = ORIGINAL_NUXT_JWT_SECRET
+    vi.doUnmock('../server/domain/game-view')
+    vi.doUnmock('../server/utils/auth')
+    vi.doUnmock('../server/utils/savegame')
   })
 
   it('persists and replays the exact command once without public bookkeeping', async () => {
@@ -328,6 +334,75 @@ describe('atomic persisted-game mutation', () => {
     }
     expect((document as PersistedGameV3).ledger).toHaveLength(511)
     expect((document as PersistedGameV3).requestRecords.map((entry) => entry.requestId)).toEqual(['historic-request-1', 'fresh'])
+  })
+
+  it('caps shared replay records across legacy, item transition, and equipment writers', async () => {
+    const { mutateEquipmentV2Atomic, mutateSaveGameAtomic, sanitizeGameResponse, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const persisted = document as PersistedGameV3
+    const baseResponse = sanitizeGameResponse(createSaveGame('atomic-user'))
+    persisted.requestRecords = []
+    persisted.ledger = []
+    persisted.businessKeys = {}
+    for (let index = 0; index < 120; index += 1) {
+      const requestId = `historic-request-${index}`
+      const operationKey = `historic-operation-${index}`
+      const businessKey = `historic-key-${index}`
+      const commandHash = 'a'.repeat(64)
+      const response = structuredClone(baseResponse)
+      response.revision = index + 1
+      persisted.businessKeys[businessKey] = requestId
+      persisted.ledger.push({
+        at: '2026-09-01T00:00:00.000Z',
+        requestId,
+        operationKey,
+        commandHash,
+        businessKey,
+        revision: index + 1,
+        goldDelta: 0,
+        materialDeltas: {},
+        itemChanges: []
+      })
+      persisted.requestRecords.push({
+        requestId,
+        operationKey,
+        businessKey,
+        commandHash,
+        response,
+        revision: index + 1,
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z'
+      })
+    }
+    persisted.revision = 120
+    document = persisted
+    const deps = fixedDeps(new Date('2026-09-15T12:00:00.000Z'))
+
+    await mutateSaveGameAtomic('atomic-user', 'legacy-fresh', 'legacy:fresh', 120, {}, (save) => { save.gold += 1 }, deps)
+    expect((document as PersistedGameV3).requestRecords).toHaveLength(100)
+
+    const afterLegacy = document as PersistedGameV3
+    const soldItemId = afterLegacy.stash[0]!
+    const visitorId = afterLegacy.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
+    await transitionItemAtomic('atomic-user', 'transition-fresh', 121, { operation: 'sell', itemId: soldItemId, targetId: visitorId }, deps)
+    expect((document as PersistedGameV3).requestRecords).toHaveLength(100)
+
+    const afterTransition = document as PersistedGameV3
+    const itemId = afterTransition.stash[0]!
+    afterTransition.itemsById[itemId]!.identified = false
+    afterTransition.itemsById[itemId]!.rarity = 'magic'
+    document = afterTransition
+    const identify = executionOption(mapPersistedGameToGameView(afterTransition, deps.now()), itemId, 'identify_item')
+    await mutateEquipmentV2Atomic('atomic-user', 'equipment-fresh', 122, {
+      action: 'identify_item', itemId, optionId: identify.optionId
+    }, deps)
+
+    const final = document as PersistedGameV3
+    expect(final.requestRecords).toHaveLength(100)
+    expect(final.ledger).toHaveLength(123)
+    expect(Object.keys(final.businessKeys)).toHaveLength(123)
+    expect(final.requestRecords.map((entry) => entry.requestId)).toEqual(expect.arrayContaining(['legacy-fresh', 'transition-fresh', 'equipment-fresh']))
+    expect(final.requestRecords.some((entry) => entry.requestId === 'historic-request-0')).toBe(false)
   })
 
   it('resets schema 2 with CAS while preserving only user identity', async () => {
@@ -735,6 +810,14 @@ describe('atomic persisted-game mutation', () => {
     const missingState = structuredClone(queued)
     delete missingState.serviceJobStateById[jobId]
     expect(isPersistedCanonical(missingState)).toBe(false)
+    const divergentProjection = structuredClone(queued)
+    divergentProjection.serviceJobsById[jobId]!.projection = {
+      kind: 'service',
+      service: 'blacksmith',
+      queuedAt: '2026-09-15T11:00:00.000Z',
+      startsAt: '2026-09-15T11:00:00.000Z'
+    }
+    expect(isPersistedCanonical(divergentProjection)).toBe(false)
 
     const terminal = structuredClone(queued)
     terminal.serviceJobStateById[jobId]!.status = 'failed'
@@ -746,6 +829,39 @@ describe('atomic persisted-game mutation', () => {
     await expect(mutateEquipmentV2Atomic('atomic-user', 'complete-failed', 1, {
       action: 'complete_service_job', jobId
     }, fixedDeps(new Date('2026-09-15T12:02:00.000Z')))).rejects.toBeInstanceOf(EquipmentV2Error)
+  })
+
+  it('projects queued service job timestamps from authoritative state', async () => {
+    const { getPersistedGameV3 } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3('atomic-user')
+    const itemId = initial.stash[0]!
+    const jobId = 'queued-job'
+    initial.stash = initial.stash.filter((candidate) => candidate !== itemId)
+    initial.itemPlacements[itemId] = { ownerKind: 'caravan', custodyKind: 'service', custodyId: jobId }
+    initial.serviceJobsById[jobId] = {
+      id: jobId,
+      itemIds: [itemId],
+      projection: { kind: 'service', service: 'blacksmith', queuedAt: '2026-09-15T10:00:00.000Z', startsAt: '2026-09-15T10:05:00.000Z' }
+    }
+    initial.serviceJobStateById[jobId] = {
+      status: 'queued',
+      service: 'blacksmith',
+      itemId,
+      queuedAt: '2026-09-15T12:00:00.000Z',
+      startedAt: '2026-09-15T12:05:00.000Z',
+      completesAt: '2026-09-15T12:06:00.000Z',
+      result: { blacksmithLevel: 1 }
+    }
+
+    const view = mapPersistedGameToGameView(initial, new Date('2026-09-15T12:00:00.000Z'))
+
+    expect(view.serviceJobs).toContainEqual(expect.objectContaining({
+      jobId,
+      state: 'queued',
+      queuedAt: '2026-09-15T12:00:00.000Z',
+      startsAt: '2026-09-15T12:05:00.000Z'
+    }))
   })
 
   it('projects failed and cancelled service jobs as terminal states', async () => {
@@ -850,12 +966,27 @@ describe('atomic persisted-game mutation', () => {
       .rejects.toMatchObject({ statusCode: 400 })
     await expect(handler({ context: { params: { action: 'identify_item' } }, body: { requestId: 'missing', expectedRevision: 0, itemId: 'item-1' } } as never))
       .rejects.toMatchObject({ statusCode: 400 })
-    await expect(handler({ context: { params: { action: 'identify_item' } }, body: { ...valid, requestId: 'too-long' } } as never))
-      .rejects.toMatchObject({ statusCode: 400 })
     await expect(handler({ context: { params: { action: 'identify_item' } }, body: { ...valid, requestId: 'stale' } } as never))
       .rejects.toMatchObject({ statusCode: 409 })
     await expect(handler({ context: { params: { action: 'identify_item' } }, body: valid } as never))
       .resolves.toEqual({ ok: true })
+  })
+
+  it('maps a 129 character requestId rejected by the production mutator to 400', async () => {
+    vi.resetModules()
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('getRouterParam', (event: { context: { params: Record<string, string> } }, name: string) => event.context.params[name])
+    vi.stubGlobal('readBody', async (event: { body: Record<string, unknown> }) => event.body)
+    vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+    vi.doMock('../server/utils/auth', () => ({ requireUser: async () => ({ id: 'atomic-user', email: 'atomic@example.test' }) }))
+    vi.doUnmock('../server/domain/game-view')
+    vi.doUnmock('../server/utils/savegame')
+    const { default: handler } = await import('../server/api/v2/actions/[action].post')
+
+    await expect(handler({
+      context: { params: { action: 'identify_item' } },
+      body: { requestId: 'x'.repeat(129), expectedRevision: 0, itemId: 'item-1', optionId: 'option-1' }
+    } as never)).rejects.toMatchObject({ statusCode: 400 })
   })
 })
 

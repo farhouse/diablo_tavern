@@ -326,19 +326,16 @@ export async function mutateSaveGameAtomic(
     next.userId = userId
     next.revision = nextRevision
 
-    const requestRecords = [
-      ...persisted.requestRecords.filter((entry) => Date.parse(entry.createdAt) + REQUEST_RECORD_RETENTION_MS >= Date.parse(now)),
-      {
-        requestId,
-        operationKey,
-        businessKey,
-        commandHash: requestHash,
-        response: sanitizeGameResponse(validated),
-        revision: nextRevision,
-        createdAt: now,
-        updatedAt: now
-      }
-    ]
+    const requestRecords = appendRequestRecord(persisted.requestRecords, now, {
+      requestId,
+      operationKey,
+      businessKey,
+      commandHash: requestHash,
+      response: sanitizeGameResponse(validated),
+      revision: nextRevision,
+      createdAt: now,
+      updatedAt: now
+    })
 
     const nextPersisted: PersistedGameV3 = {
       ...next,
@@ -449,10 +446,10 @@ export async function transitionItemAtomic(
   transitioned.revision = expectedRevision + 1
   transitioned.updatedAt = now
   const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
-  transitioned.requestRecords = [...current.requestRecords, {
+  transitioned.requestRecords = appendRequestRecord(current.requestRecords, now, {
     requestId, operationKey, businessKey, commandHash, response,
     revision: transitioned.revision, createdAt: now, updatedAt: now
-  }]
+  })
   transitioned.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
   transitioned.ledger = [...current.ledger, {
     at: now, requestId, operationKey, commandHash, businessKey,
@@ -540,11 +537,10 @@ export async function mutateEquipmentV2Atomic(
     transitioned.updatedAt = now
     const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
     const persistedResponse = createReplaySnapshot(transitioned)
-    transitioned.requestRecords = pruneRequestRecords(current.requestRecords, now, MAX_REQUEST_RECORDS - 1)
-    transitioned.requestRecords = [...transitioned.requestRecords, {
+    transitioned.requestRecords = appendRequestRecord(current.requestRecords, now, {
       requestId, operationKey, businessKey, commandHash, response, persistedResponse,
       revision: transitioned.revision, createdAt: now, updatedAt: now
-    }]
+    })
     transitioned.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
     transitioned.ledger = [...current.ledger, {
       at: now, requestId, operationKey, commandHash, businessKey,
@@ -621,6 +617,14 @@ function pruneRequestRecords(records: PersistedRequestRecord[], now: string, max
   return records
     .filter((entry) => Date.parse(entry.createdAt) >= cutoff)
     .slice(-maxRecords)
+}
+
+function appendRequestRecord(
+  records: PersistedRequestRecord[],
+  now: string,
+  record: PersistedRequestRecord
+): PersistedRequestRecord[] {
+  return [...pruneRequestRecords(records, now, MAX_REQUEST_RECORDS - 1), record]
 }
 
 function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
@@ -1049,6 +1053,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   for (const [jobId, serviceState] of Object.entries(serviceJobStateById)) {
     const container = (candidate.serviceJobsById as Record<string, PersistedCustodyContainer>)[jobId]
     if (!container || container.projection?.kind !== 'service' || container.projection.service !== serviceState.service) return false
+    if (container.projection.queuedAt !== serviceState.queuedAt || container.projection.startsAt !== serviceState.startedAt) return false
     if (!itemsById[serviceState.itemId]) return false
     const placement = itemPlacements[serviceState.itemId]
     if (serviceState.status === 'queued' || serviceState.status === 'active') {

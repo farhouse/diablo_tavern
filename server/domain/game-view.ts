@@ -151,7 +151,7 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
                 state: state?.status === 'active' ? 'active' : 'queued',
                 ...(state?.status === 'active'
                   ? { startedAt: state.startedAt, completesAt: state.completesAt }
-                  : { queuedAt: target.queuedAt, startsAt: target.startsAt })
+                  : { queuedAt: state?.queuedAt, startsAt: state?.startedAt })
               })
       }]
   })
