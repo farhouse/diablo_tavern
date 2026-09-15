@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-v2-cycle`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -71,6 +71,52 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(stored.ledger).toHaveLength(1)
     expect(stored.requestRecords).toHaveLength(1)
     expect(stored.itemPlacements[command.loanItemIds[0]!]).toMatchObject({ custodyKind: 'expedition' })
+  })
+
+  it('allows one Mongo winner for settlement confirmation versus expiry default', async () => {
+    const { getPersistedGameV3, mutateVisitorCycleAtomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[18]!)
+    const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
+    const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    const startedAt = new Date(initial.createdAt)
+    let id = 0
+    const prepareDependencies = { now: () => startedAt, random: () => 0.9, uuid: () => `settlement-race-${++id}` }
+    const contracted = applyVisitorCycleCommand(initial, {
+      action: 'accept_contract', visitorId, optionId, loanItemIds: [initial.stash[0]!]
+    }, prepareDependencies)
+    const contract = Object.values(contracted.visitorCycle.contracts)[0]!
+    const active = applyVisitorCycleCommand(contracted, { action: 'start_expedition', contractId: contract.contractId }, prepareDependencies)
+    active.visitorCycle.expeditions[contract.expeditionId]!.events = [{
+      eventId: 'settlement-race-event', occursAt: startedAt.toISOString(), damage: 0, gold: 100
+    }]
+    const preview = applyVisitorCycleCommand(active, { action: 'reconcile_game' }, prepareDependencies)
+    await collection.replaceOne({ userId: userIds[18] }, preview)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const beforeGold = preview.gold
+    const confirmDependencies = { ...prepareDependencies, now: () => new Date(Date.parse(settlement.expiresAt) - 1) }
+    const defaultDependencies = { ...prepareDependencies, now: () => new Date(settlement.expiresAt) }
+
+    const results = await Promise.allSettled([
+      mutateVisitorCycleAtomic(userIds[18]!, 'settlement-confirm', 0, {
+        action: 'confirm_settlement', settlementId: settlement.settlementId,
+        previewVersion: settlement.previewVersion, selectedOptionIds: []
+      }, `settlement:${settlement.settlementId}`, mapPersistedGameToGameView, confirmDependencies),
+      mutateVisitorCycleAtomic(userIds[18]!, 'settlement-default', 0, {
+        action: 'reconcile_game'
+      }, 'reconcile:0', mapPersistedGameToGameView, defaultDependencies)
+    ])
+    const stored = await getPersistedGameV3(userIds[18]!)
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')[0]).toMatchObject({
+      reason: expect.any(RevisionConflictError)
+    })
+    expect(stored.revision).toBe(1)
+    expect(stored.ledger).toHaveLength(1)
+    expect(stored.gold).toBe(beforeGold + settlement.caravanGold)
+    expect(stored.visitorCycle.settlements[settlement.settlementId]?.state).toBe('settled')
   })
 
   it('rejects stale CAS and a second requestId for one permanent business key', async () => {
