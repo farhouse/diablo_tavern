@@ -340,4 +340,98 @@ describe('atomic persisted-game mutation', () => {
     document = { ...(document as PersistedGameV3), heroes: [], processedRequests: [] }
     await expect(getSaveGame('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
+
+  it('applies V2 identification through the persisted aggregate without rerolling sealed affixes', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3('atomic-user')
+    const itemId = initial.stash[0]!
+    initial.itemsById[itemId]!.identified = false
+    initial.itemsById[itemId]!.rarity = 'magic'
+    initial.itemsById[itemId]!.affixes = [{ stat: 'attackPower', value: 7 }]
+    document = initial
+
+    const view = mapPersistedGameToGameView(initial, new Date('2026-09-15T12:00:00.000Z'))
+    expect(view.items).toContainEqual(expect.objectContaining({
+      itemId,
+      identification: 'unidentified',
+      actions: expect.arrayContaining([expect.objectContaining({ action: 'identify_item', enabled: true })])
+    }))
+    const identified = await mutateEquipmentV2Atomic('atomic-user', 'identify-v2', 0, {
+      action: 'identify_item', itemId, optionId: 'identify-standard'
+    }, fixedDeps())
+
+    expect(identified.gold).toBe(initial.gold - 50)
+    expect(identified.itemsById[itemId]!.identified).toBe(true)
+    expect(identified.itemsById[itemId]!.affixes).toEqual([{ stat: 'attackPower', value: 7 }])
+    expect(identified.itemV2ById[itemId]!.sealedAffixes).toEqual([{ stat: 'attackPower', value: 7 }])
+  })
+
+  it('queues and completes deterministic artisan service jobs exactly once', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3('atomic-user')
+    const itemId = initial.stash[0]!
+    document = initial
+
+    const queued = await mutateEquipmentV2Atomic('atomic-user', 'blacksmith-v2', 0, {
+      action: 'queue_blacksmith_job', itemId, optionId: 'blacksmith-rank-1'
+    }, fixedDeps())
+    const jobId = Object.keys(queued.serviceJobsById).find((id) => id.startsWith('blacksmith-'))!
+    expect(queued.itemPlacements[itemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: jobId })
+    expect(queued.serviceJobStateById[jobId]).toMatchObject({ status: 'active', itemId, result: { blacksmithLevel: 1 } })
+
+    const completed = await mutateEquipmentV2Atomic('atomic-user', 'complete-blacksmith-v2', 1, {
+      action: 'complete_service_job', jobId
+    }, fixedDeps(new Date('2026-09-15T12:02:00.000Z')))
+    expect(completed.itemPlacements[itemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
+    expect(completed.itemV2ById[itemId]!.blacksmithLevel).toBe(1)
+    expect(completed.serviceJobStateById[jobId]!.status).toBe('completed')
+  })
+
+  it('dismantles to materials without crediting gold', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3('atomic-user')
+    const itemId = initial.stash[0]!
+    const startingGold = initial.gold
+    document = initial
+
+    const dismantled = await mutateEquipmentV2Atomic('atomic-user', 'dismantle-v2', 0, {
+      action: 'dismantle_item',
+      itemId,
+      optionId: `dismantle-${itemId}`,
+      acknowledgementId: `ack-dismantle-${itemId}`
+    }, fixedDeps())
+
+    expect(dismantled.gold).toBe(startingGold)
+    expect(dismantled.materials.scrap).toBeGreaterThan(0)
+    expect(dismantled.itemPlacements[itemId]).toEqual({ ownerKind: 'tombstone', custodyKind: 'tombstone', custodyId: `dismantle-${itemId}` })
+  })
+
+  it('keeps one active boss imprint and appends replacement history', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3('atomic-user')
+    const itemId = initial.stash[0]!
+    initial.itemV2ById[itemId] = {
+      activeImprint: { imprintId: 'old-boss', label: 'Old boss', grantedAt: initial.createdAt },
+      pendingImprint: { imprintId: 'new-boss', label: 'New boss', grantedAt: initial.updatedAt }
+    }
+    document = initial
+
+    const replaced = await mutateEquipmentV2Atomic('atomic-user', 'imprint-v2', 0, {
+      action: 'replace_boss_imprint',
+      itemId,
+      optionId: 'replace-active-imprint',
+      acknowledgementId: `ack-imprint-${itemId}`
+    }, fixedDeps())
+
+    expect(replaced.itemV2ById[itemId]!.activeImprint?.imprintId).toBe('new-boss')
+    expect(replaced.itemV2ById[itemId]!.pendingImprint).toBeUndefined()
+    expect(replaced.itemV2ById[itemId]!.imprintHistory).toEqual([
+      { imprintId: 'old-boss', label: 'Old boss', grantedAt: initial.createdAt }
+    ])
+  })
 })
+
+function fixedDeps(now = new Date('2026-09-15T12:00:00.000Z')) {
+  return { now: () => now, uuid: () => 'fixed-id', random: () => 0.5 }
+}

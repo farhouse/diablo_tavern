@@ -4,6 +4,7 @@ import type { Item, SaveGame, VisitRound, Visitor, VisitorCommission, VisitorOff
 import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
 import { refreshVisitRound } from '~/utils/visitor-logic'
 import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
+import { applyEquipmentV2Command, type EquipmentV2Command } from '~/server/domain/equipment-v2'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -69,6 +70,31 @@ export interface PersistedCustodyContainer {
     | { kind: 'legacy_appraiser' }
 }
 
+export interface PersistedItemV2State {
+  sealedAffixes?: Item['affixes']
+  blacksmithLevel?: number
+  enchantCount?: number
+  activeImprint?: { imprintId: string; label: string; grantedAt: string }
+  pendingImprint?: { imprintId: string; label: string; grantedAt: string }
+  imprintHistory?: Array<{ imprintId: string; label: string; grantedAt: string; replacedAt?: string }>
+  provenance?: { zoneId: string; combinationId?: string; imperfectPieceId?: string; droppedAt: string }
+}
+
+export interface PersistedServiceJobState {
+  status: 'active' | 'completed' | 'failed' | 'cancelled'
+  service: 'blacksmith' | 'enchanter'
+  itemId: string
+  queuedAt: string
+  startedAt: string
+  completesAt: string
+  completedAt?: string
+  result: {
+    blacksmithLevel?: number
+    enchantCount?: number
+    affix?: Item['affixes'][number]
+  }
+}
+
 type PersistedVisitorOffer = Omit<VisitorOffer, 'item'> & { itemId: string }
 type PersistedVisitorCommission = Omit<VisitorCommission, 'rewardItem'> & { rewardItemId?: string }
 type PersistedVisitor = Omit<Visitor, 'offers' | 'commission'> & {
@@ -98,6 +124,8 @@ export interface PersistedGameV3 {
   recoveriesById: Record<string, PersistedCustodyContainer>
   settlementsById: Record<string, PersistedCustodyContainer>
   serviceJobsById: Record<string, PersistedCustodyContainer>
+  itemV2ById: Record<string, PersistedItemV2State>
+  serviceJobStateById: Record<string, PersistedServiceJobState>
   requestRecords: PersistedRequestRecord[]
   businessKeys: Record<string, string>
   ledger: PersistedLedgerEntry[]
@@ -448,6 +476,93 @@ export async function transitionItemAtomic(
   throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 }
 
+export async function mutateEquipmentV2Atomic(
+  userId: string,
+  requestId: string,
+  expectedRevision: number,
+  command: EquipmentV2Command,
+  dependencies = defaultDependencies
+): Promise<PersistedGameV3> {
+  const saves = await saveGamesCollection()
+  const operationKey = JSON.stringify(['equipment-v2', command.action, command.itemId ?? command.jobId ?? '', command.optionId ?? ''])
+  const businessKey = operationKey
+  const commandHash = hashCommand(operationKey, command)
+
+  for (let attempt = 0; attempt < MAX_MUTATE_ATTEMPTS; attempt += 1) {
+    const currentDocument = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+    if (!currentDocument) {
+      await getPersistedGameV3(userId, dependencies)
+      continue
+    }
+    if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(currentDocument) || !isPersistedCanonical(currentDocument))) {
+      const backfilled = !hasLegacyFields(currentDocument) ? backfillRetainedVisitorIdentity(currentDocument) : undefined
+      if (!backfilled || !isPersistedCanonical(backfilled)) throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
+      await saves.replaceOne({ userId, revision: currentDocument.revision } as Filter<DbSaveGame>, backfilled as unknown as DbSaveGame)
+      continue
+    }
+
+    const current = toPersistedGame(currentDocument)
+    const replay = current.requestRecords.find((record) => record.requestId === requestId)
+    if (replay) {
+      if (replay.commandHash !== commandHash) throw new IdempotencyConflictError('requestId was already used for a different command')
+      return current
+    }
+    if (current.ledger.some((entry) => entry.requestId === requestId)) {
+      throw new IdempotencyConflictError('requestId was already committed and its replay record is unavailable')
+    }
+    if (current.businessKeys[businessKey]) throw new BusinessKeyConflictError('equipment command was already committed')
+    if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
+
+    const transitioned = applyEquipmentV2Command(current, command, dependencies)
+    pruneEmptyOrphanedLifecycle(
+      transitioned.expeditionsById,
+      transitioned.settlementsById,
+      transitioned.recoveriesById,
+      transitioned.visitRound,
+      transitioned.visitHistory
+    )
+    const now = dependencies.now().toISOString()
+    transitioned.revision = expectedRevision + 1
+    transitioned.updatedAt = now
+    const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
+    transitioned.requestRecords = [...current.requestRecords, {
+      requestId, operationKey, businessKey, commandHash, response,
+      revision: transitioned.revision, createdAt: now, updatedAt: now
+    }]
+    transitioned.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
+    transitioned.ledger = [...current.ledger, {
+      at: now, requestId, operationKey, commandHash, businessKey,
+      revision: transitioned.revision,
+      goldDelta: transitioned.gold - current.gold,
+      materialDeltas: resourceDeltas(current.materials, transitioned.materials),
+      itemChanges: itemPlacementChanges(current, transitioned)
+    }]
+    if (!isPersistedCanonical(transitioned)) throw new PersistedGameCorruptError('Equipment mutation produced an invalid aggregate')
+
+    let result
+    try {
+      result = await saves.replaceOne(
+        { userId, revision: expectedRevision } as Filter<DbSaveGame>,
+        transitioned as unknown as DbSaveGame
+      )
+    } catch (error) {
+      const afterError = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+      if (afterError && isPersistedCanonical(afterError)) {
+        const exactReplay = afterError.requestRecords.find((record) => record.requestId === requestId)
+        if (exactReplay?.commandHash === commandHash) return toPersistedGame(afterError)
+      }
+      throw error
+    }
+    if (result.modifiedCount === 1) return transitioned
+    const winner = await getPersistedGameV3(userId, dependencies)
+    const winnerReplay = winner.requestRecords.find((record) => record.requestId === requestId)
+    if (winnerReplay?.commandHash === commandHash) return winner
+    throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
+  }
+
+  throw new Error('Save changed concurrently; retry with the same requestId')
+}
+
 function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
   return {
     userId: document.userId,
@@ -477,6 +592,8 @@ function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
     recoveriesById: readContainerMap(document.recoveriesById),
     settlementsById: readContainerMap(document.settlementsById),
     serviceJobsById: readContainerMap(document.serviceJobsById),
+    itemV2ById: readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById),
+    serviceJobStateById: readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById),
     requestRecords: Array.isArray((document as { requestRecords?: unknown }).requestRecords)
       ? [...((document as { requestRecords: PersistedRequestRecord[] }).requestRecords)]
       : [],
@@ -671,6 +788,8 @@ export function buildPersistedFromPublic(
     recoveriesById,
     settlementsById,
     serviceJobsById,
+    itemV2ById: structuredClone(previous?.itemV2ById ?? {}),
+    serviceJobStateById: structuredClone(previous?.serviceJobStateById ?? {}),
     requestRecords: structuredClone(previous?.requestRecords ?? []),
     businessKeys: structuredClone(previous?.businessKeys ?? {}),
     ledger: structuredClone(previous?.ledger ?? [])
@@ -695,7 +814,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     '_id', 'userId', 'schemaVersion', 'gold', 'materials', 'caravan', 'stashLimit', 'stash',
     'unlockedRegionIds', 'visitRound', 'visitHistory', 'revision', 'createdAt', 'updatedAt',
     'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById',
-    'serviceJobsById', 'requestRecords', 'businessKeys', 'ledger'
+    'serviceJobsById', 'itemV2ById', 'serviceJobStateById', 'requestRecords', 'businessKeys', 'ledger'
   ])) return false
 
   const stash = (document as { stash?: unknown }).stash
@@ -707,6 +826,8 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     settlement: candidate.settlementsById,
     service: candidate.serviceJobsById
   }
+  const itemV2ById = (candidate as { itemV2ById?: unknown }).itemV2ById
+  const serviceJobStateById = (candidate as { serviceJobStateById?: unknown }).serviceJobStateById
 
   if (candidate.schemaVersion !== SAVE_SCHEMA_VERSION) return false
   if (!Array.isArray(stash) || !isPlainRecord(itemsById) || !isPlainRecord(itemPlacements)) return false
@@ -731,6 +852,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   if (visitorIds.size !== visitors.length) return false
   const visitorContracts = new Map(visitors.map((visitor) => [visitor.id, visitor.commission?.id]))
   if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
+  if (!isItemV2Map(itemV2ById) || !isServiceJobStateMap(serviceJobStateById)) return false
   const expeditions = Object.values(candidate.expeditionsById as Record<string, PersistedCustodyContainer>)
   const settlements = Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)
   const recoveries = Object.values(candidate.recoveriesById as Record<string, PersistedCustodyContainer>)
@@ -841,6 +963,17 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
         if (!placement || placement.custodyKind !== kind || placement.custodyId !== container.id) return false
       }
     }
+  }
+  for (const [itemId] of Object.entries(itemV2ById)) {
+    if (!itemsById[itemId]) return false
+  }
+  for (const [jobId, serviceState] of Object.entries(serviceJobStateById)) {
+    const container = (candidate.serviceJobsById as Record<string, PersistedCustodyContainer>)[jobId]
+    if (!container || container.projection?.kind !== 'service' || container.projection.service !== serviceState.service) return false
+    if (!itemsById[serviceState.itemId]) return false
+    if (Date.parse(serviceState.startedAt) < Date.parse(serviceState.queuedAt)) return false
+    if (Date.parse(serviceState.completesAt) < Date.parse(serviceState.startedAt)) return false
+    if (serviceState.status === 'completed' && !serviceState.completedAt) return false
   }
   if (Object.values(itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length > Number(candidate.stashLimit)) return false
 
@@ -1071,6 +1204,14 @@ function readContainerMap(value: unknown): Record<string, PersistedCustodyContai
   return isContainerMap(value) ? structuredClone(value) : {}
 }
 
+function readItemV2Map(value: unknown): Record<string, PersistedItemV2State> {
+  return isItemV2Map(value) ? structuredClone(value) : {}
+}
+
+function readServiceJobStateMap(value: unknown): Record<string, PersistedServiceJobState> {
+  return isServiceJobStateMap(value) ? structuredClone(value) : {}
+}
+
 function isContainerMap(value: unknown): value is Record<string, PersistedCustodyContainer> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   return Object.entries(value as Record<string, unknown>).every(([id, entry]) => {
@@ -1082,6 +1223,59 @@ function isContainerMap(value: unknown): value is Record<string, PersistedCustod
       && container.itemIds.every((itemId) => typeof itemId === 'string' && Boolean(itemId))
       && (container.projection === undefined || isCustodyProjection(container.projection))
   })
+}
+
+function isItemV2Map(value: unknown): value is Record<string, PersistedItemV2State> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value as Record<string, unknown>).every((entry) => {
+    if (!isPlainRecord(entry) || !hasOnlyKeys(entry, [
+      'sealedAffixes', 'blacksmithLevel', 'enchantCount', 'activeImprint', 'pendingImprint', 'imprintHistory', 'provenance'
+    ])) return false
+    if (entry.sealedAffixes !== undefined && (!Array.isArray(entry.sealedAffixes)
+      || !entry.sealedAffixes.every(isAffix))) return false
+    if (entry.blacksmithLevel !== undefined && (!Number.isInteger(entry.blacksmithLevel) || Number(entry.blacksmithLevel) < 0)) return false
+    if (entry.enchantCount !== undefined && (!Number.isInteger(entry.enchantCount) || Number(entry.enchantCount) < 0)) return false
+    if (entry.activeImprint !== undefined && !isImprint(entry.activeImprint, false)) return false
+    if (entry.pendingImprint !== undefined && !isImprint(entry.pendingImprint, false)) return false
+    if (entry.imprintHistory !== undefined && (!Array.isArray(entry.imprintHistory)
+      || !entry.imprintHistory.every((imprint) => isImprint(imprint, true)))) return false
+    return entry.provenance === undefined || (isPlainRecord(entry.provenance)
+      && hasOnlyKeys(entry.provenance, ['zoneId', 'combinationId', 'imperfectPieceId', 'droppedAt'])
+      && typeof entry.provenance.zoneId === 'string' && Boolean(entry.provenance.zoneId)
+      && (entry.provenance.combinationId === undefined || typeof entry.provenance.combinationId === 'string')
+      && (entry.provenance.imperfectPieceId === undefined || typeof entry.provenance.imperfectPieceId === 'string')
+      && Number.isFinite(Date.parse(String(entry.provenance.droppedAt))))
+  })
+}
+
+function isServiceJobStateMap(value: unknown): value is Record<string, PersistedServiceJobState> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value as Record<string, unknown>).every((entry) => isPlainRecord(entry)
+    && hasOnlyKeys(entry, ['status', 'service', 'itemId', 'queuedAt', 'startedAt', 'completesAt', 'completedAt', 'result'])
+    && ['active', 'completed', 'failed', 'cancelled'].includes(String(entry.status))
+    && ['blacksmith', 'enchanter'].includes(String(entry.service))
+    && typeof entry.itemId === 'string' && Boolean(entry.itemId)
+    && ['queuedAt', 'startedAt', 'completesAt'].every((key) => Number.isFinite(Date.parse(String(entry[key]))))
+    && (entry.completedAt === undefined || Number.isFinite(Date.parse(String(entry.completedAt))))
+    && isPlainRecord(entry.result)
+    && hasOnlyKeys(entry.result, ['blacksmithLevel', 'enchantCount', 'affix'])
+    && (entry.result.blacksmithLevel === undefined || (Number.isInteger(entry.result.blacksmithLevel) && Number(entry.result.blacksmithLevel) >= 0))
+    && (entry.result.enchantCount === undefined || (Number.isInteger(entry.result.enchantCount) && Number(entry.result.enchantCount) >= 0))
+    && (entry.result.affix === undefined || isAffix(entry.result.affix)))
+}
+
+function isAffix(value: unknown): boolean {
+  return isPlainRecord(value) && hasOnlyKeys(value, ['stat', 'value'])
+    && typeof value.stat === 'string' && Number.isFinite(value.value)
+}
+
+function isImprint(value: unknown, allowReplacedAt: boolean): boolean {
+  return isPlainRecord(value)
+    && hasOnlyKeys(value, allowReplacedAt ? ['imprintId', 'label', 'grantedAt', 'replacedAt'] : ['imprintId', 'label', 'grantedAt'])
+    && typeof value.imprintId === 'string' && Boolean(value.imprintId)
+    && typeof value.label === 'string' && Boolean(value.label)
+    && Number.isFinite(Date.parse(String(value.grantedAt)))
+    && (value.replacedAt === undefined || Number.isFinite(Date.parse(String(value.replacedAt))))
 }
 
 function isCustodyProjection(value: unknown): boolean {
@@ -1160,7 +1354,7 @@ function isPublicVisitor(value: unknown): boolean {
 function containsInternalFields(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const keys = new Set(Object.keys(value as object))
-  if (['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById', 'serviceJobsById', 'processedRequestIds', 'processedRequests', 'outcomeRoll']
+  if (['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById', 'serviceJobsById', 'itemV2ById', 'serviceJobStateById', 'processedRequestIds', 'processedRequests', 'outcomeRoll']
     .some((key) => keys.has(key))) return true
   return Object.values(value as Record<string, unknown>).some(containsInternalFields)
 }
@@ -1319,7 +1513,7 @@ export function sanitizeGameResponse(save: SaveGame): SaveGame {
 function stripPrivateFields(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripPrivateFields)
   if (value && typeof value === 'object') {
-    const privateKeys = new Set(['_id', 'userId', '_effectiveCapacityUsed', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'processedRequestIds', 'processedRequests', 'outcomeRoll'])
+    const privateKeys = new Set(['_id', 'userId', '_effectiveCapacityUsed', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'itemV2ById', 'serviceJobStateById', 'processedRequestIds', 'processedRequests', 'outcomeRoll'])
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
       .filter(([key, entry]) => entry !== undefined && !privateKeys.has(key))
       .map(([key, entry]) => [key, stripPrivateFields(entry)]))

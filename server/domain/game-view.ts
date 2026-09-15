@@ -6,6 +6,14 @@ import {
   type PersistedGameV3,
   type PersistedItemPlacement
 } from '~/server/utils/savegame'
+import {
+  canUseEquipmentService,
+  getBlacksmithOption,
+  getDismantleOption,
+  getEnchanterOption,
+  getIdentifyOption,
+  getImprintOption
+} from '~/server/domain/equipment-v2'
 
 export interface GameView {
   contractVersion: 'v2-etapa0-3'
@@ -39,10 +47,10 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     if (placement.custodyKind === 'service') {
       const target = game.serviceJobsById[placement.custodyId ?? '']
       if (target?.projection?.kind === 'legacy_appraiser') {
-        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' }, game)]
+        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' }, game, now)]
       }
     }
-    return [mapItem(item, placement, game)]
+    return [mapItem(item, placement, game, now)]
   })
   const visitors: unknown[] = [game.visitRound, ...game.visitHistory].flatMap<unknown>((round) => round.slots.flatMap<unknown>((slot) => {
     const visitor = slot.visitor
@@ -116,14 +124,27 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
       state: 'recovered', actions: [], resolvedAt: target.resolvedAt, recoveredItemIds: [...container.itemIds]
     }]
   })
-  const serviceJobs = Object.values(game.serviceJobsById).flatMap((container) => {
+  const serviceJobs: unknown[] = Object.values(game.serviceJobsById).flatMap<unknown>((container) => {
     const target = container.projection
     if (target?.kind !== 'service') return []
-    return container.itemIds.slice(0, 1).map((itemId) => ({
-      jobId: container.id, itemId, service: target.service, state: 'queued',
-      label: { key: `service.${container.id}`, fallback: 'Servicio de artesano' }, actions: [],
-      queuedAt: target.queuedAt, startsAt: target.startsAt
-    }))
+      const state = game.serviceJobStateById[container.id]
+      const itemId = container.itemIds[0] ?? state?.itemId
+      if (!itemId) return []
+      const base = {
+        jobId: container.id, itemId, service: target.service,
+        label: { key: `service.${container.id}`, fallback: 'Servicio de artesano' },
+        actions: []
+      }
+      if (state?.status === 'completed') {
+        return [{ ...base, state: 'completed', completedAt: state.completedAt ?? state.completesAt, resultText: { key: `service.${container.id}.result`, fallback: 'Servicio completado' } }]
+      }
+      return [{
+        ...base,
+        state: state?.status === 'active' ? 'active' : 'queued',
+        ...(state?.status === 'active'
+          ? { startedAt: state.startedAt, completesAt: state.completesAt }
+          : { queuedAt: target.queuedAt, startsAt: target.startsAt })
+      }]
   })
   const view: GameView = {
     contractVersion: 'v2-etapa0-3',
@@ -210,7 +231,8 @@ function assertUnique(values: Array<Record<string, unknown>>, key: string): void
   if (new Set(ids).size !== ids.length) throw new Error(`Duplicate public ${key}`)
 }
 
-function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3): Record<string, unknown> {
+function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3, now: Date): Record<string, unknown> {
+  const actions = itemActions(item, placement, game, now)
   const base = {
     itemId: item.id,
     name: { key: `item.${item.baseName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, fallback: item.displayName },
@@ -221,7 +243,7 @@ function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedG
       ? { kind: 'visitor', visitorId: placement.ownerId }
       : { kind: 'caravan' },
     custody: mapCustody(placement, game),
-    actions: []
+    actions
   }
   if (!item.identified) return { ...base, identification: 'unidentified' }
   return {
@@ -232,7 +254,96 @@ function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedG
       name: { key: `affix.${affix.stat}`, fallback: affix.stat },
       valueText: { key: `affix.${affix.stat}.value`, fallback: String(affix.value) }
     })),
-    activeImprint: null
+    activeImprint: mapImprint(game.itemV2ById[item.id]?.activeImprint)
+  }
+}
+
+function itemActions(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3, now: Date): unknown[] {
+  if (!canUseEquipmentService(game, item.id) || placement.ownerKind !== 'caravan' || placement.custodyKind !== 'stash') return []
+  const expiresAt = new Date(now.getTime() + 5 * 60_000).toISOString()
+  const state = game.itemV2ById[item.id]
+  const actions: unknown[] = []
+  if (!item.identified) {
+    const option = getIdentifyOption(item)
+    actions.push(sealedAction('identify_item', item.id, 'Identificar', [{
+      optionId: option.optionId, expiresAt,
+      label: text('identify.label', 'Identificar'),
+      description: text('identify.description', `Cuesta ${option.gold} oro`),
+      consequences: option.gold > 0 ? [spendGold(option.gold)] : []
+    }]))
+    return actions
+  }
+
+  const blacksmith = getBlacksmithOption(item, state)
+  actions.push(sealedAction('queue_blacksmith_job', item.id, 'Herrero', [{
+    optionId: blacksmith.optionId, expiresAt,
+    label: text('blacksmith.label', 'Mejorar en herrero'),
+    description: text('blacksmith.description', `Cuesta ${blacksmith.gold} oro`),
+    consequences: [spendGold(blacksmith.gold)]
+  }]))
+
+  const enchanter = getEnchanterOption(item, state)
+  actions.push(sealedAction('queue_enchanter_job', item.id, 'Encantador', [{
+    optionId: enchanter.optionId, expiresAt,
+    label: text('enchanter.label', 'Encantar'),
+    description: text('enchanter.description', `Cuesta ${enchanter.gold} oro`),
+    consequences: [spendGold(enchanter.gold)]
+  }]))
+
+  const dismantle = getDismantleOption(item)
+  actions.push(sealedAction('dismantle_item', item.id, 'Desmantelar', [{
+    optionId: dismantle.optionId, expiresAt,
+    label: text('dismantle.label', 'Desmantelar'),
+    description: text('dismantle.description', 'Convierte el objeto en materiales'),
+    consequences: [destroyItem(item.id)],
+    acknowledgement: { acknowledgementId: dismantle.acknowledgementId, expiresAt, text: text('dismantle.ack', 'Confirmar desmantelado irreversible') }
+  }]))
+
+  const imprint = getImprintOption(item, state)
+  if (imprint) {
+    actions.push(sealedAction('replace_boss_imprint', item.id, 'Reemplazar impronta', [{
+      optionId: imprint.optionId, expiresAt,
+      label: text('imprint.label', 'Reemplazar impronta'),
+      description: text('imprint.description', 'Activa la impronta pendiente'),
+      consequences: [],
+      acknowledgement: { acknowledgementId: imprint.acknowledgementId, expiresAt, text: text('imprint.ack', 'Confirmar reemplazo de impronta') }
+    }]))
+  }
+
+  return actions
+}
+
+function sealedAction(action: string, itemId: string, label: string, options: unknown[]): Record<string, unknown> {
+  return {
+    authorizationId: `auth-${action}-${itemId}`,
+    action,
+    enabled: true,
+    label: text(`${action}.label`, label),
+    consequences: [],
+    targetId: itemId,
+    execution: { itemId, options }
+  }
+}
+
+function text(key: string, fallback: string): Record<string, string> {
+  return { key, fallback }
+}
+
+function spendGold(amount: number): Record<string, unknown> {
+  return { kind: 'spend_resource', irreversible: true, resourceId: 'gold', amount, text: text('resource.gold.spend', `${amount} oro`) }
+}
+
+function destroyItem(itemId: string): Record<string, unknown> {
+  return { kind: 'destroy_items', irreversible: true, itemIds: [itemId], text: text('item.destroy', 'El objeto se destruye') }
+}
+
+function mapImprint(imprint: PersistedGameV3['itemV2ById'][string]['activeImprint']): Record<string, unknown> | null {
+  if (!imprint) return null
+  return {
+    imprintId: imprint.imprintId,
+    bossId: 'act-boss',
+    name: text(`imprint.${imprint.imprintId}`, imprint.label),
+    effectText: text(`imprint.${imprint.imprintId}.effect`, imprint.label)
   }
 }
 

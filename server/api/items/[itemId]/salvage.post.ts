@@ -1,14 +1,13 @@
 import { requireUser } from '~/server/utils/auth'
-import { mutateSaveGameAtomic } from '~/server/utils/savegame'
-import { mutationError, operationKey, readMutation } from '~/server/utils/visitor-api'
-import { salvageItem } from '~/utils/visitor-logic'
+import { transitionItemAtomic } from '~/server/utils/savegame'
+import { mutationError, readMutation } from '~/server/utils/visitor-api'
 
 export default defineEventHandler(async (event) => {
   const user = await requireUser(event)
   const itemId = getRouterParam(event, 'itemId') || ''
   const body = await readMutation(event)
   try {
-    return await mutateSaveGameAtomic(user.id, body.requestId, operationKey('salvage', itemId), body.expectedRevision, body, (save, deps) => salvageItem(save, itemId, deps.now()))
+    return await transitionItemAtomic(user.id, body.requestId, body.expectedRevision, { operation: 'dismantle', itemId, targetId: `legacy-salvage-${itemId}` })
   } catch (error) {
     mutationError(error, 'Cannot salvage item')
   }
