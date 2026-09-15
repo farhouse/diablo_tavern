@@ -40,7 +40,7 @@ export function toPublicApiError(error: unknown): PublicApiErrorDefinition {
       code: 'internal_corruption', retryable: false
     })
   }
-  if (error instanceof V2ValidationError) {
+  if (error instanceof V2ValidationError || (error instanceof Error && error.name === 'V2ValidationError')) {
     return definition(400, 'The request is invalid', {
       code: 'validation_error', retryable: false
     })

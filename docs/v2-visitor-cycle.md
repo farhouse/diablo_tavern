@@ -29,7 +29,7 @@ The old commission and claim routes are tombstones and return `TERMINAL_ENTITY`.
 
 ## Persistence and rollout
 
-`visitorCycle` is an additive field on `PersistedGameV3`. Existing valid V3 documents are backfilled through revision-guarded replacement; no game reset or destructive migration is required. The existing Mongo configuration is unchanged.
+`visitorCycle` is an additive field on `PersistedGameV3`. Existing valid V3 documents are backfilled through revision-guarded replacement; no game reset or destructive migration is required. Active legacy commissions become sealed V2 expeditions, while ready commissions become effect-free V2 settlement previews that preserve pending gold and reward-item custody. Terminal visitors are archived, and replacement visitors are materialized only by explicit reconciliation. The existing Mongo configuration is unchanged.
 
 ## Verification
 

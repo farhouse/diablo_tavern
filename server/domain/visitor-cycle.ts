@@ -12,13 +12,14 @@ import type {
   VisitorView
 } from '~/shared/types/v2-game-view'
 import { V2DomainRuleError } from '~/shared/errors/v2-domain'
-import type { PersistenceDependencies, PersistedGameV3 } from '~/server/utils/savegame'
+import type { PersistenceDependencies, PersistedGameV3, PersistedVisitorCommission } from '~/server/utils/savegame'
 
 const CONTRACT_TTL_MS = 24 * 60 * 60 * 1000
 const SETTLEMENT_TTL_MS = 5 * 60 * 1000
 const RECOVERY_TTL_MS = 24 * 60 * 60 * 1000
 const RECOVERY_DURATION_MS = 60 * 1000
 const MAX_HP = 18
+const ACTIVE_VISITOR_TARGET = 2
 
 export interface PersistedContractOption extends ContractOptionView {
   expiresAt: string
@@ -91,6 +92,7 @@ export interface PersistedCycleSettlement {
   caravanGold: number
   visitorGold: number
   loanItemIds: string[]
+  rewardItemIds: string[]
   choiceGroups: ChoiceGroup[]
   departureSignal: 'unlikely' | 'possible' | 'likely'
   departureResolution: 'stays' | 'departs' | 'dead'
@@ -136,26 +138,108 @@ export class VisitorCycleError extends V2DomainRuleError {
 }
 
 export function createVisitorCycle(game: Pick<PersistedGameV3, 'visitRound' | 'visitHistory' | 'createdAt'>): PersistedVisitorCycle {
+  const cycle: PersistedVisitorCycle = { visitors: {}, contracts: {}, expeditions: {}, settlements: {}, recoveries: {} }
   const visitors: Record<string, PersistedCycleVisitor> = {}
   for (const round of [game.visitRound, ...game.visitHistory]) {
     for (const slot of round.slots) {
       const source = slot.visitor
       if (!source || visitors[source.id]) continue
       const departed = source.state === 'departed'
-      visitors[source.id] = {
+      const cycleVisitor: PersistedCycleVisitor = {
         visitorId: source.id,
         name: source.name,
         state: departed ? 'departed' : 'available',
         departureSignal: 'possible',
-        contractOptions: departed ? [] : contractOptions(source.id, game.createdAt),
+        contractOptions: departed ? [] : contractOptions(source.id, game.createdAt, 0),
         ...(departed ? {
           departedAt: source.departedAt ?? game.createdAt,
           lastExpeditionId: source.commission?.id ?? `legacy-${source.id}`
         } : {})
       }
+      visitors[source.id] = cycleVisitor
+      if (!departed && source.commission && source.commission.status !== 'claimed') {
+        migrateLegacyCommission(cycle, cycleVisitor, source.commission)
+      }
     }
   }
-  return { visitors, contracts: {}, expeditions: {}, settlements: {}, recoveries: {} }
+  cycle.visitors = visitors
+  return cycle
+}
+
+function migrateLegacyCommission(
+  cycle: PersistedVisitorCycle,
+  visitor: PersistedCycleVisitor,
+  commission: PersistedVisitorCommission
+): void {
+  const contractId = commission.id
+  const expeditionId = commission.id
+  const option: PersistedContractOption = {
+    optionId: `${visitor.visitorId}:legacy:${commission.id}`,
+    label: text('contract.legacy', commission.title),
+    description: text('contract.legacy.description', commission.failureConsequence),
+    durationSeconds: Math.max(1, Math.ceil(commission.durationMs / 1000)),
+    caravanGoldShareBps: 10_000,
+    lootPriority: 'caravan_first',
+    retreatThreshold: 10,
+    loanFeeGold: 0,
+    consequences: [],
+    expiresAt: new Date(Date.parse(commission.startedAt) + CONTRACT_TTL_MS).toISOString()
+  }
+  const outcome = commission.outcome === 'complete'
+    ? 'returned'
+    : commission.outcome === 'partial' ? 'retreated'
+      : commission.outcome === 'failed' ? 'death'
+        : commission.outcomeRoll <= commission.successChance ? 'returned'
+          : commission.outcomeRoll <= Math.min(0.97, commission.successChance + 0.25) ? 'retreated' : 'death'
+  const grossGold = commission.rewardGold ?? (outcome === 'returned'
+    ? commission.fullRewardGold
+    : outcome === 'retreated' ? commission.partialRewardGold : 0)
+  const damage = outcome === 'death' ? MAX_HP : outcome === 'retreated' ? MAX_HP - 10 : 0
+  const event: PersistedExpeditionEvent = {
+    eventId: `legacy-event-${commission.id}`, occursAt: commission.finishesAt, damage, gold: grossGold
+  }
+  cycle.contracts[contractId] = {
+    contractId, visitorId: visitor.visitorId, option, loanItemIds: [], acceptedAt: commission.startedAt,
+    departureResolution: 'stays', expeditionId
+  }
+  if (commission.status === 'active') {
+    cycle.expeditions[expeditionId] = {
+      expeditionId, visitorId: visitor.visitorId, contractId, state: 'active', startsAt: commission.startedAt,
+      startedAt: commission.startedAt, nextEventIndex: 0, currentHp: MAX_HP, maxHp: MAX_HP,
+      events: [event], grossGold: 0
+    }
+    visitor.state = 'away'
+    visitor.contractId = contractId
+    visitor.expeditionId = expeditionId
+    return
+  }
+
+  const settlementId = commission.id
+  const rewardItemIds = commission.rewardItemId ? [commission.rewardItemId] : []
+  const choiceGroups: ChoiceGroup[] = rewardItemIds.length === 0 ? [] : [{
+    groupId: `legacy-reward-${commission.id}`, required: true, defaultOptionId: `keep-${commission.rewardItemId}`,
+    label: text('settlement.legacy.reward', 'Recompensa pendiente'),
+    options: [{
+      optionId: `keep-${commission.rewardItemId}`, label: text('settlement.legacy.keep', 'Guardar recompensa'),
+      itemIds: rewardItemIds, capacityDelta: 0, consequences: []
+    }]
+  }]
+  cycle.expeditions[expeditionId] = {
+    expeditionId, visitorId: visitor.visitorId, contractId, state: 'awaiting_settlement', startsAt: commission.startedAt,
+    startedAt: commission.startedAt, nextEventIndex: 1, currentHp: Math.max(0, MAX_HP - damage), maxHp: MAX_HP,
+    events: [event], grossGold, outcome, resolvedAt: commission.finishesAt, settlementId
+  }
+  cycle.settlements[settlementId] = {
+    settlementId, expeditionId, state: 'preview_ready', previewVersion: 1, outcome,
+    createdAt: commission.finishesAt, expiresAt: new Date(Date.parse(commission.finishesAt) + SETTLEMENT_TTL_MS).toISOString(),
+    grossGold, caravanGold: grossGold, visitorGold: 0, loanItemIds: [], rewardItemIds, choiceGroups,
+    departureSignal: visitor.departureSignal, departureResolution: outcome === 'death' ? 'dead' : 'stays'
+  }
+  visitor.state = 'awaiting_settlement'
+  visitor.contractId = contractId
+  visitor.expeditionId = expeditionId
+  visitor.settlementId = settlementId
+  visitor.outcome = outcome
 }
 
 export function isVisitorCycle(value: unknown): value is PersistedVisitorCycle {
@@ -165,12 +249,13 @@ export function isVisitorCycle(value: unknown): value is PersistedVisitorCycle {
   if (![cycle.visitors, cycle.contracts, cycle.expeditions, cycle.settlements, cycle.recoveries]
     .every((entry) => isRecord(entry))) return false
   const typed = value as unknown as PersistedVisitorCycle
-  return Object.entries(typed.visitors).every(([id, visitor]) => id === visitor.visitorId && isCycleVisitor(visitor))
+  const valid = Object.entries(typed.visitors).every(([id, visitor]) => id === visitor.visitorId && isCycleVisitor(visitor))
     && Object.entries(typed.contracts).every(([id, contract]) => id === contract.contractId && isContract(contract))
     && Object.entries(typed.expeditions).every(([id, expedition]) => id === expedition.expeditionId && isExpedition(expedition))
     && Object.entries(typed.settlements).every(([id, settlement]) => id === settlement.settlementId && isSettlement(settlement))
     && Object.entries(typed.recoveries).every(([id, recovery]) => id === recovery.recoveryId && isRecovery(recovery))
     && validateCycleReferences(typed)
+  return valid
 }
 
 export function applyVisitorCycleCommand(
@@ -279,7 +364,7 @@ function startExpedition(game: PersistedGameV3, contractId: string, now: Date, d
 export function reconcileGame(game: PersistedGameV3, now: Date, deps: PersistenceDependencies): void {
   for (const visitor of Object.values(game.visitorCycle.visitors)) {
     if (visitor.state === 'available' && visitor.contractOptions.every((option) => now.getTime() >= Date.parse(option.expiresAt))) {
-      visitor.contractOptions = contractOptions(visitor.visitorId, now.toISOString())
+      visitor.contractOptions = contractOptions(visitor.visitorId, now.toISOString(), contractCount(game.visitorCycle, visitor.visitorId))
     }
   }
   for (const expedition of Object.values(game.visitorCycle.expeditions)) {
@@ -311,6 +396,7 @@ export function reconcileGame(game: PersistedGameV3, now: Date, deps: Persistenc
       resolveRecovery(game, recovery, now)
     }
   }
+  ensureAvailableVisitors(game.visitorCycle, now, deps)
 }
 
 function resolveExpedition(
@@ -339,12 +425,14 @@ function resolveExpedition(
     createdAt: resolvedAt, expiresAt: new Date(Date.parse(resolvedAt) + SETTLEMENT_TTL_MS).toISOString(),
     grossGold: gross, caravanGold, visitorGold: gross - caravanGold,
     loanItemIds: [...contract.loanItemIds], choiceGroups: [], departureSignal: visitor.departureSignal,
+    rewardItemIds: [],
     departureResolution: outcome === 'death' ? 'dead' : contract.departureResolution
   }
   game.visitorCycle.settlements[settlementId] = settlement
   game.settlementsById[settlementId] = {
     id: settlementId, itemIds: [], projection: { kind: 'settlement', expeditionId: expedition.expeditionId, outcome, appliedAt: resolvedAt }
   }
+  retireLegacyCommission(game, visitor.visitorId, expedition.expeditionId)
 }
 
 function confirmSettlement(
@@ -374,6 +462,10 @@ function applySettlement(
   if (!expedition) throw new Error(`Missing expedition ${settlement.expeditionId}`)
   const visitor = requireVisitor(game.visitorCycle, expedition.visitorId)
   game.gold += settlement.caravanGold
+  for (const itemId of settlement.rewardItemIds) {
+    moveItem(game, itemId, { ownerKind: 'caravan', custodyKind: 'stash' })
+  }
+  retireLegacyCommission(game, visitor.visitorId, expedition.expeditionId)
   let recoveryId: string | undefined
   if (settlement.outcome === 'death') {
     recoveryId = `recovery-${deps.uuid()}`
@@ -405,19 +497,65 @@ function applySettlement(
     visitor.state = 'dead'
     visitor.diedAt = now.toISOString()
     visitor.recoveryId = recoveryId!
+    archiveLegacyVisitor(game, visitor.visitorId, now)
   } else if (settlement.departureResolution === 'departs') {
     visitor.state = 'departed'
     visitor.departedAt = now.toISOString()
     visitor.lastExpeditionId = expedition.expeditionId
     visitor.contractOptions = []
+    archiveLegacyVisitor(game, visitor.visitorId, now)
   } else {
     visitor.state = 'available'
-    visitor.contractOptions = contractOptions(visitor.visitorId, now.toISOString())
+    visitor.contractOptions = contractOptions(visitor.visitorId, now.toISOString(), contractCount(game.visitorCycle, visitor.visitorId))
   }
   delete visitor.contractId
   if (settlement.departureResolution !== 'dead') delete visitor.expeditionId
   delete visitor.settlementId
   delete visitor.outcome
+}
+
+function retireLegacyCommission(game: PersistedGameV3, visitorId: string, expeditionId: string): void {
+  for (const round of [game.visitRound, ...game.visitHistory]) {
+    const legacyVisitor = round.slots.find((slot) => slot.visitor?.id === visitorId)?.visitor
+    if (legacyVisitor?.commission?.id !== expeditionId) continue
+    legacyVisitor.state = 'traded'
+    delete legacyVisitor.commission
+  }
+}
+
+function ensureAvailableVisitors(cycle: PersistedVisitorCycle, now: Date, deps: PersistenceDependencies): void {
+  let activeCount = Object.values(cycle.visitors).filter((visitor) => visitor.state !== 'departed' && visitor.state !== 'dead').length
+  while (activeCount < ACTIVE_VISITOR_TARGET) {
+    let visitorId = `visitor-${deps.uuid()}`
+    let suffix = 1
+    while (cycle.visitors[visitorId]) visitorId = `visitor-${deps.uuid()}-${suffix++}`
+    cycle.visitors[visitorId] = {
+      visitorId,
+      name: `Mercenario ${activeCount + 1}`,
+      state: 'available',
+      departureSignal: 'possible',
+      contractOptions: contractOptions(visitorId, now.toISOString(), 0)
+    }
+    activeCount += 1
+  }
+}
+
+function archiveLegacyVisitor(game: PersistedGameV3, visitorId: string, now: Date): void {
+  const slot = game.visitRound.slots.find((entry) => entry.visitor?.id === visitorId)
+  if (!slot?.visitor) return
+  slot.visitor.state = 'departed'
+  slot.visitor.departedAt = now.toISOString()
+  game.visitHistory.unshift({
+    id: `${game.visitRound.id}:${visitorId}`,
+    number: game.visitRound.number,
+    slots: game.visitRound.slots.map((entry) => entry.id === slot.id
+      ? { id: entry.id, visitor: structuredClone(slot.visitor!) }
+      : { id: entry.id }),
+    createdAt: now.toISOString()
+  })
+  game.visitHistory = game.visitHistory.slice(0, 20)
+  delete slot.visitor
+  delete slot.nextArrivalCheckAt
 }
 
 function assignRecovery(
@@ -629,22 +767,26 @@ function enabledAction(
   } as ActionAvailability
 }
 
-function contractOptions(visitorId: string, from: string): PersistedContractOption[] {
+function contractOptions(visitorId: string, from: string, sequence: number): PersistedContractOption[] {
   const expiresAt = new Date(Date.parse(from) + CONTRACT_TTL_MS).toISOString()
   return [
     {
-      optionId: `${visitorId}:standard`, label: text('contract.standard', 'Contrato estándar'),
+      optionId: `${visitorId}:${sequence}:standard`, label: text('contract.standard', 'Contrato estándar'),
       description: text('contract.standard.description', 'Reparto equilibrado con retirada segura'),
       durationSeconds: 90, caravanGoldShareBps: 2500, lootPriority: 'caravan_first', retreatThreshold: 10,
       loanFeeGold: 2, consequences: [], expiresAt
     },
     {
-      optionId: `${visitorId}:bold`, label: text('contract.bold', 'Contrato arriesgado'),
+      optionId: `${visitorId}:${sequence}:bold`, label: text('contract.bold', 'Contrato arriesgado'),
       description: text('contract.bold.description', 'Más exposición y sin retirada por vida'),
       durationSeconds: 150, caravanGoldShareBps: 2500, lootPriority: 'visitor_first', retreatThreshold: null,
       loanFeeGold: 3, consequences: [], expiresAt
     }
   ]
+}
+
+function contractCount(cycle: PersistedVisitorCycle, visitorId: string): number {
+  return Object.values(cycle.contracts).filter((contract) => contract.visitorId === visitorId).length
 }
 
 function publicContractOption(option: PersistedContractOption): ContractOptionView {
@@ -732,42 +874,241 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
 }
 
 function isCycleVisitor(value: unknown): value is PersistedCycleVisitor {
-  return isRecord(value) && typeof value.visitorId === 'string' && typeof value.name === 'string'
-    && ['available', 'negotiating', 'contracted', 'away', 'awaiting_settlement', 'departed', 'dead'].includes(String(value.state))
-    && ['unlikely', 'possible', 'likely'].includes(String(value.departureSignal)) && Array.isArray(value.contractOptions)
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'visitorId', 'name', 'state', 'departureSignal', 'contractOptions', 'negotiationId', 'expiresAt',
+    'contractId', 'expeditionId', 'settlementId', 'outcome', 'departedAt', 'diedAt', 'recoveryId',
+    'lastExpeditionId', 'busyRecoveryId'
+  ])) return false
+  if (!isId(value.visitorId) || !isId(value.name)
+    || !['available', 'negotiating', 'contracted', 'away', 'awaiting_settlement', 'departed', 'dead'].includes(String(value.state))
+    || !['unlikely', 'possible', 'likely'].includes(String(value.departureSignal))
+    || !Array.isArray(value.contractOptions) || !value.contractOptions.every(isContractOption)) return false
+  if (value.busyRecoveryId !== undefined && !isId(value.busyRecoveryId)) return false
+  const common = ['visitorId', 'name', 'state', 'departureSignal', 'contractOptions', 'busyRecoveryId']
+  switch (value.state) {
+    case 'available': return hasOnlyKeys(value, common)
+    case 'negotiating': return hasOnlyKeys(value, [...common, 'negotiationId', 'expiresAt'])
+      && isId(value.negotiationId) && isUtc(value.expiresAt)
+    case 'contracted': return hasOnlyKeys(value, [...common, 'contractId']) && isId(value.contractId)
+    case 'away': return hasOnlyKeys(value, [...common, 'contractId', 'expeditionId'])
+      && isId(value.contractId) && isId(value.expeditionId)
+    case 'awaiting_settlement': return hasOnlyKeys(value, [...common, 'contractId', 'expeditionId', 'settlementId', 'outcome'])
+      && isId(value.contractId) && isId(value.expeditionId) && isId(value.settlementId) && isOutcome(value.outcome)
+    case 'departed': return hasOnlyKeys(value, [...common, 'departedAt', 'lastExpeditionId'])
+      && isUtc(value.departedAt) && isId(value.lastExpeditionId) && value.contractOptions.length === 0
+    case 'dead': return hasOnlyKeys(value, [...common, 'diedAt', 'expeditionId', 'recoveryId'])
+      && isUtc(value.diedAt) && isId(value.expeditionId) && isId(value.recoveryId)
+    default: return false
+  }
 }
 
 function isContract(value: unknown): value is PersistedMissionContract {
-  return isRecord(value) && ['contractId', 'visitorId', 'expeditionId', 'acceptedAt'].every((key) => typeof value[key] === 'string')
-    && isRecord(value.option) && Array.isArray(value.loanItemIds) && ['stays', 'departs'].includes(String(value.departureResolution))
+  return isRecord(value) && hasOnlyKeys(value, [
+    'contractId', 'visitorId', 'option', 'loanItemIds', 'acceptedAt', 'departureResolution', 'expeditionId'
+  ]) && [value.contractId, value.visitorId, value.expeditionId].every(isId) && isUtc(value.acceptedAt)
+    && isContractOption(value.option) && isStringArray(value.loanItemIds)
+    && ['stays', 'departs'].includes(String(value.departureResolution))
 }
 
 function isExpedition(value: unknown): value is PersistedCycleExpedition {
-  return isRecord(value) && ['expeditionId', 'visitorId', 'contractId', 'startsAt'].every((key) => typeof value[key] === 'string')
-    && ['scheduled', 'active', 'awaiting_settlement', 'settled'].includes(String(value.state))
-    && Number.isInteger(value.nextEventIndex) && typeof value.currentHp === 'number' && typeof value.maxHp === 'number'
-    && Array.isArray(value.events) && typeof value.grossGold === 'number'
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'expeditionId', 'visitorId', 'contractId', 'state', 'startsAt', 'startedAt', 'nextEventIndex',
+    'currentHp', 'maxHp', 'events', 'grossGold', 'outcome', 'resolvedAt', 'settlementId', 'settledAt',
+    'visitorResolution'
+  ])) return false
+  if (![value.expeditionId, value.visitorId, value.contractId].every(isId) || !isUtc(value.startsAt)
+    || !['scheduled', 'active', 'awaiting_settlement', 'settled'].includes(String(value.state))
+    || !isNonNegativeInteger(value.nextEventIndex) || !isNonNegativeInteger(value.currentHp)
+    || !isPositiveInteger(value.maxHp) || Number(value.currentHp) > Number(value.maxHp)
+    || !Array.isArray(value.events) || !value.events.every(isExpeditionEvent)
+    || Number(value.nextEventIndex) > value.events.length || !isNonNegativeInteger(value.grossGold)) return false
+  if (!value.events.every((event, index, events) => index === 0 || Date.parse(events[index - 1]!.occursAt) < Date.parse(event.occursAt))) return false
+  const common = [
+    'expeditionId', 'visitorId', 'contractId', 'state', 'startsAt', 'nextEventIndex',
+    'currentHp', 'maxHp', 'events', 'grossGold'
+  ]
+  if (value.state === 'scheduled') return hasOnlyKeys(value, common) && value.events.length === 0 && value.nextEventIndex === 0
+  if (!isUtc(value.startedAt) || value.events.length === 0) return false
+  if (value.state === 'active') return hasOnlyKeys(value, [...common, 'startedAt']) && Number(value.nextEventIndex) < value.events.length
+  if (!isOutcome(value.outcome) || !isUtc(value.resolvedAt) || !isId(value.settlementId)) return false
+  if (value.state === 'awaiting_settlement') {
+    return hasOnlyKeys(value, [...common, 'startedAt', 'outcome', 'resolvedAt', 'settlementId'])
+  }
+  return hasOnlyKeys(value, [...common, 'startedAt', 'outcome', 'resolvedAt', 'settlementId', 'settledAt', 'visitorResolution'])
+    && isUtc(value.settledAt) && ['stays', 'departs', 'dead'].includes(String(value.visitorResolution))
 }
 
 function isSettlement(value: unknown): value is PersistedCycleSettlement {
-  return isRecord(value) && ['settlementId', 'expeditionId', 'createdAt', 'expiresAt'].every((key) => typeof value[key] === 'string')
-    && ['preview_ready', 'settled'].includes(String(value.state)) && Number.isInteger(value.previewVersion)
-    && ['returned', 'retreated', 'death'].includes(String(value.outcome)) && Array.isArray(value.loanItemIds)
-    && Array.isArray(value.choiceGroups)
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'settlementId', 'expeditionId', 'state', 'previewVersion', 'outcome', 'createdAt', 'expiresAt',
+    'grossGold', 'caravanGold', 'visitorGold', 'loanItemIds', 'rewardItemIds', 'choiceGroups', 'departureSignal',
+    'departureResolution', 'appliedAt', 'appliedBy', 'appliedChoices'
+  ])) return false
+  if (![value.settlementId, value.expeditionId].every(isId) || !isUtc(value.createdAt) || !isUtc(value.expiresAt)
+    || !['preview_ready', 'settled'].includes(String(value.state)) || !isPositiveInteger(value.previewVersion)
+    || !isOutcome(value.outcome) || !isNonNegativeInteger(value.grossGold) || !isNonNegativeInteger(value.caravanGold)
+    || !isNonNegativeInteger(value.visitorGold) || Number(value.caravanGold) + Number(value.visitorGold) !== Number(value.grossGold)
+    || !isStringArray(value.loanItemIds) || !isStringArray(value.rewardItemIds)
+    || !Array.isArray(value.choiceGroups) || !value.choiceGroups.every(isChoiceGroup)
+    || !['unlikely', 'possible', 'likely'].includes(String(value.departureSignal))
+    || !['stays', 'departs', 'dead'].includes(String(value.departureResolution))) return false
+  if (value.state === 'preview_ready') return value.appliedAt === undefined && value.appliedBy === undefined && value.appliedChoices === undefined
+  return isUtc(value.appliedAt) && ['confirmation', 'expiry_default'].includes(String(value.appliedBy))
+    && Array.isArray(value.appliedChoices) && value.appliedChoices.every(isAppliedChoice)
 }
 
 function isRecovery(value: unknown): value is PersistedCycleRecovery {
-  return isRecord(value) && ['recoveryId', 'sourceExpeditionId', 'expiresAt'].every((key) => typeof value[key] === 'string')
-    && ['open', 'assigned', 'recovered', 'failed', 'abandoned'].includes(String(value.state))
-    && Array.isArray(value.itemIds) && Array.isArray(value.options) && Array.isArray(value.supportLoanItemIds)
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'recoveryId', 'sourceExpeditionId', 'itemIds', 'state', 'expiresAt', 'options', 'assignedVisitorId',
+    'assignedAt', 'completesAt', 'supportLoanItemIds', 'succeeds', 'resolvedAt', 'recoveredItemIds'
+  ])) return false
+  if (![value.recoveryId, value.sourceExpeditionId].every(isId) || !isUtc(value.expiresAt)
+    || !['open', 'assigned', 'recovered', 'failed', 'abandoned'].includes(String(value.state))
+    || !isStringArray(value.itemIds) || !Array.isArray(value.options) || !value.options.every(isRecoveryOption)
+    || !isStringArray(value.supportLoanItemIds)) return false
+  const common = ['recoveryId', 'sourceExpeditionId', 'itemIds', 'state', 'expiresAt', 'options', 'supportLoanItemIds']
+  if (value.state === 'open') return hasOnlyKeys(value, common)
+  const assigned = [...common, 'assignedVisitorId', 'assignedAt', 'completesAt', 'succeeds']
+  if (value.state === 'assigned') return hasOnlyKeys(value, assigned) && isId(value.assignedVisitorId) && isUtc(value.assignedAt)
+    && isUtc(value.completesAt) && typeof value.succeeds === 'boolean' && value.resolvedAt === undefined
+  if (!isUtc(value.resolvedAt)) return false
+  if (value.state === 'abandoned') return hasOnlyKeys(value, [...common, 'resolvedAt'])
+  if (!hasOnlyKeys(value, [...assigned, 'resolvedAt', ...(value.state === 'recovered' ? ['recoveredItemIds'] : [])])) return false
+  return value.state !== 'recovered' || (isStringArray(value.recoveredItemIds) && sameIds(value.recoveredItemIds, value.itemIds as string[]))
+}
+
+function isContractOption(value: unknown): value is PersistedContractOption {
+  return isRecord(value) && hasOnlyKeys(value, [
+    'optionId', 'label', 'description', 'durationSeconds', 'caravanGoldShareBps', 'lootPriority',
+    'retreatThreshold', 'loanFeeGold', 'consequences', 'expiresAt'
+  ]) && isId(value.optionId) && isLocalizedText(value.label) && isLocalizedText(value.description)
+    && isPositiveInteger(value.durationSeconds) && isNonNegativeInteger(value.caravanGoldShareBps)
+    && Number(value.caravanGoldShareBps) <= 10_000 && ['caravan_first', 'visitor_first'].includes(String(value.lootPriority))
+    && (value.retreatThreshold === null || isNonNegativeInteger(value.retreatThreshold))
+    && isNonNegativeInteger(value.loanFeeGold) && Array.isArray(value.consequences)
+    && value.consequences.every(isConsequence) && isUtc(value.expiresAt)
+}
+
+function isRecoveryOption(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ['optionId', 'label', 'description', 'durationSeconds', 'consequences'])
+    && isId(value.optionId) && isLocalizedText(value.label) && isLocalizedText(value.description)
+    && isPositiveInteger(value.durationSeconds) && Array.isArray(value.consequences) && value.consequences.every(isConsequence)
+}
+
+function isExpeditionEvent(value: unknown): value is PersistedExpeditionEvent {
+  return isRecord(value) && hasOnlyKeys(value, ['eventId', 'occursAt', 'damage', 'gold'])
+    && isId(value.eventId) && isUtc(value.occursAt) && isNonNegativeInteger(value.damage) && isNonNegativeInteger(value.gold)
+}
+
+function isChoiceGroup(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ['groupId', 'required', 'defaultOptionId', 'label', 'options'])
+    && isId(value.groupId) && value.required === true && isId(value.defaultOptionId) && isLocalizedText(value.label)
+    && Array.isArray(value.options) && value.options.length > 0 && value.options.every(isChoiceOption)
+    && uniqueBy(value.options, 'optionId') && value.options.some((option) => isRecord(option) && option.optionId === value.defaultOptionId)
+}
+
+function isChoiceOption(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ['optionId', 'label', 'itemIds', 'capacityDelta', 'consequences'])
+    && isId(value.optionId) && isLocalizedText(value.label) && isStringArray(value.itemIds)
+    && Number.isInteger(value.capacityDelta) && Array.isArray(value.consequences) && value.consequences.every(isConsequence)
+}
+
+function isAppliedChoice(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ['groupId', 'optionId', 'label'])
+    && isId(value.groupId) && isId(value.optionId) && isLocalizedText(value.label)
+}
+
+function isConsequence(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.kind !== 'string' || value.irreversible !== true || !isLocalizedText(value.text)) return false
+  const keysByKind: Record<string, string[]> = {
+    lose_items: ['kind', 'irreversible', 'itemIds', 'text'],
+    destroy_items: ['kind', 'irreversible', 'itemIds', 'text'],
+    transfer_items: ['kind', 'irreversible', 'itemIds', 'newOwner', 'text'],
+    spend_resource: ['kind', 'irreversible', 'resourceId', 'amount', 'text'],
+    renounce_reward: ['kind', 'irreversible', 'rewardItemIds', 'text'],
+    replace_imprint: ['kind', 'irreversible', 'itemId', 'replacedImprint', 'text'],
+    depart_visitor: ['kind', 'irreversible', 'visitorId', 'text'],
+    fail_recovery: ['kind', 'irreversible', 'recoveryId', 'destroyedItemIds', 'text']
+  }
+  const allowed = keysByKind[value.kind]
+  if (!allowed || !hasOnlyKeys(value, allowed)) return false
+  if (value.kind === 'lose_items' || value.kind === 'destroy_items') return isStringArray(value.itemIds)
+  if (value.kind === 'renounce_reward') return isStringArray(value.rewardItemIds)
+  if (value.kind === 'fail_recovery') return isId(value.recoveryId) && isStringArray(value.destroyedItemIds)
+  if (value.kind === 'transfer_items') return isStringArray(value.itemIds) && isItemOwner(value.newOwner)
+  if (value.kind === 'spend_resource') return isId(value.resourceId) && isPositiveInteger(value.amount)
+  if (value.kind === 'replace_imprint') return isId(value.itemId) && isLocalizedText(value.replacedImprint)
+  return isId(value.visitorId)
+}
+
+function isItemOwner(value: unknown): boolean {
+  return isRecord(value) && ((value.kind === 'caravan' && hasOnlyKeys(value, ['kind']))
+    || (value.kind === 'visitor' && hasOnlyKeys(value, ['kind', 'visitorId']) && isId(value.visitorId)))
+}
+
+function isLocalizedText(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ['key', 'fallback']) && isId(value.key) && isId(value.fallback)
+}
+
+function isId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0
+}
+
+function isUtc(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value))
+}
+
+function isNonNegativeInteger(value: unknown): boolean {
+  return Number.isInteger(value) && Number(value) >= 0
+}
+
+function isPositiveInteger(value: unknown): boolean {
+  return Number.isInteger(value) && Number(value) > 0
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isId) && new Set(value).size === value.length
+}
+
+function isOutcome(value: unknown): value is ExpeditionOutcome {
+  return ['returned', 'retreated', 'death'].includes(String(value))
+}
+
+function sameIds(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((id) => right.includes(id))
+}
+
+function uniqueBy(values: unknown[], key: string): boolean {
+  const ids = values.map((value) => isRecord(value) ? value[key] : undefined)
+  return ids.every(isId) && new Set(ids).size === ids.length
 }
 
 function validateCycleReferences(cycle: PersistedVisitorCycle): boolean {
-  return Object.values(cycle.contracts).every((contract) => cycle.visitors[contract.visitorId]
+  return Object.values(cycle.visitors).every((visitor) => {
+    if (!uniqueBy(visitor.contractOptions, 'optionId')) return false
+    if (visitor.busyRecoveryId) {
+      const recovery = cycle.recoveries[visitor.busyRecoveryId]
+      if (!recovery || recovery.state !== 'assigned' || recovery.assignedVisitorId !== visitor.visitorId) return false
+    }
+    if (visitor.state === 'contracted') return cycle.contracts[visitor.contractId!]?.visitorId === visitor.visitorId
+    if (visitor.state === 'away') return cycle.expeditions[visitor.expeditionId!]?.visitorId === visitor.visitorId
+    if (visitor.state === 'awaiting_settlement') {
+      return cycle.expeditions[visitor.expeditionId!]?.visitorId === visitor.visitorId
+        && cycle.settlements[visitor.settlementId!]?.expeditionId === visitor.expeditionId
+    }
+    if (visitor.state === 'dead') return cycle.recoveries[visitor.recoveryId!]?.sourceExpeditionId === visitor.expeditionId
+    if (visitor.state === 'departed') return isId(visitor.lastExpeditionId)
+    return true
+  }) && Object.values(cycle.contracts).every((contract) => cycle.visitors[contract.visitorId]
     && cycle.expeditions[contract.expeditionId]?.contractId === contract.contractId)
-    && Object.values(cycle.expeditions).every((expedition) => cycle.visitors[expedition.visitorId] && cycle.contracts[expedition.contractId])
-    && Object.values(cycle.settlements).every((settlement) => cycle.expeditions[settlement.expeditionId])
-    && Object.values(cycle.recoveries).every((recovery) => cycle.expeditions[recovery.sourceExpeditionId])
+    && Object.values(cycle.expeditions).every((expedition) => cycle.visitors[expedition.visitorId]
+      && cycle.contracts[expedition.contractId]?.expeditionId === expedition.expeditionId
+      && (expedition.settlementId === undefined || cycle.settlements[expedition.settlementId]?.expeditionId === expedition.expeditionId))
+    && Object.values(cycle.settlements).every((settlement) => cycle.expeditions[settlement.expeditionId]?.settlementId === settlement.settlementId
+      && uniqueBy(settlement.choiceGroups, 'groupId'))
+    && Object.values(cycle.recoveries).every((recovery) => cycle.expeditions[recovery.sourceExpeditionId]
+      && uniqueBy(recovery.options, 'optionId')
+      && (recovery.state !== 'assigned' || cycle.visitors[recovery.assignedVisitorId!]?.busyRecoveryId === recovery.recoveryId))
 }
 
 export function ownedCycleItems(game: PersistedGameV3): Item[] {

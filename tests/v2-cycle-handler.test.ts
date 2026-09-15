@@ -13,6 +13,9 @@ describe('V2 command handlers', () => {
     vi.resetModules()
     vi.clearAllMocks()
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.stubGlobal('createError', (definition: Record<string, unknown>) => Object.assign(
+      new Error(String(definition.statusMessage)), definition
+    ))
   })
 
   it('accepts only the nested sealed contract payload', async () => {
@@ -25,7 +28,7 @@ describe('V2 command handlers', () => {
     expect(executeVisitorCycleCommand).toHaveBeenCalledWith(
       'v2-handler-user', expect.objectContaining({ requestId: 'request-1', expectedRevision: 0 }),
       { action: 'accept_contract', visitorId: 'visitor-1', optionId: 'option-1', loanItemIds: ['item-1'] },
-      ['contract', 'visitor-1']
+      ['contract', 'visitor-1', 'option-1']
     )
   })
 
@@ -35,7 +38,10 @@ describe('V2 command handlers', () => {
       payload: { visitorId: 'visitor-1', optionId: 'option-1', loanItemIds: [], price: 999 }
     }))
     const { default: handler } = await import('../server/api/v2/contracts/accept.post')
-    await expect(handler({} as never)).rejects.toMatchObject({ name: 'V2ValidationError' })
+    await expect(handler({} as never)).rejects.toMatchObject({
+      statusCode: 400,
+      data: { error: { code: 'validation_error', retryable: false } }
+    })
     expect(executeVisitorCycleCommand).not.toHaveBeenCalled()
   })
 
@@ -45,7 +51,10 @@ describe('V2 command handlers', () => {
       payload: { settlementId: 'settlement-1', previewVersion: 1, selectedOptionIds: ['same', 'same'] }
     }))
     const { default: handler } = await import('../server/api/v2/settlements/confirm.post')
-    await expect(handler({} as never)).rejects.toMatchObject({ name: 'V2ValidationError' })
+    await expect(handler({} as never)).rejects.toMatchObject({
+      statusCode: 400,
+      data: { error: { code: 'validation_error', retryable: false } }
+    })
     expect(executeVisitorCycleCommand).not.toHaveBeenCalled()
   })
 })

@@ -123,7 +123,7 @@ describe('atomic persisted-game mutation', () => {
   })
 
   it('replays an exact V2 command envelope and rejects another request for its consumed business key', async () => {
-    const { BusinessKeyConflictError, mutateSaveGameAtomic, mutateVisitorCycleAtomic } = await import('../server/utils/savegame')
+    const { BusinessKeyConflictError, isPersistedCanonical, mutateSaveGameAtomic, mutateVisitorCycleAtomic } = await import('../server/utils/savegame')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const persisted = document as PersistedGameV3
     const visitorId = Object.keys(persisted.visitorCycle.visitors)[0]!
@@ -135,19 +135,24 @@ describe('atomic persisted-game mutation', () => {
     }
     const command = { action: 'accept_contract' as const, visitorId, optionId, loanItemIds: [persisted.stash[0]!] }
     const first = await mutateVisitorCycleAtomic(
-      'atomic-user', 'v2-request', 0, command, `v2:contract:${visitorId}`, mapPersistedGameToGameView, dependencies
+      'atomic-user', 'v2-request', 0, command, `v2:contract:${visitorId}:${optionId}`, mapPersistedGameToGameView, dependencies
     )
     await mutateSaveGameAtomic('atomic-user', 'later-v2-command', 'later:v2-credit', 1, { amount: 1 }, (save) => { save.gold += 1 })
     const replay = await mutateVisitorCycleAtomic(
-      'atomic-user', 'v2-request', 999, command, `v2:contract:${visitorId}`, mapPersistedGameToGameView, dependencies
+      'atomic-user', 'v2-request', 999, command, `v2:contract:${visitorId}:${optionId}`, mapPersistedGameToGameView, dependencies
     )
 
     expect(replay).toEqual(first)
     expect(first).toMatchObject({ requestId: 'v2-request', revision: 1, game: { revision: 1 } })
     expect((document as PersistedGameV3).ledger).toHaveLength(2)
     await expect(mutateVisitorCycleAtomic(
-      'atomic-user', 'v2-other-request', 2, command, `v2:contract:${visitorId}`, mapPersistedGameToGameView, dependencies
+      'atomic-user', 'v2-other-request', 2, command, `v2:contract:${visitorId}:${optionId}`, mapPersistedGameToGameView, dependencies
     )).rejects.toBeInstanceOf(BusinessKeyConflictError)
+
+    const stored = (document as PersistedGameV3).requestRecords.find((record) => record.requestId === 'v2-request')!
+    if (!('game' in stored.response)) throw new Error('Expected stored V2 response')
+    ;(stored.response.game as unknown as Record<string, unknown>).internalSecret = true
+    expect(isPersistedCanonical(document)).toBe(false)
   })
 
   it('rejects reuse of an expired requestId before executing another mutation', async () => {

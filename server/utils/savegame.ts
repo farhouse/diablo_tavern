@@ -2,12 +2,12 @@ import type { Filter } from 'mongodb'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Item, SaveGame, VisitRound, Visitor, VisitorCommission, VisitorOffer, VisitorSlot } from '~/types/game'
 import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
-import { refreshVisitRound } from '~/utils/visitor-logic'
 import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
 import { UncertainOperationError } from '~/server/domain/v2-errors'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 import type { CommandSuccess } from '~/shared/types/v2-api-error'
 import type { GameView } from '~/shared/types/v2-game-view'
+import { validateGameView } from '~/server/utils/game-view-validator'
 import {
   applyVisitorCycleCommand,
   createVisitorCycle,
@@ -80,7 +80,7 @@ export interface PersistedCustodyContainer {
 }
 
 type PersistedVisitorOffer = Omit<VisitorOffer, 'item'> & { itemId: string }
-type PersistedVisitorCommission = Omit<VisitorCommission, 'rewardItem'> & { rewardItemId?: string }
+export type PersistedVisitorCommission = Omit<VisitorCommission, 'rewardItem'> & { rewardItemId?: string }
 type PersistedVisitor = Omit<Visitor, 'offers' | 'commission'> & {
   offers: PersistedVisitorOffer[]
   commission?: PersistedVisitorCommission
@@ -181,28 +181,7 @@ export async function getPersistedGameV3(userId: string, dependencies = defaultD
 }
 
 export async function getSaveGame(userId: string, dependencies = defaultDependencies): Promise<SaveGame> {
-  for (let attempt = 0; attempt < MAX_MUTATE_ATTEMPTS; attempt += 1) {
-    const compatibility = hydratePersistedGame(await getPersistedGameV3(userId, dependencies))
-    const now = dependencies.now()
-    const reconciled = structuredClone(compatibility)
-    refreshVisitRound(reconciled, now, dependencies.random, { resolveLegacyCommissions: false })
-    if (JSON.stringify(reconciled) === JSON.stringify(compatibility)) return toGameView(compatibility)
-
-    try {
-      return await mutateSaveGameAtomic(
-        userId,
-        `reconcile:${compatibility.revision}:${now.toISOString()}`,
-        JSON.stringify(['reconcile', compatibility.revision]),
-        compatibility.revision,
-        { asOf: now.toISOString() },
-        (save, deps) => refreshVisitRound(save, now, deps.random, { resolveLegacyCommissions: false }),
-        dependencies
-      )
-    } catch (error) {
-      if (!(error instanceof RevisionConflictError)) throw error
-    }
-  }
-  throw new RevisionConflictError('Save changed concurrently while reconciling time transitions')
+  return toGameView(hydratePersistedGame(await getPersistedGameV3(userId, dependencies)))
 }
 
 export function mutateSaveGameAtomic(
@@ -674,7 +653,7 @@ export function hydratePersistedGame(document: PersistedGameV3): SaveGame {
     stash,
     _effectiveCapacityUsed: Object.values(document.itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length,
     _v2VisitorStates: Object.fromEntries(Object.values(document.visitorCycle.visitors)
-      .map((visitor) => [visitor.visitorId, visitor.state]))
+      .map((visitor) => [visitor.visitorId, visitor.busyRecoveryId ? 'away' : visitor.state]))
   }
 }
 
@@ -776,9 +755,41 @@ export function buildPersistedFromPublic(
 
   const visitorCycle = structuredClone(previous?.visitorCycle
     ?? createVisitorCycle({ visitRound, visitHistory, createdAt: normalized.createdAt } as PersistedGameV3))
+  const discoveredVisitors = createVisitorCycle({
+    visitRound, visitHistory, createdAt: normalized.updatedAt
+  } as PersistedGameV3).visitors
+  for (const [visitorId, visitor] of Object.entries(discoveredVisitors)) {
+    visitorCycle.visitors[visitorId] ??= visitor
+  }
   for (const round of [visitRound, ...visitHistory]) {
     for (const visitor of round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])) {
       const cycleVisitor = visitorCycle.visitors[visitor.id]
+      const migratedSettlement = visitor.commission?.status === 'claimed'
+        ? visitorCycle.settlements[visitor.commission.id]
+        : undefined
+      const migratedExpedition = migratedSettlement
+        ? visitorCycle.expeditions[migratedSettlement.expeditionId]
+        : undefined
+      if (cycleVisitor && migratedSettlement?.state === 'preview_ready' && migratedExpedition) {
+        migratedSettlement.state = 'settled'
+        migratedSettlement.appliedAt = visitor.commission!.claimedAt ?? visitor.departedAt ?? normalized.updatedAt
+        migratedSettlement.appliedBy = 'confirmation'
+        migratedSettlement.appliedChoices = migratedSettlement.choiceGroups.map((group) => {
+          const option = group.options.find((entry) => entry.optionId === group.defaultOptionId)!
+          return { groupId: group.groupId, optionId: option.optionId, label: structuredClone(option.label) }
+        })
+        migratedExpedition.state = 'settled'
+        migratedExpedition.settledAt = migratedSettlement.appliedAt
+        migratedExpedition.visitorResolution = 'departs'
+        cycleVisitor.state = 'departed'
+        cycleVisitor.departedAt = visitor.departedAt ?? migratedSettlement.appliedAt
+        cycleVisitor.lastExpeditionId = migratedExpedition.expeditionId
+        cycleVisitor.contractOptions = []
+        delete cycleVisitor.contractId
+        delete cycleVisitor.expeditionId
+        delete cycleVisitor.settlementId
+        delete cycleVisitor.outcome
+      }
       if (visitor.state === 'departed' && visitor.departedAt && cycleVisitor?.state === 'available'
         && !Object.values(visitorCycle.contracts).some((contract) => contract.visitorId === visitor.id)) {
         cycleVisitor.state = 'departed'
@@ -989,6 +1000,40 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
         if (!placement || placement.custodyKind !== kind || placement.custodyId !== container.id) return false
       }
     }
+  }
+  for (const contract of Object.values(cycle.contracts)) {
+    const expedition = cycle.expeditions[contract.expeditionId]
+    if (!expedition || !contract.loanItemIds.every((itemId) => {
+      const placement = itemPlacements[itemId]
+      if (!placement || placement.ownerKind !== 'caravan') return false
+      return expedition.state === 'settled'
+        ? ['stash', 'recovery', 'tombstone'].includes(placement.custodyKind)
+        : placement.custodyKind === 'expedition' && placement.custodyId === expedition.expeditionId
+    })) return false
+  }
+  for (const settlement of Object.values(cycle.settlements)) {
+    const contract = cycle.contracts[cycle.expeditions[settlement.expeditionId]?.contractId ?? '']
+    if (!contract || settlement.loanItemIds.length !== contract.loanItemIds.length
+      || settlement.loanItemIds.some((itemId) => !contract.loanItemIds.includes(itemId))) return false
+    if (!settlement.rewardItemIds.every((itemId) => {
+      const placement = itemPlacements[itemId]
+      return placement?.ownerKind === 'caravan' && (settlement.state === 'preview_ready'
+        ? placement.custodyKind === 'settlement' && placement.custodyId === settlement.settlementId
+        : placement.custodyKind === 'stash')
+    })) return false
+  }
+  for (const recovery of Object.values(cycle.recoveries)) {
+    const sourceSettlement = Object.values(cycle.settlements)
+      .find((settlement) => settlement.expeditionId === recovery.sourceExpeditionId)
+    if (!sourceSettlement || sourceSettlement.outcome !== 'death'
+      || recovery.itemIds.length !== sourceSettlement.loanItemIds.length
+      || recovery.itemIds.some((itemId) => !sourceSettlement.loanItemIds.includes(itemId))) return false
+    const expectedCustody = recovery.state === 'open' || recovery.state === 'assigned'
+      ? 'recovery' : recovery.state === 'recovered' ? 'stash' : 'tombstone'
+    if (!recovery.itemIds.every((itemId) => itemPlacements[itemId]?.custodyKind === expectedCustody)) return false
+    const supportCustody = recovery.state === 'assigned' ? 'recovery' : 'stash'
+    if (!recovery.supportLoanItemIds.every((itemId) => itemPlacements[itemId]?.ownerKind === 'caravan'
+      && itemPlacements[itemId]?.custodyKind === supportCustody)) return false
   }
   if (Object.values(itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length > Number(candidate.stashLimit)) return false
 
@@ -1268,10 +1313,16 @@ function isPublicSaveGame(value: unknown): value is PublicSaveGame {
 
 function isReplayResponse(value: unknown): value is PublicSaveGame | CommandSuccess {
   if (isPublicSaveGame(value)) return true
-  return isPlainRecord(value) && hasOnlyKeys(value, ['requestId', 'revision', 'game'])
+  if (!(isPlainRecord(value) && hasOnlyKeys(value, ['requestId', 'revision', 'game'])
     && typeof value.requestId === 'string' && Boolean(value.requestId)
     && Number.isInteger(value.revision) && isPlainRecord(value.game)
-    && value.game.contractVersion === 'v2-etapa0-3' && value.game.revision === value.revision
+    && value.game.contractVersion === 'v2-etapa0-3' && value.game.revision === value.revision)) return false
+  try {
+    validateGameView(value.game)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function isPublicRound(value: unknown): boolean {

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { createSaveGame } from '../utils/game-logic'
-import { buildPersistedFromPublic, isPersistedCanonical, sanitizeGameResponse, type PersistedGameV3 } from '../server/utils/savegame'
+import { buildPersistedFromPublic, hydratePersistedGame, isPersistedCanonical, sanitizeGameResponse, type PersistedGameV3 } from '../server/utils/savegame'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
 import { applyItemTransition, effectiveCapacityUsed } from '../server/domain/item-transitions'
-import { assignVisitorCommission, refreshVisitRound } from '../utils/visitor-logic'
+import { applyVisitorCycleCommand } from '../server/domain/visitor-cycle'
+import { assignVisitorCommission, dismissVisitor, refreshVisitRound } from '../utils/visitor-logic'
 
 describe('PersistedGameV3 invariants', () => {
   it('stores each actionable item once and only references it from containers', () => {
@@ -66,6 +67,70 @@ describe('PersistedGameV3 invariants', () => {
     const unknown = buildPersistedFromPublic(createSaveGame('unknown-field')) as typeof incomplete & { legacyGold?: number }
     unknown.legacyGold = 123
     expect(isPersistedCanonical(unknown)).toBe(false)
+
+    const internalSecret = buildPersistedFromPublic(createSaveGame('invalid-cycle-option'))
+    const visitor = Object.values(internalSecret.visitorCycle.visitors)[0]!
+    ;(visitor.contractOptions[0] as typeof visitor.contractOptions[0] & { internalSecret?: string }).internalSecret = 'must-not-survive'
+    expect(isPersistedCanonical(internalSecret)).toBe(false)
+  })
+
+  it('registers a newly arrived compatibility visitor in the V2 lifecycle', () => {
+    const previous = buildPersistedFromPublic(createSaveGame('new-arrival-sync'))
+    const compatibility = hydratePersistedGame(previous)
+    const departedId = compatibility.visitRound.slots[0]!.visitor!.id
+    const departedAt = new Date('2026-09-15T00:00:00.000Z')
+    dismissVisitor(compatibility, departedId, departedAt, () => 0)
+    const departed = buildPersistedFromPublic(compatibility, previous)
+    const arrival = hydratePersistedGame(departed)
+    let roll = 0
+    refreshVisitRound(arrival, new Date('2026-09-15T00:00:30.000Z'), () => (++roll % 997) / 997, { resolveLegacyCommissions: false })
+    const replacement = arrival.visitRound.slots[0]!.visitor!
+    const rebuilt = buildPersistedFromPublic(arrival, departed)
+
+    expect(rebuilt.visitorCycle.visitors[replacement.id]).toMatchObject({ state: 'available', name: replacement.name })
+    expect(rebuilt.visitorCycle.visitors[departedId]?.state).toBe('departed')
+    expect(isPersistedCanonical(rebuilt)).toBe(true)
+  })
+
+  it('migrates a ready legacy commission into an effect-free V2 settlement', () => {
+    const save = createSaveGame('legacy-ready-migration', new Date('2026-09-15T00:00:00.000Z'))
+    const visitor = save.visitRound.slots[0]!.visitor!
+    visitor.state = 'traded'
+    assignVisitorCommission(save, visitor.id, 'safe', () => 0, new Date('2026-09-15T00:00:00.000Z'))
+    refreshVisitRound(save, new Date(visitor.commission!.finishesAt), () => 0)
+    const persisted = buildPersistedFromPublic(save)
+    const cycleVisitor = persisted.visitorCycle.visitors[visitor.id]!
+    const settlement = persisted.visitorCycle.settlements[visitor.commission!.id]!
+    const beforeGold = persisted.gold
+
+    expect(cycleVisitor.state).toBe('awaiting_settlement')
+    expect(settlement).toMatchObject({ state: 'preview_ready', caravanGold: visitor.commission!.rewardGold })
+    expect(persisted.gold).toBe(beforeGold)
+    const expiry = new Date(settlement.expiresAt)
+    const reconciled = applyVisitorCycleCommand(persisted, { action: 'reconcile_game' }, {
+      now: () => expiry, uuid: () => 'legacy-migration', random: () => 0.9
+    })
+    expect(reconciled.gold).toBe(beforeGold + settlement.caravanGold)
+    expect(settlement.rewardItemIds.every((itemId) => reconciled.itemPlacements[itemId]?.custodyKind === 'stash')).toBe(true)
+    expect(isPersistedCanonical(reconciled)).toBe(true)
+  })
+
+  it('migrates an active legacy commission into the explicit reconciliation path', () => {
+    const save = createSaveGame('legacy-active-migration')
+    const visitor = save.visitRound.slots[0]!.visitor!
+    visitor.state = 'traded'
+    assignVisitorCommission(save, visitor.id, 'safe', () => 0, new Date(save.createdAt))
+    const persisted = buildPersistedFromPublic(save)
+    const cycleVisitor = persisted.visitorCycle.visitors[visitor.id]!
+    const expedition = persisted.visitorCycle.expeditions[visitor.commission!.id]!
+
+    expect(cycleVisitor).toMatchObject({ state: 'away', expeditionId: visitor.commission!.id })
+    expect(expedition).toMatchObject({ state: 'active', nextEventIndex: 0 })
+    const reconciled = applyVisitorCycleCommand(persisted, { action: 'reconcile_game' }, {
+      now: () => new Date(visitor.commission!.finishesAt), uuid: () => 'legacy-active', random: () => 0.9
+    })
+    expect(reconciled.visitorCycle.visitors[visitor.id]?.state).toBe('awaiting_settlement')
+    expect(isPersistedCanonical(reconciled)).toBe(true)
   })
 
   it.each(['loan', 'service', 'recover'] as const)('omits %s custody until its authoritative V2 lifecycle exists', (operation) => {
@@ -243,8 +308,10 @@ describe('PersistedGameV3 invariants', () => {
     expect(persisted.itemPlacements['pending-reward-item']).toMatchObject({ ownerKind: 'caravan' })
     expect(effectiveCapacityUsed(persisted)).toBe(save.stash.length + 1)
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
-    expect(view.settlements).toEqual([])
-    expect(view.items).not.toContainEqual(expect.objectContaining({ itemId: 'pending-reward-item' }))
+    expect(view.settlements).toHaveLength(1)
+    expect(view.items).toContainEqual(expect.objectContaining({
+      itemId: 'pending-reward-item', custody: { kind: 'settlement', settlementId: 'commission-reward' }
+    }))
   })
 
   it.each(['partial', 'failed'] as const)('projects %s commission lifecycle without fabricating an item', (outcome) => {
@@ -260,7 +327,7 @@ describe('PersistedGameV3 invariants', () => {
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
     expect(persisted.expeditionsById[visitor.commission.id]).toBeDefined()
     expect(persisted.settlementsById[visitor.commission.id]?.itemIds).toEqual([])
-    expect(view.settlements).toEqual([])
+    expect(view.settlements).toHaveLength(1)
 
     const corrupt = structuredClone(persisted)
     const projection = corrupt.settlementsById[visitor.commission.id]!.projection
@@ -282,7 +349,7 @@ describe('PersistedGameV3 invariants', () => {
     const persisted = buildPersistedFromPublic(save)
     const view = mapPersistedGameToGameView(persisted, new Date(visitor.commission!.finishesAt))
     expect(persisted.settlementsById[visitor.commission!.id]?.itemIds).toEqual([])
-    expect(view.settlements).toEqual([])
+    expect(view.settlements).toHaveLength(1)
   })
 
   it('prunes empty lifecycle after its visitor ages out of bounded history', async () => {

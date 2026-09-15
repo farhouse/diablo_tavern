@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { createSaveGame } from '../utils/game-logic'
-import { buildPersistedFromPublic, isPersistedCanonical, type PersistenceDependencies, type PersistedGameV3 } from '../server/utils/savegame'
+import { buildPersistedFromPublic, hydratePersistedGame, isPersistedCanonical, type PersistenceDependencies, type PersistedGameV3 } from '../server/utils/savegame'
 import { applyVisitorCycleCommand, VisitorCycleError } from '../server/domain/visitor-cycle'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
+import { dismissVisitor } from '../utils/visitor-logic'
 
 describe('V2 visitor contract, expedition, settlement and recovery', () => {
   it.each([
@@ -57,6 +58,27 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     }, scenario.dependencies)).toThrow(VisitorCycleError)
   })
 
+  it('rotates sealed options so a staying visitor can accept a later contract', () => {
+    const scenario = activeScenario()
+    const firstOptionId = scenario.game.visitorCycle.contracts[
+      scenario.game.visitorCycle.expeditions[scenario.expeditionId]!.contractId
+    ]!.option.optionId
+    scenario.game.visitorCycle.expeditions[scenario.expeditionId]!.events = [event(scenario.now, 0)]
+    const preview = apply(scenario.game, { action: 'reconcile_game' }, scenario.dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const settled = apply(preview, {
+      action: 'confirm_settlement', settlementId: settlement.settlementId,
+      previewVersion: settlement.previewVersion, selectedOptionIds: []
+    }, scenario.dependencies)
+    const nextOptionId = settled.visitorCycle.visitors[scenario.visitorId]!.contractOptions[0]!.optionId
+
+    expect(nextOptionId).not.toBe(firstOptionId)
+    const contractedAgain = apply(settled, {
+      action: 'accept_contract', visitorId: scenario.visitorId, optionId: nextOptionId, loanItemIds: []
+    }, scenario.dependencies)
+    expect(Object.values(contractedAgain.visitorCycle.contracts)).toHaveLength(2)
+  })
+
   it('applies expiration defaults only through reconcile', () => {
     const scenario = activeScenario()
     scenario.game.visitorCycle.expeditions[scenario.expeditionId]!.events = [event(scenario.now, 1)]
@@ -108,6 +130,10 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
       action: 'assign_recovery', recoveryId: recovery.recoveryId, visitorId: rescuer.visitorId,
       optionId: recovery.options[0]!.optionId, loanItemIds: [supportLoan]
     }, scenario.dependencies)
+    const compatibility = hydratePersistedGame(assigned)
+    expect(compatibility._v2VisitorStates?.[rescuer.visitorId]).toBe('away')
+    expect(() => dismissVisitor(compatibility, rescuer.visitorId, scenario.now, () => 0))
+      .toThrow('Visitor cannot be dismissed while contracted or away')
     scenario.dependencies.now = () => new Date(assigned.visitorCycle.recoveries[recovery.recoveryId]!.completesAt!)
     const resolved = apply(assigned, { action: 'reconcile_game' }, scenario.dependencies)
 
@@ -118,6 +144,25 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(resolved.itemPlacements[supportLoan]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
     const visitorOwned = Object.entries(resolved.itemPlacements).filter(([, placement]) => placement.ownerKind === 'visitor')
     expect(visitorOwned.every(([, placement]) => placement.custodyKind === 'visitor')).toBe(true)
+  })
+
+  it('archives terminal legacy slots and replenishes the V2 roster only through reconcile', () => {
+    const scenario = activeScenario()
+    scenario.game.visitorCycle.expeditions[scenario.expeditionId]!.events = [event(scenario.now, 18)]
+    const preview = apply(scenario.game, { action: 'reconcile_game' }, scenario.dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const dead = apply(preview, {
+      action: 'confirm_settlement', settlementId: settlement.settlementId,
+      previewVersion: settlement.previewVersion, selectedOptionIds: []
+    }, scenario.dependencies)
+
+    expect(dead.visitRound.slots.some((slot) => slot.visitor?.id === scenario.visitorId)).toBe(false)
+    expect(dead.visitHistory.some((round) => round.slots.some((slot) => slot.visitor?.id === scenario.visitorId))).toBe(true)
+    const replenished = apply(dead, { action: 'reconcile_game' }, scenario.dependencies)
+    const activeVisitors = Object.values(replenished.visitorCycle.visitors)
+      .filter((visitor) => visitor.state !== 'dead' && visitor.state !== 'departed')
+    expect(activeVisitors).toHaveLength(2)
+    expect(isPersistedCanonical(replenished)).toBe(true)
   })
 
   it('projects complete executable bindings without exposing sealed events or rolls', () => {
