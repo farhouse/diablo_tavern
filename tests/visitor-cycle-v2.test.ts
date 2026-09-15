@@ -254,12 +254,12 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
   it('projects the complete resource state/action matrix', () => {
     const scenario = activeScenario()
     const activeView = mapPersistedGameToGameView(scenario.game, scenario.now)
-    const availableView = mapPersistedGameToGameView(baseGame().game, scenario.now)
+    const available = baseGame()
+    const availableView = mapPersistedGameToGameView(available.game, scenario.now)
     const visitorMatrix = new Map<string, string[]>([
       ['available', ['accept_contract']], ['negotiating', []], ['contracted', ['start_expedition']],
       ['away', []], ['awaiting_settlement', ['confirm_settlement']], ['departed', []], ['dead', []]
     ])
-    const baseVisitor = structuredClone(scenario.game.visitorCycle.visitors[scenario.visitorId]!)
     const projectedActions = (game: PersistedGameV3, visitorId: string) => mapPersistedGameToGameView(game, scenario.now)
       .visitors.find((visitor) => visitor.visitorId === visitorId)!.actions.map((action) => action.action)
 
@@ -267,27 +267,33 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
       .toEqual(visitorMatrix.get('available'))
     expect(activeView.visitors.find((visitor) => visitor.visitorId === scenario.visitorId)?.actions.map((action) => action.action))
       .toEqual(visitorMatrix.get('away'))
+    expect(activeView.expeditions).toContainEqual(expect.objectContaining({ state: 'active', actions: [] }))
 
-    const contracted = activeScenario().game
-    const contractedVisitor = contracted.visitorCycle.visitors[scenario.visitorId]
-    if (contractedVisitor) {
-      contractedVisitor.state = 'contracted'
-      delete contractedVisitor.expeditionId
-    }
-    expect(projectedActions(contracted, scenario.visitorId)).toEqual(visitorMatrix.get('contracted'))
+    const contractOptionId = available.game.visitorCycle.visitors[available.visitorId]!.contractOptions[0]!.optionId
+    const contracted = apply(available.game, {
+      action: 'accept_contract', visitorId: available.visitorId, optionId: contractOptionId, loanItemIds: []
+    }, available.dependencies)
+    expect(isPersistedCanonical(contracted)).toBe(true)
+    expect(projectedActions(contracted, available.visitorId)).toEqual(visitorMatrix.get('contracted'))
+    expect(mapPersistedGameToGameView(contracted, scenario.now).expeditions)
+      .toContainEqual(expect.objectContaining({ state: 'scheduled', actions: [] }))
 
-    const negotiating = structuredClone(scenario.game)
-    negotiating.visitorCycle.visitors[scenario.visitorId] = {
-      visitorId: baseVisitor.visitorId, name: baseVisitor.name, state: 'negotiating', departureSignal: baseVisitor.departureSignal,
-      contractOptions: baseVisitor.contractOptions, negotiationId: 'negotiation-matrix', expiresAt: new Date(scenario.now.getTime() + 1000).toISOString()
-    }
-    expect(projectedActions(negotiating, scenario.visitorId)).toEqual(visitorMatrix.get('negotiating'))
+    const negotiating = structuredClone(available.game)
+    const negotiatingVisitor = negotiating.visitorCycle.visitors[available.visitorId]!
+    negotiatingVisitor.state = 'negotiating'
+    negotiatingVisitor.negotiationId = 'negotiation-matrix'
+    negotiatingVisitor.expiresAt = new Date(scenario.now.getTime() + 1000).toISOString()
+    expect(isPersistedCanonical(negotiating)).toBe(true)
+    expect(projectedActions(negotiating, available.visitorId)).toEqual(visitorMatrix.get('negotiating'))
 
     scenario.game.visitorCycle.expeditions[scenario.expeditionId]!.events = [event(scenario.now, 0)]
     const preview = apply(scenario.game, { action: 'reconcile_game' }, scenario.dependencies)
     const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const previewView = mapPersistedGameToGameView(preview, scenario.now)
+    expect(isPersistedCanonical(preview)).toBe(true)
     expect(projectedActions(preview, scenario.visitorId)).toEqual(visitorMatrix.get('awaiting_settlement'))
-    expect(mapPersistedGameToGameView(preview, scenario.now).settlements[0]?.actions.map((action) => action.action))
+    expect(previewView.expeditions).toContainEqual(expect.objectContaining({ state: 'awaiting_settlement', actions: [] }))
+    expect(previewView.settlements[0]?.actions.map((action) => action.action))
       .toEqual(['confirm_settlement'])
     const expiredAt = new Date(settlement.expiresAt)
     expect(mapPersistedGameToGameView(preview, expiredAt).settlements[0]).toMatchObject({ state: 'preview_expired', actions: [] })
@@ -297,8 +303,11 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
       action: 'confirm_settlement', settlementId: settlement.settlementId,
       previewVersion: settlement.previewVersion, selectedOptionIds: []
     }, scenario.dependencies)
+    const departedView = mapPersistedGameToGameView(departedResult, scenario.now)
+    expect(isPersistedCanonical(departedResult)).toBe(true)
     expect(projectedActions(departedResult, scenario.visitorId)).toEqual(visitorMatrix.get('departed'))
-    expect(mapPersistedGameToGameView(departedResult, scenario.now).settlements[0]).toMatchObject({ state: 'settled', actions: [] })
+    expect(departedView.expeditions).toContainEqual(expect.objectContaining({ state: 'settled', actions: [] }))
+    expect(departedView.settlements[0]).toMatchObject({ state: 'settled', actions: [] })
 
     const deathScenario = activeScenario()
     deathScenario.game.visitorCycle.expeditions[deathScenario.expeditionId]!.events = [event(deathScenario.now, 18)]
@@ -312,6 +321,8 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     const recovery = Object.values(dead.visitorCycle.recoveries)[0]!
     expect(mapPersistedGameToGameView(dead, deathScenario.now).recoveries[0]?.actions.map((action) => action.action).sort())
       .toEqual(['abandon_recovery', 'assign_recovery'])
+    expect(mapPersistedGameToGameView(dead, new Date(recovery.expiresAt)).recoveries[0])
+      .toMatchObject({ state: 'open', actions: [] })
     const rescuer = Object.values(dead.visitorCycle.visitors).find((visitor) => visitor.state === 'available')!
     const assigned = apply(dead, {
       action: 'assign_recovery', recoveryId: recovery.recoveryId, visitorId: rescuer.visitorId,
@@ -331,6 +342,37 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(mapPersistedGameToGameView(apply(failed, { action: 'reconcile_game' }, deathScenario.dependencies), deathScenario.dependencies.now())
       .recoveries[0]).toMatchObject({ state: 'failed', actions: [] })
     expect(mapPersistedGameToGameView(dead, deathScenario.now).actions.map((action) => action.action)).toEqual(['reconcile_game'])
+  })
+
+  it('accepts only the canonical pre-departure return window', () => {
+    const scenario = activeScenario()
+    scenario.game.visitorCycle.expeditions[scenario.expeditionId]!.events = [event(scenario.now, 0)]
+    const preview = apply(scenario.game, { action: 'reconcile_game' }, scenario.dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const returned = applyItemTransition(preview, {
+      operation: 'return', itemId: scenario.loanItemId, targetId: scenario.expeditionId
+    }).game
+    expect(isPersistedCanonical(returned)).toBe(true)
+
+    const alreadySettled = structuredClone(returned)
+    const settledPreview = alreadySettled.visitorCycle.settlements[settlement.settlementId]!
+    settledPreview.state = 'settled'
+    settledPreview.appliedAt = scenario.now.toISOString()
+    settledPreview.appliedBy = 'confirmation'
+    settledPreview.appliedChoices = []
+    expect(isPersistedCanonical(alreadySettled)).toBe(false)
+
+    const mismatched = structuredClone(returned)
+    mismatched.visitorCycle.settlements[settlement.settlementId]!.outcome = 'retreated'
+    expect(isPersistedCanonical(mismatched)).toBe(false)
+
+    const deathScenario = activeScenario()
+    deathScenario.game.visitorCycle.expeditions[deathScenario.expeditionId]!.events = [event(deathScenario.now, 18)]
+    const deathPreview = apply(deathScenario.game, { action: 'reconcile_game' }, deathScenario.dependencies)
+    const returnedFromDeath = applyItemTransition(deathPreview, {
+      operation: 'return', itemId: deathScenario.loanItemId, targetId: deathScenario.expeditionId
+    }).game
+    expect(isPersistedCanonical(returnedFromDeath)).toBe(false)
   })
 
   it('preserves canonical ownership and effect-free previews across generated visitor cycles', () => {

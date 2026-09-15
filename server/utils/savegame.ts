@@ -1012,7 +1012,9 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
       if (placement?.ownerKind !== 'caravan') return false
       if (placement.custodyKind === 'expedition' && placement.custodyId === expedition.expeditionId) return true
       return expedition.state === 'awaiting_settlement'
-        && pendingSettlement?.outcome !== 'death'
+        && pendingSettlement?.state === 'preview_ready'
+        && expedition.outcome === pendingSettlement.outcome
+        && expedition.outcome !== 'death'
         && placement.custodyKind === 'stash'
     })) return false
   }
