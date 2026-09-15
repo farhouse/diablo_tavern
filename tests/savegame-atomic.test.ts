@@ -438,21 +438,30 @@ describe('atomic persisted-game mutation', () => {
     ])
   })
 
-  it('backfills equipment V2 maps on existing canonical V3 saves without visitor retained changes', async () => {
-    const { getPersistedGameV3 } = await import('../server/utils/savegame')
+  it('backfills equipment V2 maps on existing canonical V3 saves before direct equipment POST mutations', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const legacyV3 = structuredClone(document as PersistedGameV3) as Omit<PersistedGameV3, 'itemV2ById' | 'serviceJobStateById'>
+    const itemId = legacyV3.stash[0]!
+    legacyV3.itemsById[itemId]!.identified = false
+    legacyV3.itemsById[itemId]!.rarity = 'magic'
     delete (legacyV3 as Partial<PersistedGameV3>).itemV2ById
     delete (legacyV3 as Partial<PersistedGameV3>).serviceJobStateById
     document = legacyV3 as unknown as PersistedGameV3
 
     const loaded = await getPersistedGameV3('atomic-user')
+    const identify = executionOption(mapPersistedGameToGameView(loaded, new Date('2026-09-15T12:00:00.000Z')), itemId, 'identify_item')
+    const mutated = await mutateEquipmentV2Atomic('atomic-user', 'identify-pre-map-v3', loaded.revision, {
+      action: 'identify_item', itemId, optionId: identify.optionId
+    }, fixedDeps())
 
     expect(loaded.itemV2ById).toEqual({})
     expect(loaded.serviceJobStateById).toEqual({})
-    expect(collection.replaceOne).toHaveBeenCalledOnce()
+    expect(mutated.itemsById[itemId]!.identified).toBe(true)
+    expect(collection.replaceOne).toHaveBeenCalledTimes(2)
   })
 
-  it('rejects absent foreign expired and mixed equipment capabilities', async () => {
+  it('rejects absent foreign fabricated expired and mixed equipment capabilities', async () => {
     const { EquipmentV2Error } = await import('../server/domain/equipment-v2')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
@@ -460,9 +469,10 @@ describe('atomic persisted-game mutation', () => {
     const [firstItemId, secondItemId] = initial.stash
     if (!firstItemId || !secondItemId) throw new Error('fixture needs two stash items')
     document = initial
-    const view = mapPersistedGameToGameView(initial)
+    const view = mapPersistedGameToGameView(initial, new Date('2026-09-15T12:00:00.000Z'))
     const first = executionOption(view, firstItemId, 'dismantle_item')
     const second = executionOption(view, secondItemId, 'dismantle_item')
+    const forged = `${first.optionId.slice(0, -1)}${first.optionId.endsWith('a') ? 'b' : 'a'}`
 
     await expect(mutateEquipmentV2Atomic('atomic-user', 'missing-ack', 0, {
       action: 'dismantle_item', itemId: firstItemId, optionId: first.optionId
@@ -473,9 +483,67 @@ describe('atomic persisted-game mutation', () => {
     await expect(mutateEquipmentV2Atomic('atomic-user', 'mixed-ack', 0, {
       action: 'dismantle_item', itemId: firstItemId, optionId: first.optionId, acknowledgementId: second.acknowledgementId
     }, fixedDeps())).rejects.toBeInstanceOf(EquipmentV2Error)
+    await expect(mutateEquipmentV2Atomic('atomic-user', 'forged-option', 0, {
+      action: 'dismantle_item', itemId: firstItemId, optionId: forged, acknowledgementId: first.acknowledgementId
+    }, fixedDeps())).rejects.toBeInstanceOf(EquipmentV2Error)
     await expect(mutateEquipmentV2Atomic('atomic-user', 'expired-token', 0, {
       action: 'dismantle_item', itemId: firstItemId, optionId: first.optionId, acknowledgementId: first.acknowledgementId
-    }, fixedDeps(new Date(Date.parse(initial.updatedAt) + 5 * 60_000)))).rejects.toBeInstanceOf(EquipmentV2Error)
+    }, fixedDeps(new Date('2026-09-15T12:05:00.000Z')))).rejects.toBeInstanceOf(EquipmentV2Error)
+  })
+
+  it('publishes fresh equipment action expirations after inactivity and on old replay snapshots', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3('atomic-user')
+    const itemId = initial.stash[0]!
+    initial.itemsById[itemId]!.identified = false
+    initial.itemsById[itemId]!.rarity = 'magic'
+    initial.updatedAt = '2026-09-15T12:00:00.000Z'
+    document = initial
+
+    const inactiveView = mapPersistedGameToGameView(initial, new Date('2026-09-15T12:10:00.000Z'))
+    const inactiveOption = executionOption(inactiveView, itemId, 'identify_item')
+    expect(Date.parse(inactiveOption.expiresAt)).toBeGreaterThan(Date.parse(inactiveView.serverNow))
+
+    const identified = await mutateEquipmentV2Atomic('atomic-user', 'identify-inactive-replay', 0, {
+      action: 'identify_item', itemId, optionId: inactiveOption.optionId
+    }, fixedDeps(new Date('2026-09-15T12:10:00.000Z')))
+    const replay = await mutateEquipmentV2Atomic('atomic-user', 'identify-inactive-replay', 99, {
+      action: 'identify_item', itemId, optionId: inactiveOption.optionId
+    }, fixedDeps(new Date('2026-09-15T12:20:00.000Z')))
+    const replayView = mapPersistedGameToGameView(replay, new Date('2026-09-15T12:20:00.000Z'))
+    const secondItemId = replay.stash.find((id) => id !== itemId)!
+    const replayOption = executionOption(replayView, secondItemId, 'dismantle_item')
+
+    expect(replay.revision).toBe(identified.revision)
+    expect(Date.parse(replayOption.expiresAt)).toBeGreaterThan(Date.parse(replayView.serverNow))
+  })
+
+  it('keeps equipment replay snapshots bounded across command sequences', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3('atomic-user')
+    const [firstItemId, secondItemId] = initial.stash
+    if (!firstItemId || !secondItemId) throw new Error('fixture needs two stash items')
+    initial.itemsById[firstItemId]!.identified = false
+    initial.itemsById[firstItemId]!.rarity = 'magic'
+    initial.itemsById[secondItemId]!.identified = false
+    initial.itemsById[secondItemId]!.rarity = 'magic'
+    document = initial
+
+    const first = executionOption(mapPersistedGameToGameView(initial, new Date('2026-09-15T12:00:00.000Z')), firstItemId, 'identify_item')
+    const afterFirst = await mutateEquipmentV2Atomic('atomic-user', 'bounded-one', 0, {
+      action: 'identify_item', itemId: firstItemId, optionId: first.optionId
+    }, fixedDeps())
+    const second = executionOption(mapPersistedGameToGameView(afterFirst, new Date('2026-09-15T12:01:00.000Z')), secondItemId, 'identify_item')
+    await mutateEquipmentV2Atomic('atomic-user', 'bounded-two', 1, {
+      action: 'identify_item', itemId: secondItemId, optionId: second.optionId
+    }, fixedDeps(new Date('2026-09-15T12:01:00.000Z')))
+
+    const records = (document as PersistedGameV3).requestRecords
+    expect(records).toHaveLength(2)
+    expect(records.every((record) => record.persistedResponse?.requestRecords.length === 0)).toBe(true)
+    expect(JSON.stringify(records[1]!.persistedResponse).length).toBeLessThan(JSON.stringify(document).length)
   })
 
   it('replays the committed equipment snapshot after a later mutation', async () => {
@@ -530,6 +598,40 @@ describe('atomic persisted-game mutation', () => {
     expect((document as PersistedGameV3).serviceJobsById[jobId]!.itemIds).toEqual([])
   })
 
+  it('reconciles more than five due service jobs in one pass', async () => {
+    const { getPersistedGameV3, reconcilePersistedGameV3, isPersistedCanonical } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3('atomic-user')
+    const templateId = initial.stash[0]!
+    for (let index = 0; index < 6; index += 1) {
+      const itemId = `due-item-${index}`
+      const jobId = `due-job-${index}`
+      initial.itemsById[itemId] = { ...structuredClone(initial.itemsById[templateId]!), id: itemId, identified: true }
+      initial.itemPlacements[itemId] = { ownerKind: 'caravan', custodyKind: 'service', custodyId: jobId }
+      initial.serviceJobsById[jobId] = {
+        id: jobId,
+        itemIds: [itemId],
+        projection: { kind: 'service', service: 'blacksmith', queuedAt: '2026-09-15T12:00:00.000Z', startsAt: '2026-09-15T12:00:00.000Z' }
+      }
+      initial.serviceJobStateById[jobId] = {
+        status: 'active',
+        service: 'blacksmith',
+        itemId,
+        queuedAt: '2026-09-15T12:00:00.000Z',
+        startedAt: '2026-09-15T12:00:00.000Z',
+        completesAt: '2026-09-15T12:01:00.000Z',
+        result: { blacksmithLevel: index + 1 }
+      }
+    }
+    document = initial
+    expect(isPersistedCanonical(initial)).toBe(true)
+
+    const reconciled = await reconcilePersistedGameV3('atomic-user', fixedDeps(new Date('2026-09-15T12:02:00.000Z')))
+
+    expect(Object.values(reconciled.serviceJobStateById).every((state) => state.status === 'completed')).toBe(true)
+    expect(reconciled.stash.filter((itemId) => itemId.startsWith('due-item-'))).toHaveLength(6)
+    expect(reconciled.revision).toBe(6)
+  })
+
   it('rejects corrupt service job invariants and terminal completion', async () => {
     const { EquipmentV2Error } = await import('../server/domain/equipment-v2')
     const { getPersistedGameV3, isPersistedCanonical, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
@@ -545,6 +647,9 @@ describe('atomic persisted-game mutation', () => {
     const corrupt = structuredClone(queued)
     corrupt.serviceJobsById[jobId]!.itemIds = []
     expect(isPersistedCanonical(corrupt)).toBe(false)
+    const missingState = structuredClone(queued)
+    delete missingState.serviceJobStateById[jobId]
+    expect(isPersistedCanonical(missingState)).toBe(false)
 
     const terminal = structuredClone(queued)
     terminal.serviceJobStateById[jobId]!.status = 'failed'
@@ -555,6 +660,48 @@ describe('atomic persisted-game mutation', () => {
     await expect(mutateEquipmentV2Atomic('atomic-user', 'complete-failed', 1, {
       action: 'complete_service_job', jobId
     }, fixedDeps(new Date('2026-09-15T12:02:00.000Z')))).rejects.toBeInstanceOf(EquipmentV2Error)
+  })
+
+  it('projects failed and cancelled service jobs as terminal states', async () => {
+    const { getPersistedGameV3 } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3('atomic-user')
+    const [failedItemId, cancelledItemId] = initial.stash
+    if (!failedItemId || !cancelledItemId) throw new Error('fixture needs two stash items')
+    initial.serviceJobsById.failed = {
+      id: 'failed',
+      itemIds: [],
+      projection: { kind: 'service', service: 'enchanter', queuedAt: '2026-09-15T12:00:00.000Z', startsAt: '2026-09-15T12:00:00.000Z' }
+    }
+    initial.serviceJobStateById.failed = {
+      status: 'failed',
+      service: 'enchanter',
+      itemId: failedItemId,
+      queuedAt: '2026-09-15T12:00:00.000Z',
+      startedAt: '2026-09-15T12:00:00.000Z',
+      completesAt: '2026-09-15T12:01:00.000Z',
+      result: { enchantCount: 1, affix: { stat: 'life', value: 1 } }
+    }
+    initial.serviceJobsById.cancelled = {
+      id: 'cancelled',
+      itemIds: [],
+      projection: { kind: 'service', service: 'blacksmith', queuedAt: '2026-09-15T12:00:00.000Z', startsAt: '2026-09-15T12:00:00.000Z' }
+    }
+    initial.serviceJobStateById.cancelled = {
+      status: 'cancelled',
+      service: 'blacksmith',
+      itemId: cancelledItemId,
+      queuedAt: '2026-09-15T12:00:00.000Z',
+      startedAt: '2026-09-15T12:00:00.000Z',
+      completesAt: '2026-09-15T12:01:00.000Z',
+      result: { blacksmithLevel: 1 }
+    }
+    document = initial
+
+    const view = mapPersistedGameToGameView(initial, new Date('2026-09-15T12:02:00.000Z'))
+
+    expect(view.serviceJobs).toContainEqual(expect.objectContaining({ jobId: 'failed', state: 'failed', failedAt: '2026-09-15T12:01:00.000Z' }))
+    expect(view.serviceJobs).toContainEqual(expect.objectContaining({ jobId: 'cancelled', state: 'cancelled', cancelledAt: '2026-09-15T12:01:00.000Z' }))
   })
 
   it('allows a second legitimate imprint replacement with a new pending imprint token', async () => {
@@ -588,9 +735,9 @@ describe('atomic persisted-game mutation', () => {
 function executionOption(view: { items: unknown[] }, itemId: string, action: string) {
   const item = view.items.find((candidate) => (candidate as { itemId?: string }).itemId === itemId) as { actions?: unknown[] } | undefined
   const availability = item?.actions?.find((candidate) => (candidate as { action?: string }).action === action) as { execution?: { options?: unknown[] } } | undefined
-  const option = availability?.execution?.options?.[0] as { optionId?: string; acknowledgement?: { acknowledgementId?: string } } | undefined
-  if (!option?.optionId) throw new Error(`Missing ${action} option for ${itemId}`)
-  return { optionId: option.optionId, acknowledgementId: option.acknowledgement?.acknowledgementId }
+  const option = availability?.execution?.options?.[0] as { optionId?: string; expiresAt?: string; acknowledgement?: { acknowledgementId?: string } } | undefined
+  if (!option?.optionId || !option.expiresAt) throw new Error(`Missing ${action} option for ${itemId}`)
+  return { optionId: option.optionId, expiresAt: option.expiresAt, acknowledgementId: option.acknowledgement?.acknowledgementId }
 }
 
 function fixedDeps(now = new Date('2026-09-15T12:00:00.000Z')) {

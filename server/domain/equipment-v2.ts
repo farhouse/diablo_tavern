@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { Affix, Item, ItemRarity, StatKey } from '~/types/game'
 import { applyItemTransition } from '~/server/domain/item-transitions'
 import type { PersistedGameV3, PersistedItemV2State, PersistenceDependencies } from '~/server/utils/savegame'
@@ -102,24 +102,31 @@ export function getImprintOption(item: Item, state: PersistedItemV2State | undef
   return { optionId: IMPRINT_OPTION_ID, acknowledgementId: `ack-imprint-${item.id}` }
 }
 
-export function sealEquipmentActionToken(game: PersistedGameV3, itemId: string, action: EquipmentV2Action, semanticId: string, kind: 'authorization' | 'option' | 'acknowledgement'): string {
-  return [
-    'eqv2',
+export function sealEquipmentActionToken(
+  game: PersistedGameV3,
+  itemId: string,
+  action: EquipmentV2Action,
+  semanticId: string,
+  kind: 'authorization' | 'option' | 'acknowledgement',
+  expiresAt = equipmentActionExpiresAt(new Date(game.updatedAt))
+): string {
+  const payload = [
+    game.userId,
+    game.createdAt,
+    game.revision,
+    itemId,
+    action,
+    semanticId,
     kind,
-    createHash('sha256').update([
-      game.userId,
-      game.createdAt,
-      game.revision,
-      itemId,
-      action,
-      semanticId,
-      imprintTokenPart(game, itemId, action)
-    ].join('|')).digest('base64url').slice(0, 32)
-  ].join('-')
+    expiresAt,
+    imprintTokenPart(game, itemId, action)
+  ].join('|')
+  const signature = createHmac('sha256', equipmentTokenSecret()).update(payload).digest('base64url')
+  return ['eqv2', kind, Buffer.from(expiresAt).toString('base64url'), signature].join('.')
 }
 
-export function equipmentActionExpiresAt(game: PersistedGameV3): string {
-  return new Date(Date.parse(game.updatedAt) + 5 * 60_000).toISOString()
+export function equipmentActionExpiresAt(now: Date): string {
+  return new Date(now.getTime() + 5 * 60_000).toISOString()
 }
 
 export function canUseEquipmentService(game: PersistedGameV3, itemId: string): boolean {
@@ -130,7 +137,8 @@ export function canUseEquipmentService(game: PersistedGameV3, itemId: string): b
 function identifyItem(game: PersistedGameV3, itemId: string, optionId: string): void {
   const item = requireStashItem(game, itemId)
   const option = getIdentifyOption(item)
-  if (sealEquipmentActionToken(game, itemId, 'identify_item', option.optionId, 'option') !== optionId) throw domainError('identify option does not match item')
+  const expiresAt = tokenExpiresAt(optionId, 'option')
+  if (!expiresAt || !sameToken(sealEquipmentActionToken(game, itemId, 'identify_item', option.optionId, 'option', expiresAt), optionId)) throw domainError('identify option does not match item')
   if (item.identified) throw domainError('Item is already identified')
   debitGold(game, option.gold)
   item.identified = true
@@ -149,7 +157,8 @@ function queueServiceJob(
   const state = ensureItemState(game, itemId)
   const option = service === 'blacksmith' ? getBlacksmithOption(item, state) : getEnchanterOption(item, state)
   const action = service === 'blacksmith' ? 'queue_blacksmith_job' : 'queue_enchanter_job'
-  if (sealEquipmentActionToken(game, itemId, action, option.optionId, 'option') !== optionId) throw domainError(`${service} option does not match item`)
+  const expiresAt = tokenExpiresAt(optionId, 'option')
+  if (!expiresAt || !sameToken(sealEquipmentActionToken(game, itemId, action, option.optionId, 'option', expiresAt), optionId)) throw domainError(`${service} option does not match item`)
   debitGold(game, option.gold)
 
   const now = dependencies.now()
@@ -210,8 +219,8 @@ function replaceBossImprint(game: PersistedGameV3, itemId: string, optionId: str
   const state = ensureItemState(game, itemId)
   const option = getImprintOption(item, state)
   if (!option
-    || sealEquipmentActionToken(game, itemId, 'replace_boss_imprint', option.optionId, 'option') !== optionId
-    || sealEquipmentActionToken(game, itemId, 'replace_boss_imprint', option.acknowledgementId, 'acknowledgement') !== acknowledgementId) {
+    || !matchesSealedToken(game, itemId, 'replace_boss_imprint', option.optionId, 'option', optionId)
+    || !matchesSealedToken(game, itemId, 'replace_boss_imprint', option.acknowledgementId, 'acknowledgement', acknowledgementId)) {
     throw domainError('imprint acknowledgement does not match item')
   }
   if (state.activeImprint) {
@@ -235,7 +244,6 @@ function validateOption(
   acknowledgementId: string | undefined,
   dependencies: PersistenceDependencies
 ): void {
-  if (dependencies.now().getTime() >= Date.parse(equipmentActionExpiresAt(game))) throw domainError('equipment action authorization expired')
   const item = requireStashItem(game, itemId)
   const state = game.itemV2ById[itemId]
   const semantic = action === 'identify_item' ? getIdentifyOption(item).optionId
@@ -244,19 +252,56 @@ function validateOption(
         : action === 'dismantle_item' ? getDismantleOption(item).optionId
           : action === 'replace_boss_imprint' ? getImprintOption(item, state)?.optionId
             : undefined
-  if (!semantic || sealEquipmentActionToken(game, itemId, action, semantic, 'option') !== optionId) {
+  if (!semantic || !matchesSealedToken(game, itemId, action, semantic, 'option', optionId)) {
     throw domainError('equipment action authorization does not match item')
   }
+  const optionExpiresAt = tokenExpiresAt(optionId, 'option')
+  if (!optionExpiresAt || dependencies.now().getTime() >= Date.parse(optionExpiresAt)) throw domainError('equipment action authorization expired')
   const expectedAck = action === 'dismantle_item' ? getDismantleOption(item).acknowledgementId
     : action === 'replace_boss_imprint' ? getImprintOption(item, state)?.acknowledgementId
       : undefined
   if (expectedAck) {
-    if (!acknowledgementId || sealEquipmentActionToken(game, itemId, action, expectedAck, 'acknowledgement') !== acknowledgementId) {
+    const ackExpiresAt = tokenExpiresAt(acknowledgementId, 'acknowledgement')
+    if (!acknowledgementId || !matchesSealedToken(game, itemId, action, expectedAck, 'acknowledgement', acknowledgementId)
+      || !ackExpiresAt || dependencies.now().getTime() >= Date.parse(ackExpiresAt)) {
       throw domainError('equipment action acknowledgement does not match item')
     }
   } else if (acknowledgementId !== undefined) {
     throw domainError('equipment action acknowledgement is not allowed')
   }
+}
+
+function matchesSealedToken(
+  game: PersistedGameV3,
+  itemId: string,
+  action: EquipmentV2Action,
+  semanticId: string,
+  kind: 'authorization' | 'option' | 'acknowledgement',
+  token: string | undefined
+): boolean {
+  const expiresAt = tokenExpiresAt(token, kind)
+  return Boolean(expiresAt && token && sameToken(sealEquipmentActionToken(game, itemId, action, semanticId, kind, expiresAt), token))
+}
+
+function tokenExpiresAt(token: string | undefined, kind: 'authorization' | 'option' | 'acknowledgement'): string | undefined {
+  const parts = token?.split('.')
+  if (parts?.length !== 4 || parts[0] !== 'eqv2' || parts[1] !== kind) return undefined
+  try {
+    const expiresAt = Buffer.from(parts[2]!, 'base64url').toString()
+    return Number.isFinite(Date.parse(expiresAt)) ? expiresAt : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function sameToken(expected: string, actual: string): boolean {
+  const expectedBytes = Buffer.from(expected)
+  const actualBytes = Buffer.from(actual)
+  return expectedBytes.length === actualBytes.length && timingSafeEqual(expectedBytes, actualBytes)
+}
+
+function equipmentTokenSecret(): string {
+  return process.env.JWT_SECRET || 'dev-secret-change-me'
 }
 
 function requireStashItem(game: PersistedGameV3, itemId: string): Item {

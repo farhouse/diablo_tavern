@@ -50,10 +50,10 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     if (placement.custodyKind === 'service') {
       const target = game.serviceJobsById[placement.custodyId ?? '']
       if (target?.projection?.kind === 'legacy_appraiser') {
-        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' }, game)]
+        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' }, game, now)]
       }
     }
-    return [mapItem(item, placement, game)]
+    return [mapItem(item, placement, game, now)]
   })
   const visitors: unknown[] = [game.visitRound, ...game.visitHistory].flatMap<unknown>((round) => round.slots.flatMap<unknown>((slot) => {
     const visitor = slot.visitor
@@ -143,10 +143,16 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
       }
       return [{
         ...base,
-        state: state?.status === 'active' ? 'active' : 'queued',
-        ...(state?.status === 'active'
-          ? { startedAt: state.startedAt, completesAt: state.completesAt }
-          : { queuedAt: target.queuedAt, startsAt: target.startsAt })
+        ...(state?.status === 'failed'
+          ? { state: 'failed', failedAt: state.completedAt ?? state.completesAt, reasonText: text(`service.${container.id}.failed`, 'El servicio no pudo completarse'), consequences: [] }
+          : state?.status === 'cancelled'
+            ? { state: 'cancelled', cancelledAt: state.completedAt ?? state.completesAt, consequences: [] }
+            : {
+                state: state?.status === 'active' ? 'active' : 'queued',
+                ...(state?.status === 'active'
+                  ? { startedAt: state.startedAt, completesAt: state.completesAt }
+                  : { queuedAt: target.queuedAt, startsAt: target.startsAt })
+              })
       }]
   })
   const view: GameView = {
@@ -234,8 +240,8 @@ function assertUnique(values: Array<Record<string, unknown>>, key: string): void
   if (new Set(ids).size !== ids.length) throw new Error(`Duplicate public ${key}`)
 }
 
-function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3): Record<string, unknown> {
-  const actions = itemActions(item, placement, game)
+function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3, now: Date): Record<string, unknown> {
+  const actions = itemActions(item, placement, game, now)
   const base = {
     itemId: item.id,
     name: { key: `item.${item.baseName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, fallback: item.displayName },
@@ -261,15 +267,15 @@ function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedG
   }
 }
 
-function itemActions(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3): unknown[] {
+function itemActions(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3, now = new Date(game.updatedAt)): unknown[] {
   if (!canUseEquipmentService(game, item.id) || placement.ownerKind !== 'caravan' || placement.custodyKind !== 'stash') return []
-  const expiresAt = equipmentActionExpiresAt(game)
+  const expiresAt = equipmentActionExpiresAt(now)
   const state = game.itemV2ById[item.id]
   const actions: unknown[] = []
   if (!item.identified) {
     const option = getIdentifyOption(item)
     actions.push(sealedAction(game, 'identify_item', item.id, 'Identificar', [{
-      optionId: sealEquipmentActionToken(game, item.id, 'identify_item', option.optionId, 'option'), expiresAt,
+      optionId: sealEquipmentActionToken(game, item.id, 'identify_item', option.optionId, 'option', expiresAt), expiresAt,
       label: text('identify.label', 'Identificar'),
       description: text('identify.description', `Cuesta ${option.gold} oro`),
       consequences: option.gold > 0 ? [spendGold(option.gold)] : []
@@ -279,7 +285,7 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
 
   const blacksmith = getBlacksmithOption(item, state)
   actions.push(sealedAction(game, 'queue_blacksmith_job', item.id, 'Herrero', [{
-    optionId: sealEquipmentActionToken(game, item.id, 'queue_blacksmith_job', blacksmith.optionId, 'option'), expiresAt,
+    optionId: sealEquipmentActionToken(game, item.id, 'queue_blacksmith_job', blacksmith.optionId, 'option', expiresAt), expiresAt,
     label: text('blacksmith.label', 'Mejorar en herrero'),
     description: text('blacksmith.description', `Cuesta ${blacksmith.gold} oro`),
     consequences: [spendGold(blacksmith.gold)]
@@ -287,7 +293,7 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
 
   const enchanter = getEnchanterOption(item, state)
   actions.push(sealedAction(game, 'queue_enchanter_job', item.id, 'Encantador', [{
-    optionId: sealEquipmentActionToken(game, item.id, 'queue_enchanter_job', enchanter.optionId, 'option'), expiresAt,
+    optionId: sealEquipmentActionToken(game, item.id, 'queue_enchanter_job', enchanter.optionId, 'option', expiresAt), expiresAt,
     label: text('enchanter.label', 'Encantar'),
     description: text('enchanter.description', `Cuesta ${enchanter.gold} oro`),
     consequences: [spendGold(enchanter.gold)]
@@ -295,21 +301,21 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
 
   const dismantle = getDismantleOption(item)
   actions.push(sealedAction(game, 'dismantle_item', item.id, 'Desmantelar', [{
-    optionId: sealEquipmentActionToken(game, item.id, 'dismantle_item', dismantle.optionId, 'option'), expiresAt,
+    optionId: sealEquipmentActionToken(game, item.id, 'dismantle_item', dismantle.optionId, 'option', expiresAt), expiresAt,
     label: text('dismantle.label', 'Desmantelar'),
     description: text('dismantle.description', 'Convierte el objeto en materiales'),
     consequences: [destroyItem(item.id)],
-    acknowledgement: { acknowledgementId: sealEquipmentActionToken(game, item.id, 'dismantle_item', dismantle.acknowledgementId, 'acknowledgement'), expiresAt, text: text('dismantle.ack', 'Confirmar desmantelado irreversible') }
+    acknowledgement: { acknowledgementId: sealEquipmentActionToken(game, item.id, 'dismantle_item', dismantle.acknowledgementId, 'acknowledgement', expiresAt), expiresAt, text: text('dismantle.ack', 'Confirmar desmantelado irreversible') }
   }]))
 
   const imprint = getImprintOption(item, state)
   if (imprint) {
     actions.push(sealedAction(game, 'replace_boss_imprint', item.id, 'Reemplazar impronta', [{
-      optionId: sealEquipmentActionToken(game, item.id, 'replace_boss_imprint', imprint.optionId, 'option'), expiresAt,
+      optionId: sealEquipmentActionToken(game, item.id, 'replace_boss_imprint', imprint.optionId, 'option', expiresAt), expiresAt,
       label: text('imprint.label', 'Reemplazar impronta'),
       description: text('imprint.description', 'Activa la impronta pendiente'),
       consequences: [],
-      acknowledgement: { acknowledgementId: sealEquipmentActionToken(game, item.id, 'replace_boss_imprint', imprint.acknowledgementId, 'acknowledgement'), expiresAt, text: text('imprint.ack', 'Confirmar reemplazo de impronta') }
+      acknowledgement: { acknowledgementId: sealEquipmentActionToken(game, item.id, 'replace_boss_imprint', imprint.acknowledgementId, 'acknowledgement', expiresAt), expiresAt, text: text('imprint.ack', 'Confirmar reemplazo de impronta') }
     }]))
   }
 
@@ -318,7 +324,7 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
 
 function sealedAction(game: PersistedGameV3, action: EquipmentV2Action, itemId: string, label: string, options: unknown[]): Record<string, unknown> {
   return {
-    authorizationId: sealEquipmentActionToken(game, itemId, action, action, 'authorization'),
+    authorizationId: sealEquipmentActionToken(game, itemId, action, action, 'authorization', getActionExpiresAt(options)),
     action,
     enabled: true,
     label: text(`${action}.label`, label),
@@ -326,6 +332,11 @@ function sealedAction(game: PersistedGameV3, action: EquipmentV2Action, itemId: 
     targetId: itemId,
     execution: { itemId, options }
   }
+}
+
+function getActionExpiresAt(options: unknown[]): string {
+  const option = options[0] as { expiresAt?: string } | undefined
+  return option?.expiresAt ?? equipmentActionExpiresAt(new Date())
 }
 
 function text(key: string, fallback: string): Record<string, string> {

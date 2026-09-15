@@ -496,7 +496,7 @@ export async function mutateEquipmentV2Atomic(
       continue
     }
     if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(currentDocument) || !isPersistedCanonical(currentDocument))) {
-      const backfilled = !hasLegacyFields(currentDocument) ? backfillRetainedVisitorIdentity(currentDocument) : undefined
+      const backfilled = !hasLegacyFields(currentDocument) ? backfillPersistedV3(currentDocument) : undefined
       if (!backfilled || !isPersistedCanonical(backfilled)) throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
       await saves.replaceOne({ userId, revision: currentDocument.revision } as Filter<DbSaveGame>, backfilled as unknown as DbSaveGame)
       continue
@@ -531,7 +531,7 @@ export async function mutateEquipmentV2Atomic(
     transitioned.revision = expectedRevision + 1
     transitioned.updatedAt = now
     const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
-    const persistedResponse = structuredClone(transitioned)
+    const persistedResponse = createReplaySnapshot(transitioned)
     transitioned.requestRecords = [...current.requestRecords, {
       requestId, operationKey, businessKey, commandHash, response, persistedResponse,
       revision: transitioned.revision, createdAt: now, updatedAt: now
@@ -574,7 +574,8 @@ export async function reconcilePersistedGameV3(
   userId: string,
   dependencies = defaultDependencies
 ): Promise<PersistedGameV3> {
-  for (let attempt = 0; attempt < MAX_MUTATE_ATTEMPTS; attempt += 1) {
+  let conflicts = 0
+  while (conflicts < MAX_MUTATE_ATTEMPTS) {
     const current = await getPersistedGameV3(userId, dependencies)
     const due = Object.entries(current.serviceJobStateById)
       .find(([, state]) => state.status === 'active' && Date.parse(state.completesAt) <= dependencies.now().getTime())
@@ -588,11 +589,22 @@ export async function reconcilePersistedGameV3(
         { action: 'complete_service_job', jobId },
         dependencies
       )
+      conflicts = 0
     } catch (error) {
       if (!(error instanceof RevisionConflictError)) throw error
+      conflicts += 1
     }
   }
   throw new Error('Save changed concurrently; retry reconciliation')
+}
+
+function createReplaySnapshot(game: PersistedGameV3): PersistedGameV3 {
+  return {
+    ...structuredClone(game),
+    requestRecords: [],
+    businessKeys: {},
+    ledger: []
+  }
 }
 
 function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
@@ -1006,6 +1018,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     for (const container of Object.values(containers as Record<string, PersistedCustodyContainer>)) {
       if (container.projection?.kind !== kind && !(kind === 'service' && container.projection?.kind === 'legacy_appraiser')) return false
       if (kind === 'service' && container.itemIds.length > 1) return false
+      if (kind === 'service' && container.projection?.kind === 'service' && !serviceJobStateById[container.id]) return false
       for (const itemId of container.itemIds) {
         if (activeReferences.has(itemId)) return false
         activeReferences.add(itemId)
