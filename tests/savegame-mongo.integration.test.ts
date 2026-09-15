@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -374,6 +374,53 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(persisted?.ledger.at(-1).materialDeltas.scrap).toBeGreaterThan(0)
   })
 
+  it('replays an equipment V2 mutation against the configured reward after reload and later commits', async () => {
+    const { mutateEquipmentV2Atomic, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[21]!
+    const claimed = await claimConfiguredMongoReward(userId)
+    const rewardItemId = claimed.rewardItemId
+    const deps = fixedDeps()
+    const identify = executionOption(mapPersistedGameToGameView(claimed.persisted, deps.now()), rewardItemId, 'identify_item')
+
+    const first = await mutateEquipmentV2Atomic(userId, 'mongo-reward-identify', claimed.persisted.revision, {
+      action: 'identify_item', itemId: rewardItemId, optionId: identify.optionId
+    }, deps)
+    await mutateSaveGameAtomic(userId, 'mongo-after-reward', 'mongo:after-reward', first.revision, {}, (save) => { save.gold += 1 }, deps)
+    const replay = await mutateEquipmentV2Atomic(userId, 'mongo-reward-identify', claimed.persisted.revision, {
+      action: 'identify_item', itemId: rewardItemId, optionId: identify.optionId
+    }, deps)
+
+    expect(replay.revision).toBe(first.revision)
+    expect(replay.itemsById[rewardItemId]!.identified).toBe(true)
+  })
+
+  it('allows one Mongo CAS winner for concurrent equipment commands against the configured reward', async () => {
+    const { mutateEquipmentV2Atomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[22]!
+    const claimed = await claimConfiguredMongoReward(userId)
+    const rewardItemId = claimed.rewardItemId
+    const deps = fixedDeps()
+    const view = mapPersistedGameToGameView(claimed.persisted, deps.now())
+    const identify = executionOption(view, rewardItemId, 'identify_item')
+    const dismantle = executionOption(view, rewardItemId, 'dismantle_item')
+
+    const results = await Promise.allSettled([
+      mutateEquipmentV2Atomic(userId, 'mongo-reward-identify-cas', claimed.persisted.revision, {
+        action: 'identify_item', itemId: rewardItemId, optionId: identify.optionId
+      }, deps),
+      mutateEquipmentV2Atomic(userId, 'mongo-reward-dismantle-cas', claimed.persisted.revision, {
+        action: 'dismantle_item', itemId: rewardItemId, optionId: dismantle.optionId, acknowledgementId: dismantle.acknowledgementId
+      }, deps)
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect((await collection.findOne({ userId }))?.ledger).toHaveLength(4)
+  })
+
   it('rejects a declared V3 document with legacy or incomplete nested fields', async () => {
     const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
     const corrupt = await getPersistedGameV3(userIds[10]!)
@@ -502,4 +549,30 @@ async function createLegacyRetainedLifecycle(userId: string): Promise<{
   if (legacyProjection?.kind !== 'expedition') throw new Error('Expected retained expedition projection')
   delete legacyProjection.retainedVisitor
   return { retainedLifecycle, itemId, visitorId: visitor.id, historicalName, departedAt }
+}
+
+async function claimConfiguredMongoReward(userId: string): Promise<{ persisted: PersistedGameV3; rewardItemId: string; visitorId: string }> {
+  const { getPersistedGameV3, getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+  const { assignVisitorCommission, claimVisitorCommission } = await import('../utils/visitor-logic')
+  const initial = await getPersistedGameV3(userId)
+  const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
+  const start = new Date('2026-09-13T00:00:00.000Z')
+  const deps = fixedDeps(start)
+  await mutateSaveGameAtomic(userId, 'mongo-reward-assign', `mongo:reward-assign:${userId}`, initial.revision, {}, (save) => {
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
+    visitor.state = 'traded'
+    assignVisitorCommission(save, visitorId, 'safe', () => 0, start)
+  }, deps)
+  const assigned = await getPersistedGameV3(userId)
+  const commission = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
+  await getSaveGame(userId, fixedDeps(new Date(commission.finishesAt)))
+  const ready = await getPersistedGameV3(userId)
+  await mutateSaveGameAtomic(userId, 'mongo-reward-claim', `mongo:reward-claim:${userId}`, ready.revision, {}, (save) => {
+    claimVisitorCommission(save, visitorId, new Date(commission.finishesAt))
+  }, fixedDeps(new Date(commission.finishesAt)))
+  const persisted = await getPersistedGameV3(userId)
+  const rewardItemId = [persisted.visitRound, ...persisted.visitHistory]
+    .flatMap((round) => round.slots)
+    .find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!.rewardItemId!
+  return { persisted, rewardItemId, visitorId }
 }

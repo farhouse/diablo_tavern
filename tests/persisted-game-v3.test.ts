@@ -278,6 +278,47 @@ describe('PersistedGameV3 invariants', () => {
     expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: 'commission-reward' }))
   })
 
+  it('keeps commission reward provenance as the invariant and rejects duplicate loot keys', () => {
+    const save = createSaveGame('reward-business-key')
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    visitor.state = 'returned'
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!, id: 'reward-business-commission', status: 'ready',
+      startedAt: save.createdAt, finishesAt: save.updatedAt, outcomeRoll: 0.1,
+      outcome: 'complete', rewardGold: visitor.commissionOptions[0]!.fullRewardGold,
+      rewardItem: structuredClone(save.stash[0]!)
+    }
+    const persisted = buildPersistedFromPublic(save, undefined, { now: () => new Date(save.updatedAt), random: () => 0.5, uuid: () => 'business-reward' })
+    const commission = persisted.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)!.visitor!.commission!
+    const rewardItemId = commission.rewardItemId!
+
+    const claimed = structuredClone(persisted)
+    const claimedCommission = claimed.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)!.visitor!.commission!
+    claimedCommission.status = 'claimed'
+    claimedCommission.claimedAt = save.updatedAt
+    claimed.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)!.visitor!.state = 'departed'
+    claimed.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)!.visitor!.departedAt = save.updatedAt
+    claimed.settlementsById[claimedCommission.id]!.itemIds = []
+    claimed.stash = claimed.stash.filter((itemId) => itemId !== rewardItemId)
+    claimed.itemPlacements[rewardItemId] = { ownerKind: 'tombstone', custodyKind: 'tombstone', custodyId: 'dismantle-reward' }
+    expect(isPersistedCanonical(claimed)).toBe(true)
+
+    const duplicate = structuredClone(persisted)
+    duplicate.itemsById['duplicate-reward'] = { ...structuredClone(duplicate.itemsById[rewardItemId]!), id: 'duplicate-reward' }
+    duplicate.itemPlacements['duplicate-reward'] = { ownerKind: 'caravan', custodyKind: 'stash' }
+    duplicate.stash.push('duplicate-reward')
+    duplicate.itemV2ById['duplicate-reward'] = structuredClone(duplicate.itemV2ById[rewardItemId]!)
+    expect(isPersistedCanonical(duplicate)).toBe(false)
+
+    const wrongRegion = structuredClone(persisted)
+    wrongRegion.itemV2ById[rewardItemId]!.provenance!.zoneId = 'cold-plains'
+    expect(isPersistedCanonical(wrongRegion)).toBe(false)
+
+    const emptyBusinessKey = structuredClone(persisted)
+    emptyBusinessKey.itemV2ById[rewardItemId]!.provenance!.businessKey = ''
+    expect(isPersistedCanonical(emptyBusinessKey)).toBe(false)
+  })
+
   it.each(['partial', 'failed'] as const)('projects %s commission lifecycle without fabricating an item', (outcome) => {
     const save = createSaveGame(`commission-${outcome}`)
     const visitor = save.visitRound.slots.find((slot) => slot.visitor)?.visitor!

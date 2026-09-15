@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SaveGame } from '../types/game'
 import { createSaveGame } from '../utils/game-logic'
 import type { PersistedGameV3 } from '../server/utils/savegame'
-import { generateLootForZone, LOOT_CONFIG_VERSION } from '../server/domain/loot-v2'
+import { generateLootForZone, LOOT_CONFIG_VERSION, validateLootConfig } from '../server/domain/loot-v2'
 
 let document: PersistedGameV3 | Record<string, unknown> | undefined
 let uncertainCommit = false
@@ -288,6 +288,57 @@ describe('atomic persisted-game mutation', () => {
     expect(Object.entries(claimed.itemV2ById).filter(([, state]) => state.provenance?.businessKey === `loot:${readyVisitor.commission!.id}:reward`))
       .toHaveLength(1)
     expect(claimed.expeditionsById[readyVisitor.commission!.id]).toBeDefined()
+  })
+
+  it.each(['queue_blacksmith_job', 'dismantle_item', 'sell', 'loan'] as const)('keeps claimed configured reward canonical after %s', async (action) => {
+    const { mutateEquipmentV2Atomic, transitionItemAtomic, isPersistedCanonical } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const claimed = await claimConfiguredReward()
+    const rewardItemId = claimed.rewardItemId
+    document = claimed.persisted
+
+    if (action === 'queue_blacksmith_job') {
+      const option = executionOption(mapPersistedGameToGameView(claimed.persisted, fixedDeps().now()), rewardItemId, action)
+      await mutateEquipmentV2Atomic('atomic-user', `reward-${action}`, claimed.persisted.revision, {
+        action, itemId: rewardItemId, optionId: option.optionId
+      }, fixedDeps())
+    } else if (action === 'dismantle_item') {
+      const option = executionOption(mapPersistedGameToGameView(claimed.persisted, fixedDeps().now()), rewardItemId, action)
+      await mutateEquipmentV2Atomic('atomic-user', `reward-${action}`, claimed.persisted.revision, {
+        action, itemId: rewardItemId, optionId: option.optionId, acknowledgementId: option.acknowledgementId
+      }, fixedDeps())
+    } else if (action === 'sell') {
+      await transitionItemAtomic('atomic-user', 'reward-sell', claimed.persisted.revision, {
+        operation: 'sell', itemId: rewardItemId, targetId: claimed.visitorId
+      })
+    } else {
+      await transitionItemAtomic('atomic-user', 'reward-loan', claimed.persisted.revision, {
+        operation: 'loan', itemId: rewardItemId, targetId: claimed.commissionId
+      })
+    }
+
+    expect(isPersistedCanonical(document)).toBe(true)
+  })
+
+  it('supports boss reward claim identify and imprint replacement from the configured reward', async () => {
+    const { mutateEquipmentV2Atomic, isPersistedCanonical } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const claimed = await claimConfiguredReward('act-boss', [0.5, 0.1, 0.2, 0.3])
+    const rewardItemId = claimed.rewardItemId
+    document = claimed.persisted
+
+    const identify = executionOption(mapPersistedGameToGameView(claimed.persisted, fixedDeps().now()), rewardItemId, 'identify_item')
+    const identified = await mutateEquipmentV2Atomic('atomic-user', 'boss-reward-identify', claimed.persisted.revision, {
+      action: 'identify_item', itemId: rewardItemId, optionId: identify.optionId
+    }, fixedDeps())
+    const imprint = executionOption(mapPersistedGameToGameView(identified, fixedDeps().now()), rewardItemId, 'replace_boss_imprint')
+    const replaced = await mutateEquipmentV2Atomic('atomic-user', 'boss-reward-imprint', identified.revision, {
+      action: 'replace_boss_imprint', itemId: rewardItemId, optionId: imprint.optionId, acknowledgementId: imprint.acknowledgementId
+    }, fixedDeps())
+
+    expect(replaced.itemV2ById[rewardItemId]!.activeImprint?.imprintId).toBe('boss-act-boss')
+    expect(replaced.itemV2ById[rewardItemId]!.pendingImprint).toBeUndefined()
+    expect(isPersistedCanonical(replaced)).toBe(true)
   })
 
   it('recovers an exact replay when replaceOne throws after committing', async () => {
@@ -1012,6 +1063,32 @@ describe('atomic persisted-game mutation', () => {
 })
 
 describe('equipment V2 loot generation', () => {
+  it('rejects invalid zones tables and unique entries instead of falling back', () => {
+    expect(() => generateLootForZone({
+      zoneId: 'missing-zone',
+      businessKey: 'loot:missing-zone',
+      droppedAt: '2026-09-15T12:00:00.000Z'
+    }, sequenceDeps([0], ['missing']))).toThrow('Unknown loot zone')
+
+    expect(() => validateLootConfig({
+      'act1-low': { tableId: 'foreign-table', entries: [{ weight: 1, baseIndex: 0, rarity: 'normal' }] }
+    })).toThrow('Unknown loot table')
+
+    expect(() => validateLootConfig({
+      'act1-low': { tableId: 'act1-low', entries: [{ weight: 1, baseIndex: 999, rarity: 'normal' }] },
+      'act1-mid': { tableId: 'act1-mid', entries: [{ weight: 1, baseIndex: 0, rarity: 'normal' }] },
+      'act1-high': { tableId: 'act1-high', entries: [{ weight: 1, baseIndex: 0, rarity: 'normal' }] },
+      'act1-boss': { tableId: 'act1-boss', entries: [{ weight: 1, baseIndex: 0, rarity: 'normal' }] }
+    })).toThrow('Unknown loot base index')
+
+    expect(() => validateLootConfig({
+      'act1-low': { tableId: 'act1-low', entries: [{ weight: 1, baseIndex: 0, rarity: 'normal' }] },
+      'act1-mid': { tableId: 'act1-mid', entries: [{ weight: 1, baseIndex: 0, rarity: 'normal' }] },
+      'act1-high': { tableId: 'act1-high', entries: [{ weight: 1, baseIndex: 0, rarity: 'normal' }] },
+      'act1-boss': { tableId: 'act1-boss', entries: [{ weight: 1, baseIndex: 19, rarity: 'unique' }] }
+    })).toThrow('No compatible unique')
+  })
+
   it('repeats identity affixes and provenance for the same injected seed sequence', () => {
     const first = generateLootForZone({
       zoneId: 'cold-plains',
@@ -1075,6 +1152,37 @@ function executionOption(view: { items: unknown[] }, itemId: string, action: str
   const option = availability?.execution?.options?.[0] as { optionId?: string; expiresAt?: string; acknowledgement?: { acknowledgementId?: string } } | undefined
   if (!option?.optionId || !option.expiresAt) throw new Error(`Missing ${action} option for ${itemId}`)
   return { optionId: option.optionId, expiresAt: option.expiresAt, acknowledgementId: option.acknowledgement?.acknowledgementId }
+}
+
+async function claimConfiguredReward(
+  regionId = 'blood-moor',
+  randoms: number[] = [0, 0.25, 0.5, 0.75]
+): Promise<{ persisted: PersistedGameV3; rewardItemId: string; visitorId: string; commissionId: string }> {
+  const { getPersistedGameV3, getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+  const { assignVisitorCommission, claimVisitorCommission } = await import('../utils/visitor-logic')
+  const initial = await getPersistedGameV3('atomic-user')
+  const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
+  const start = new Date('2026-09-13T00:00:00.000Z')
+  const dependencies = sequenceDeps(randoms, [`reward-${regionId}`])
+
+  await mutateSaveGameAtomic('atomic-user', `assign-${regionId}`, `commission:assign:${regionId}`, initial.revision, {}, (save) => {
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
+    visitor.state = 'traded'
+    visitor.commissionOptions[0] = { ...visitor.commissionOptions[0]!, regionId }
+    assignVisitorCommission(save, visitorId, 'safe', () => 0, start)
+  }, { ...dependencies, now: () => start })
+  const assigned = await getPersistedGameV3('atomic-user')
+  const commission = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
+  await getSaveGame('atomic-user', { ...dependencies, now: () => new Date(commission.finishesAt) })
+  const ready = await getPersistedGameV3('atomic-user')
+  await mutateSaveGameAtomic('atomic-user', `claim-${regionId}`, `commission:claim:${regionId}`, ready.revision, {}, (save) => {
+    claimVisitorCommission(save, visitorId, new Date(commission.finishesAt))
+  }, { ...dependencies, now: () => new Date(commission.finishesAt) })
+  const persisted = await getPersistedGameV3('atomic-user')
+  const claimedCommission = [persisted.visitRound, ...persisted.visitHistory]
+    .flatMap((round) => round.slots)
+    .find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
+  return { persisted, rewardItemId: claimedCommission.rewardItemId!, visitorId, commissionId: claimedCommission.id }
 }
 
 function fixedDeps(now = new Date('2026-09-15T12:00:00.000Z')) {

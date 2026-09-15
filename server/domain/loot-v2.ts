@@ -41,7 +41,7 @@ const LOOT_TABLES: Record<string, LootTable> = {
       { weight: 25, baseIndex: 3, rarity: 'magic' },
       { weight: 25, baseIndex: 8, rarity: 'rare', combinationId: 'tower-armory' },
       { weight: 25, baseIndex: 11, rarity: 'rare', combinationId: 'tower-armory', imperfectPieceId: 'split-crown' },
-      { weight: 25, baseIndex: 19, rarity: 'unique' }
+      { weight: 25, baseIndex: 11, rarity: 'unique' }
     ]
   },
   'act1-boss': {
@@ -55,6 +55,8 @@ const LOOT_TABLES: Record<string, LootTable> = {
   }
 }
 
+type LootTableMap = Record<string, LootTable>
+
 export interface LootGenerationContext {
   zoneId: string
   businessKey: string
@@ -67,13 +69,14 @@ export interface GeneratedLoot {
 }
 
 export function generateLootForZone(context: LootGenerationContext, dependencies: PersistenceDependencies): GeneratedLoot {
-  const quest = quests.find((entry) => entry.id === context.zoneId) ?? quests[0]!
-  const table = LOOT_TABLES[quest.lootTableId] ?? LOOT_TABLES['act1-low']!
+  const quest = requireQuest(context.zoneId)
+  const table = requireLootTable(quest.lootTableId, LOOT_TABLES)
   const entry = pickWeighted(table.entries, dependencies.random())
-  const base = itemBases[entry.baseIndex] ?? itemBases[0]!
+  const base = itemBases[entry.baseIndex]
+  if (!base) throw new Error(`Unknown loot base index ${entry.baseIndex} in table ${table.tableId}`)
   const rarity = entry.rarity
   const unique = rarity === 'unique'
-    ? uniqueItems.find((item) => item.type === base.type) ?? uniqueItems[0]
+    ? requireUniqueForBase(base.type, table.tableId, quest.minLevel)
     : undefined
   const affixes = unique
     ? cloneAffixes(unique.affixes)
@@ -90,7 +93,7 @@ export function generateLootForZone(context: LootGenerationContext, dependencies
     identified: rarity === 'normal',
     width: unique?.width ?? base.width,
     height: unique?.height ?? base.height,
-    requiredLevel: unique?.requiredLevel ?? Math.max(base.requiredLevel, quest.minLevel),
+    requiredLevel: Math.max(unique?.requiredLevel ?? base.requiredLevel, quest.minLevel),
     affixes,
     value
   }
@@ -112,6 +115,36 @@ export function generateLootForZone(context: LootGenerationContext, dependencies
         : {})
     }
   }
+}
+
+export function validateLootConfig(tables: LootTableMap): void {
+  for (const quest of quests) requireLootTable(quest.lootTableId, tables, quest.minLevel)
+}
+
+function requireQuest(zoneId: string) {
+  const quest = quests.find((entry) => entry.id === zoneId)
+  if (!quest) throw new Error(`Unknown loot zone ${zoneId}`)
+  return quest
+}
+
+function requireLootTable(tableId: string, tables: LootTableMap, minLevel?: number): LootTable {
+  const table = tables[tableId]
+  if (!table || table.tableId !== tableId) throw new Error(`Unknown loot table ${tableId}`)
+  if (!table.entries.length) throw new Error(`Loot table ${tableId} has no entries`)
+  for (const entry of table.entries) {
+    if (!Number.isInteger(entry.baseIndex) || !itemBases[entry.baseIndex]) {
+      throw new Error(`Unknown loot base index ${entry.baseIndex} in table ${tableId}`)
+    }
+    if (!Number.isFinite(entry.weight) || entry.weight <= 0) throw new Error(`Invalid loot weight in table ${tableId}`)
+    if (entry.rarity === 'unique') requireUniqueForBase(itemBases[entry.baseIndex]!.type, tableId, minLevel)
+  }
+  return table
+}
+
+function requireUniqueForBase(type: Item['type'], tableId: string, minLevel = 0): typeof uniqueItems[number] {
+  const unique = uniqueItems.find((item) => item.type === type && item.requiredLevel >= minLevel)
+  if (!unique) throw new Error(`No compatible unique ${type} for loot table ${tableId}`)
+  return unique
 }
 
 function pickWeighted(entries: LootTableEntry[], random: number): LootTableEntry {

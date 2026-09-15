@@ -5,7 +5,7 @@ import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERS
 import { refreshVisitRound } from '~/utils/visitor-logic'
 import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
 import { applyEquipmentV2Command, authorizeEquipmentV2Command, type EquipmentV2Command } from '~/server/domain/equipment-v2'
-import { generateLootForZone } from '~/server/domain/loot-v2'
+import { generateLootForZone, LOOT_CONFIG_VERSION } from '~/server/domain/loot-v2'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -988,6 +988,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
         : commission.outcome === 'partial' ? commission.partialRewardGold : 0
       if (commission.rewardGold !== expectedGold) return false
       if (commission.outcome !== 'complete' && commission.rewardItemId !== undefined) return false
+      if (commission.rewardItemId && !isCommissionRewardLoot(candidate as unknown as PersistedGameV3, commission)) return false
       const expectedSettlementItems = commission.status === 'ready' && commission.rewardItemId
         ? [commission.rewardItemId]
         : []
@@ -1093,9 +1094,9 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
       if (visitor.commission && Object.prototype.hasOwnProperty.call(visitor.commission, 'rewardItem')) return false
       if (visitor.commission?.rewardItemId) {
         const placement = itemPlacements[visitor.commission.rewardItemId]
-        if (!itemsById[visitor.commission.rewardItemId] || placement?.ownerKind !== 'caravan') return false
+        if (!itemsById[visitor.commission.rewardItemId] || !placement) return false
         if (visitor.commission.status === 'claimed') {
-          if (placement.custodyKind !== 'stash') return false
+          if (!isCommissionRewardLoot(candidate as unknown as PersistedGameV3, visitor.commission)) return false
         } else if (placement.custodyKind !== 'settlement' || placement.custodyId !== visitor.commission.id) return false
       }
     }
@@ -1328,6 +1329,7 @@ function isContainerMap(value: unknown): value is Record<string, PersistedCustod
 
 function isItemV2Map(value: unknown): value is Record<string, PersistedItemV2State> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const lootBusinessKeys = new Set<string>()
   return Object.values(value as Record<string, unknown>).every((entry) => {
     if (!isPlainRecord(entry) || !hasOnlyKeys(entry, [
       'sealedAffixes', 'blacksmithLevel', 'enchantCount', 'activeImprint', 'pendingImprint', 'imprintHistory', 'provenance'
@@ -1340,16 +1342,34 @@ function isItemV2Map(value: unknown): value is Record<string, PersistedItemV2Sta
     if (entry.pendingImprint !== undefined && !isImprint(entry.pendingImprint, false)) return false
     if (entry.imprintHistory !== undefined && (!Array.isArray(entry.imprintHistory)
       || !entry.imprintHistory.every((imprint) => isImprint(imprint, true)))) return false
-    return entry.provenance === undefined || (isPlainRecord(entry.provenance)
-      && hasOnlyKeys(entry.provenance, ['zoneId', 'lootTableId', 'configVersion', 'businessKey', 'combinationId', 'imperfectPieceId', 'droppedAt'])
-      && typeof entry.provenance.zoneId === 'string' && Boolean(entry.provenance.zoneId)
-      && (entry.provenance.lootTableId === undefined || typeof entry.provenance.lootTableId === 'string')
-      && (entry.provenance.configVersion === undefined || typeof entry.provenance.configVersion === 'string')
-      && (entry.provenance.businessKey === undefined || typeof entry.provenance.businessKey === 'string')
-      && (entry.provenance.combinationId === undefined || typeof entry.provenance.combinationId === 'string')
-      && (entry.provenance.imperfectPieceId === undefined || typeof entry.provenance.imperfectPieceId === 'string')
-      && Number.isFinite(Date.parse(String(entry.provenance.droppedAt))))
+    if (entry.provenance === undefined) return true
+    if (!isPlainRecord(entry.provenance)
+      || !hasOnlyKeys(entry.provenance, ['zoneId', 'lootTableId', 'configVersion', 'businessKey', 'combinationId', 'imperfectPieceId', 'droppedAt'])
+      || typeof entry.provenance.zoneId !== 'string' || !entry.provenance.zoneId
+      || (entry.provenance.lootTableId !== undefined && (typeof entry.provenance.lootTableId !== 'string' || !entry.provenance.lootTableId))
+      || (entry.provenance.configVersion !== undefined && (typeof entry.provenance.configVersion !== 'string' || !entry.provenance.configVersion))
+      || (entry.provenance.businessKey !== undefined && (typeof entry.provenance.businessKey !== 'string' || !entry.provenance.businessKey))
+      || (entry.provenance.combinationId !== undefined && (typeof entry.provenance.combinationId !== 'string' || !entry.provenance.combinationId))
+      || (entry.provenance.imperfectPieceId !== undefined && (typeof entry.provenance.imperfectPieceId !== 'string' || !entry.provenance.imperfectPieceId))
+      || !Number.isFinite(Date.parse(String(entry.provenance.droppedAt)))) return false
+    if (entry.provenance.businessKey) {
+      if (lootBusinessKeys.has(entry.provenance.businessKey)) return false
+      lootBusinessKeys.add(entry.provenance.businessKey)
+    }
+    return true
   })
+}
+
+function isCommissionRewardLoot(game: PersistedGameV3, commission: PersistedVisitorCommission): boolean {
+  if (!commission.rewardItemId || commission.outcome !== 'complete') return false
+  const state = game.itemV2ById[commission.rewardItemId]
+  const provenance = state?.provenance
+  if (!provenance) return false
+  return provenance.businessKey === `loot:${commission.id}:reward`
+    && provenance.zoneId === commission.regionId
+    && provenance.configVersion === LOOT_CONFIG_VERSION
+    && typeof provenance.lootTableId === 'string'
+    && Boolean(provenance.lootTableId)
 }
 
 function isServiceJobStateMap(value: unknown): value is Record<string, PersistedServiceJobState> {
@@ -1524,11 +1544,15 @@ function rewardLootForCommission(
   dependencies: PersistenceDependencies
 ): { item: Item; state: PersistedItemV2State } {
   const businessKey = `loot:${commission.id}:reward`
-  const existing = previous && Object.entries(previous.itemV2ById)
-    .find(([, state]) => state.provenance?.businessKey === businessKey)
+  const previousRewardItemId = previous ? previousRewardIdForCommission(previous, commission.id) : undefined
+  const existing = previousRewardItemId && previous?.itemV2ById[previousRewardItemId]?.provenance?.businessKey === businessKey
+    ? [previousRewardItemId, previous.itemV2ById[previousRewardItemId]!] as const
+    : previous
+      ? Object.entries(previous.itemV2ById).filter(([, state]) => state.provenance?.businessKey === businessKey).at(0)
+      : undefined
   if (existing) {
     const [itemId, state] = existing
-    const item = previous.itemsById[itemId]
+    const item = previous?.itemsById[itemId]
     if (item) return { item: structuredClone(item), state: structuredClone(state) }
   }
   const generated = generateLootForZone({
@@ -1538,6 +1562,14 @@ function rewardLootForCommission(
   }, dependencies)
   generatedItemStates[generated.item.id] = generated.state
   return generated
+}
+
+function previousRewardIdForCommission(previous: PersistedGameV3, commissionId: string): string | undefined {
+  for (const round of [previous.visitRound, ...previous.visitHistory]) {
+    const commission = round.slots.find((slot) => slot.visitor?.commission?.id === commissionId)?.visitor?.commission
+    if (commission?.rewardItemId) return commission.rewardItemId
+  }
+  return undefined
 }
 
 function hydrateRound(round: PersistedVisitRound, items: Record<string, Item>): VisitRound {
