@@ -2,7 +2,7 @@ import type { Item } from '~/types/game'
 import { validateGameView } from '~/server/utils/game-view-validator'
 import {
   getSaveGame,
-  getPersistedGameV3,
+  reconcilePersistedGameV3,
   type PersistedGameV3,
   type PersistedItemPlacement
 } from '~/server/utils/savegame'
@@ -12,7 +12,10 @@ import {
   getDismantleOption,
   getEnchanterOption,
   getIdentifyOption,
-  getImprintOption
+  getImprintOption,
+  equipmentActionExpiresAt,
+  sealEquipmentActionToken,
+  type EquipmentV2Action
 } from '~/server/domain/equipment-v2'
 
 export interface GameView {
@@ -34,7 +37,7 @@ export interface GameView {
 
 export async function getGameView(userId: string, now = new Date()): Promise<GameView> {
   await getSaveGame(userId, { now: () => now, random: Math.random, uuid: crypto.randomUUID })
-  const persisted = await getPersistedGameV3(userId)
+  const persisted = await reconcilePersistedGameV3(userId, { now: () => now, random: Math.random, uuid: crypto.randomUUID })
   return mapPersistedGameToGameView(persisted, now)
 }
 
@@ -47,10 +50,10 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     if (placement.custodyKind === 'service') {
       const target = game.serviceJobsById[placement.custodyId ?? '']
       if (target?.projection?.kind === 'legacy_appraiser') {
-        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' }, game, now)]
+        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' }, game)]
       }
     }
-    return [mapItem(item, placement, game, now)]
+    return [mapItem(item, placement, game)]
   })
   const visitors: unknown[] = [game.visitRound, ...game.visitHistory].flatMap<unknown>((round) => round.slots.flatMap<unknown>((slot) => {
     const visitor = slot.visitor
@@ -231,8 +234,8 @@ function assertUnique(values: Array<Record<string, unknown>>, key: string): void
   if (new Set(ids).size !== ids.length) throw new Error(`Duplicate public ${key}`)
 }
 
-function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3, now: Date): Record<string, unknown> {
-  const actions = itemActions(item, placement, game, now)
+function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3): Record<string, unknown> {
+  const actions = itemActions(item, placement, game)
   const base = {
     itemId: item.id,
     name: { key: `item.${item.baseName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, fallback: item.displayName },
@@ -258,15 +261,15 @@ function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedG
   }
 }
 
-function itemActions(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3, now: Date): unknown[] {
+function itemActions(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3): unknown[] {
   if (!canUseEquipmentService(game, item.id) || placement.ownerKind !== 'caravan' || placement.custodyKind !== 'stash') return []
-  const expiresAt = new Date(now.getTime() + 5 * 60_000).toISOString()
+  const expiresAt = equipmentActionExpiresAt(game)
   const state = game.itemV2ById[item.id]
   const actions: unknown[] = []
   if (!item.identified) {
     const option = getIdentifyOption(item)
-    actions.push(sealedAction('identify_item', item.id, 'Identificar', [{
-      optionId: option.optionId, expiresAt,
+    actions.push(sealedAction(game, 'identify_item', item.id, 'Identificar', [{
+      optionId: sealEquipmentActionToken(game, item.id, 'identify_item', option.optionId, 'option'), expiresAt,
       label: text('identify.label', 'Identificar'),
       description: text('identify.description', `Cuesta ${option.gold} oro`),
       consequences: option.gold > 0 ? [spendGold(option.gold)] : []
@@ -275,47 +278,47 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
   }
 
   const blacksmith = getBlacksmithOption(item, state)
-  actions.push(sealedAction('queue_blacksmith_job', item.id, 'Herrero', [{
-    optionId: blacksmith.optionId, expiresAt,
+  actions.push(sealedAction(game, 'queue_blacksmith_job', item.id, 'Herrero', [{
+    optionId: sealEquipmentActionToken(game, item.id, 'queue_blacksmith_job', blacksmith.optionId, 'option'), expiresAt,
     label: text('blacksmith.label', 'Mejorar en herrero'),
     description: text('blacksmith.description', `Cuesta ${blacksmith.gold} oro`),
     consequences: [spendGold(blacksmith.gold)]
   }]))
 
   const enchanter = getEnchanterOption(item, state)
-  actions.push(sealedAction('queue_enchanter_job', item.id, 'Encantador', [{
-    optionId: enchanter.optionId, expiresAt,
+  actions.push(sealedAction(game, 'queue_enchanter_job', item.id, 'Encantador', [{
+    optionId: sealEquipmentActionToken(game, item.id, 'queue_enchanter_job', enchanter.optionId, 'option'), expiresAt,
     label: text('enchanter.label', 'Encantar'),
     description: text('enchanter.description', `Cuesta ${enchanter.gold} oro`),
     consequences: [spendGold(enchanter.gold)]
   }]))
 
   const dismantle = getDismantleOption(item)
-  actions.push(sealedAction('dismantle_item', item.id, 'Desmantelar', [{
-    optionId: dismantle.optionId, expiresAt,
+  actions.push(sealedAction(game, 'dismantle_item', item.id, 'Desmantelar', [{
+    optionId: sealEquipmentActionToken(game, item.id, 'dismantle_item', dismantle.optionId, 'option'), expiresAt,
     label: text('dismantle.label', 'Desmantelar'),
     description: text('dismantle.description', 'Convierte el objeto en materiales'),
     consequences: [destroyItem(item.id)],
-    acknowledgement: { acknowledgementId: dismantle.acknowledgementId, expiresAt, text: text('dismantle.ack', 'Confirmar desmantelado irreversible') }
+    acknowledgement: { acknowledgementId: sealEquipmentActionToken(game, item.id, 'dismantle_item', dismantle.acknowledgementId, 'acknowledgement'), expiresAt, text: text('dismantle.ack', 'Confirmar desmantelado irreversible') }
   }]))
 
   const imprint = getImprintOption(item, state)
   if (imprint) {
-    actions.push(sealedAction('replace_boss_imprint', item.id, 'Reemplazar impronta', [{
-      optionId: imprint.optionId, expiresAt,
+    actions.push(sealedAction(game, 'replace_boss_imprint', item.id, 'Reemplazar impronta', [{
+      optionId: sealEquipmentActionToken(game, item.id, 'replace_boss_imprint', imprint.optionId, 'option'), expiresAt,
       label: text('imprint.label', 'Reemplazar impronta'),
       description: text('imprint.description', 'Activa la impronta pendiente'),
       consequences: [],
-      acknowledgement: { acknowledgementId: imprint.acknowledgementId, expiresAt, text: text('imprint.ack', 'Confirmar reemplazo de impronta') }
+      acknowledgement: { acknowledgementId: sealEquipmentActionToken(game, item.id, 'replace_boss_imprint', imprint.acknowledgementId, 'acknowledgement'), expiresAt, text: text('imprint.ack', 'Confirmar reemplazo de impronta') }
     }]))
   }
 
   return actions
 }
 
-function sealedAction(action: string, itemId: string, label: string, options: unknown[]): Record<string, unknown> {
+function sealedAction(game: PersistedGameV3, action: EquipmentV2Action, itemId: string, label: string, options: unknown[]): Record<string, unknown> {
   return {
-    authorizationId: `auth-${action}-${itemId}`,
+    authorizationId: sealEquipmentActionToken(game, itemId, action, action, 'authorization'),
     action,
     enabled: true,
     label: text(`${action}.label`, label),
@@ -370,5 +373,8 @@ function collectTransitions(game: PersistedGameV3): string[] {
     }
   }
   for (const job of game.caravan.services.appraiserQueue) result.push(job.finishesAt)
+  for (const state of Object.values(game.serviceJobStateById)) {
+    if (state.status === 'active') result.push(state.completesAt)
+  }
   return result
 }

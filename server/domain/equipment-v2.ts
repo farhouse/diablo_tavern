@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { Affix, Item, ItemRarity, StatKey } from '~/types/game'
 import { applyItemTransition } from '~/server/domain/item-transitions'
 import type { PersistedGameV3, PersistedItemV2State, PersistenceDependencies } from '~/server/utils/savegame'
@@ -54,16 +55,25 @@ export function applyEquipmentV2Command(
       completeServiceJob(game, requireString(command.jobId, 'jobId'), dependencies)
       return game
     case 'dismantle_item':
-      requireAcknowledgement(command)
+      validateOption(game, requireItemId(command), command.action, requireOption(command), requireAcknowledgement(command), dependencies)
       return applyItemTransition(game, {
         operation: 'dismantle',
         itemId: requireItemId(command),
-        targetId: command.optionId!
+        targetId: `dismantle-${requireItemId(command)}`
       }).game
     case 'replace_boss_imprint':
-      replaceBossImprint(game, requireItemId(command), requireOption(command), requireAcknowledgement(command))
+      replaceBossImprint(game, requireItemId(command), requireOption(command), requireAcknowledgement(command), dependencies)
       return game
   }
+}
+
+export function authorizeEquipmentV2Command(
+  game: PersistedGameV3,
+  command: EquipmentV2Command,
+  dependencies: PersistenceDependencies
+): void {
+  if (command.action === 'complete_service_job') return
+  validateOption(game, requireItemId(command), command.action, requireOption(command), command.acknowledgementId, dependencies)
 }
 
 export function getIdentifyOption(item: Item): { optionId: string; gold: number } {
@@ -92,6 +102,26 @@ export function getImprintOption(item: Item, state: PersistedItemV2State | undef
   return { optionId: IMPRINT_OPTION_ID, acknowledgementId: `ack-imprint-${item.id}` }
 }
 
+export function sealEquipmentActionToken(game: PersistedGameV3, itemId: string, action: EquipmentV2Action, semanticId: string, kind: 'authorization' | 'option' | 'acknowledgement'): string {
+  return [
+    'eqv2',
+    kind,
+    createHash('sha256').update([
+      game.userId,
+      game.createdAt,
+      game.revision,
+      itemId,
+      action,
+      semanticId,
+      imprintTokenPart(game, itemId, action)
+    ].join('|')).digest('base64url').slice(0, 32)
+  ].join('-')
+}
+
+export function equipmentActionExpiresAt(game: PersistedGameV3): string {
+  return new Date(Date.parse(game.updatedAt) + 5 * 60_000).toISOString()
+}
+
 export function canUseEquipmentService(game: PersistedGameV3, itemId: string): boolean {
   const placement = game.itemPlacements[itemId]
   return Boolean(game.itemsById[itemId] && placement?.ownerKind === 'caravan' && placement.custodyKind === 'stash')
@@ -100,7 +130,7 @@ export function canUseEquipmentService(game: PersistedGameV3, itemId: string): b
 function identifyItem(game: PersistedGameV3, itemId: string, optionId: string): void {
   const item = requireStashItem(game, itemId)
   const option = getIdentifyOption(item)
-  if (option.optionId !== optionId) throw domainError('identify option does not match item')
+  if (sealEquipmentActionToken(game, itemId, 'identify_item', option.optionId, 'option') !== optionId) throw domainError('identify option does not match item')
   if (item.identified) throw domainError('Item is already identified')
   debitGold(game, option.gold)
   item.identified = true
@@ -118,7 +148,8 @@ function queueServiceJob(
   if (!item.identified) throw domainError('Item must be identified before artisan service')
   const state = ensureItemState(game, itemId)
   const option = service === 'blacksmith' ? getBlacksmithOption(item, state) : getEnchanterOption(item, state)
-  if (option.optionId !== optionId) throw domainError(`${service} option does not match item`)
+  const action = service === 'blacksmith' ? 'queue_blacksmith_job' : 'queue_enchanter_job'
+  if (sealEquipmentActionToken(game, itemId, action, option.optionId, 'option') !== optionId) throw domainError(`${service} option does not match item`)
   debitGold(game, option.gold)
 
   const now = dependencies.now()
@@ -149,9 +180,11 @@ function queueServiceJob(
 function completeServiceJob(game: PersistedGameV3, jobId: string, dependencies: PersistenceDependencies): void {
   const job = game.serviceJobsById[jobId]
   const state = game.serviceJobStateById[jobId]
-  const itemId = job?.itemIds[0]
-  if (!job || !state || !itemId) throw domainError('Service job not found')
+  if (!state) throw domainError('Service job not found')
   if (state.status === 'completed') return
+  if (state.status === 'failed' || state.status === 'cancelled') throw domainError('Service job is terminal')
+  const itemId = state.itemId
+  if (!job || job.itemIds[0] !== itemId) throw domainError('Service job not found')
   if (Date.parse(state.completesAt) > dependencies.now().getTime()) throw domainError('Service job is not complete')
   const item = game.itemsById[itemId]
   if (!item) throw domainError('Service item not found')
@@ -172,16 +205,58 @@ function completeServiceJob(game: PersistedGameV3, jobId: string, dependencies: 
   game.serviceJobsById[jobId]!.itemIds = []
 }
 
-function replaceBossImprint(game: PersistedGameV3, itemId: string, optionId: string, acknowledgementId: string): void {
+function replaceBossImprint(game: PersistedGameV3, itemId: string, optionId: string, acknowledgementId: string, dependencies: PersistenceDependencies): void {
   const item = requireStashItem(game, itemId)
   const state = ensureItemState(game, itemId)
   const option = getImprintOption(item, state)
-  if (!option || option.optionId !== optionId || option.acknowledgementId !== acknowledgementId) {
+  if (!option
+    || sealEquipmentActionToken(game, itemId, 'replace_boss_imprint', option.optionId, 'option') !== optionId
+    || sealEquipmentActionToken(game, itemId, 'replace_boss_imprint', option.acknowledgementId, 'acknowledgement') !== acknowledgementId) {
     throw domainError('imprint acknowledgement does not match item')
   }
-  if (state.activeImprint) state.imprintHistory = [...(state.imprintHistory ?? []), state.activeImprint]
+  if (state.activeImprint) {
+    state.imprintHistory = [...(state.imprintHistory ?? []), { ...state.activeImprint, replacedAt: dependencies.now().toISOString() }]
+  }
   state.activeImprint = state.pendingImprint
   delete state.pendingImprint
+}
+
+function imprintTokenPart(game: PersistedGameV3, itemId: string, action: EquipmentV2Action): string {
+  if (action !== 'replace_boss_imprint') return ''
+  const pending = game.itemV2ById[itemId]?.pendingImprint
+  return pending ? `${pending.imprintId}:${pending.grantedAt}` : ''
+}
+
+function validateOption(
+  game: PersistedGameV3,
+  itemId: string,
+  action: EquipmentV2Action,
+  optionId: string,
+  acknowledgementId: string | undefined,
+  dependencies: PersistenceDependencies
+): void {
+  if (dependencies.now().getTime() >= Date.parse(equipmentActionExpiresAt(game))) throw domainError('equipment action authorization expired')
+  const item = requireStashItem(game, itemId)
+  const state = game.itemV2ById[itemId]
+  const semantic = action === 'identify_item' ? getIdentifyOption(item).optionId
+    : action === 'queue_blacksmith_job' ? getBlacksmithOption(item, state).optionId
+      : action === 'queue_enchanter_job' ? getEnchanterOption(item, state).optionId
+        : action === 'dismantle_item' ? getDismantleOption(item).optionId
+          : action === 'replace_boss_imprint' ? getImprintOption(item, state)?.optionId
+            : undefined
+  if (!semantic || sealEquipmentActionToken(game, itemId, action, semantic, 'option') !== optionId) {
+    throw domainError('equipment action authorization does not match item')
+  }
+  const expectedAck = action === 'dismantle_item' ? getDismantleOption(item).acknowledgementId
+    : action === 'replace_boss_imprint' ? getImprintOption(item, state)?.acknowledgementId
+      : undefined
+  if (expectedAck) {
+    if (!acknowledgementId || sealEquipmentActionToken(game, itemId, action, expectedAck, 'acknowledgement') !== acknowledgementId) {
+      throw domainError('equipment action acknowledgement does not match item')
+    }
+  } else if (acknowledgementId !== undefined) {
+    throw domainError('equipment action acknowledgement is not allowed')
+  }
 }
 
 function requireStashItem(game: PersistedGameV3, itemId: string): Item {

@@ -4,7 +4,7 @@ import type { Item, SaveGame, VisitRound, Visitor, VisitorCommission, VisitorOff
 import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
 import { refreshVisitRound } from '~/utils/visitor-logic'
 import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
-import { applyEquipmentV2Command, type EquipmentV2Command } from '~/server/domain/equipment-v2'
+import { applyEquipmentV2Command, authorizeEquipmentV2Command, type EquipmentV2Command } from '~/server/domain/equipment-v2'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -36,6 +36,7 @@ export interface PersistedRequestRecord {
   businessKey: string
   commandHash: string
   response: PublicSaveGame
+  persistedResponse?: PersistedGameV3
   revision: number
   createdAt: string
   updatedAt: string
@@ -158,7 +159,7 @@ export async function getPersistedGameV3(userId: string, dependencies = defaultD
     }
 
     if (existing.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(existing) || !isPersistedCanonical(existing))) {
-      const backfilled = !hasLegacyFields(existing) ? backfillRetainedVisitorIdentity(existing) : undefined
+      const backfilled = !hasLegacyFields(existing) ? backfillPersistedV3(existing) : undefined
       if (!backfilled || !isPersistedCanonical(backfilled)) {
         throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
       }
@@ -270,7 +271,7 @@ export async function mutateSaveGameAtomic(
     }
 
     if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(currentDocument) || !isPersistedCanonical(currentDocument))) {
-      const backfilled = !hasLegacyFields(currentDocument) ? backfillRetainedVisitorIdentity(currentDocument) : undefined
+      const backfilled = !hasLegacyFields(currentDocument) ? backfillPersistedV3(currentDocument) : undefined
       if (!backfilled || !isPersistedCanonical(backfilled)) {
         throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
       }
@@ -505,14 +506,19 @@ export async function mutateEquipmentV2Atomic(
     const replay = current.requestRecords.find((record) => record.requestId === requestId)
     if (replay) {
       if (replay.commandHash !== commandHash) throw new IdempotencyConflictError('requestId was already used for a different command')
+      if (replay.persistedResponse) return replay.persistedResponse
       return current
     }
     if (current.ledger.some((entry) => entry.requestId === requestId)) {
       throw new IdempotencyConflictError('requestId was already committed and its replay record is unavailable')
     }
-    if (current.businessKeys[businessKey]) throw new BusinessKeyConflictError('equipment command was already committed')
+    if (current.businessKeys[businessKey]) {
+      if (command.action === 'complete_service_job' && command.jobId && current.serviceJobStateById[command.jobId]?.status === 'completed') return current
+      throw new BusinessKeyConflictError('equipment command was already committed')
+    }
     if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 
+    authorizeEquipmentV2Command(current, command, dependencies)
     const transitioned = applyEquipmentV2Command(current, command, dependencies)
     pruneEmptyOrphanedLifecycle(
       transitioned.expeditionsById,
@@ -525,8 +531,9 @@ export async function mutateEquipmentV2Atomic(
     transitioned.revision = expectedRevision + 1
     transitioned.updatedAt = now
     const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
+    const persistedResponse = structuredClone(transitioned)
     transitioned.requestRecords = [...current.requestRecords, {
-      requestId, operationKey, businessKey, commandHash, response,
+      requestId, operationKey, businessKey, commandHash, response, persistedResponse,
       revision: transitioned.revision, createdAt: now, updatedAt: now
     }]
     transitioned.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
@@ -549,18 +556,43 @@ export async function mutateEquipmentV2Atomic(
       const afterError = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
       if (afterError && isPersistedCanonical(afterError)) {
         const exactReplay = afterError.requestRecords.find((record) => record.requestId === requestId)
-        if (exactReplay?.commandHash === commandHash) return toPersistedGame(afterError)
+        if (exactReplay?.commandHash === commandHash) return exactReplay.persistedResponse ?? toPersistedGame(afterError)
       }
       throw error
     }
     if (result.modifiedCount === 1) return transitioned
     const winner = await getPersistedGameV3(userId, dependencies)
     const winnerReplay = winner.requestRecords.find((record) => record.requestId === requestId)
-    if (winnerReplay?.commandHash === commandHash) return winner
+    if (winnerReplay?.commandHash === commandHash) return winnerReplay.persistedResponse ?? winner
     throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
   }
 
   throw new Error('Save changed concurrently; retry with the same requestId')
+}
+
+export async function reconcilePersistedGameV3(
+  userId: string,
+  dependencies = defaultDependencies
+): Promise<PersistedGameV3> {
+  for (let attempt = 0; attempt < MAX_MUTATE_ATTEMPTS; attempt += 1) {
+    const current = await getPersistedGameV3(userId, dependencies)
+    const due = Object.entries(current.serviceJobStateById)
+      .find(([, state]) => state.status === 'active' && Date.parse(state.completesAt) <= dependencies.now().getTime())
+    if (!due) return current
+    const [jobId, state] = due
+    try {
+      await mutateEquipmentV2Atomic(
+        userId,
+        `complete-service:${jobId}:${state.completesAt}`,
+        current.revision,
+        { action: 'complete_service_job', jobId },
+        dependencies
+      )
+    } catch (error) {
+      if (!(error instanceof RevisionConflictError)) throw error
+    }
+  }
+  throw new Error('Save changed concurrently; retry reconciliation')
 }
 
 function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
@@ -631,6 +663,24 @@ function backfillRetainedVisitorIdentity(document: PersistedDbDocument): Persist
   }
 
   return changed ? candidate : undefined
+}
+
+function backfillPersistedV3(document: PersistedDbDocument): PersistedGameV3 | undefined {
+  const missingV2Maps = !Object.prototype.hasOwnProperty.call(document, 'itemV2ById')
+    || !Object.prototype.hasOwnProperty.call(document, 'serviceJobStateById')
+  const retained = backfillRetainedVisitorIdentity(document)
+  if (retained) {
+    if (missingV2Maps) {
+      retained.itemV2ById = readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById)
+      retained.serviceJobStateById = readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById)
+    }
+    return retained
+  }
+  if (!missingV2Maps) return undefined
+  const candidate = toPersistedGame(document)
+  candidate.itemV2ById = readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById)
+  candidate.serviceJobStateById = readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById)
+  return candidate
 }
 
 export function hydratePersistedGame(document: PersistedGameV3): SaveGame {
@@ -971,9 +1021,21 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     const container = (candidate.serviceJobsById as Record<string, PersistedCustodyContainer>)[jobId]
     if (!container || container.projection?.kind !== 'service' || container.projection.service !== serviceState.service) return false
     if (!itemsById[serviceState.itemId]) return false
+    const placement = itemPlacements[serviceState.itemId]
+    if (serviceState.status === 'active') {
+      if (container.itemIds.length !== 1 || container.itemIds[0] !== serviceState.itemId) return false
+      if (placement?.ownerKind !== 'caravan' || placement.custodyKind !== 'service' || placement.custodyId !== jobId) return false
+    } else {
+      if (container.itemIds.length !== 0) return false
+      if (placement?.ownerKind !== 'caravan' || placement.custodyKind !== 'stash') return false
+    }
     if (Date.parse(serviceState.startedAt) < Date.parse(serviceState.queuedAt)) return false
     if (Date.parse(serviceState.completesAt) < Date.parse(serviceState.startedAt)) return false
     if (serviceState.status === 'completed' && !serviceState.completedAt) return false
+    if (serviceState.status !== 'completed' && serviceState.completedAt) return false
+    if (serviceState.service === 'blacksmith') {
+      if (!Number.isInteger(serviceState.result.blacksmithLevel) || serviceState.result.affix !== undefined || serviceState.result.enchantCount !== undefined) return false
+    } else if (!serviceState.result.affix || !Number.isInteger(serviceState.result.enchantCount) || serviceState.result.blacksmithLevel !== undefined) return false
   }
   if (Object.values(itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length > Number(candidate.stashLimit)) return false
 
@@ -1038,7 +1100,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   }
   const requestIds = new Set<string>()
   for (const record of candidate.requestRecords as PersistedRequestRecord[]) {
-    if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'revision', 'createdAt', 'updatedAt'])) return false
+    if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'persistedResponse', 'revision', 'createdAt', 'updatedAt'])) return false
     if (typeof record.requestId !== 'string' || !record.requestId || requestIds.has(record.requestId)) return false
     if (typeof record.operationKey !== 'string' || !record.operationKey
       || typeof record.businessKey !== 'string' || !record.businessKey || !isPublicSaveGame(record.response)) return false
@@ -1047,6 +1109,8 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
       || record.response.revision !== record.revision) return false
     if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
     if (containsInternalFields(record.response)) return false
+    if (record.persistedResponse !== undefined
+      && (!isPersistedCanonical(record.persistedResponse) || record.persistedResponse.revision !== record.revision)) return false
     const ledgerEntry = ledgerByRequestId.get(record.requestId)
     if (!ledgerEntry || ledgerEntry.operationKey !== record.operationKey
       || ledgerEntry.businessKey !== record.businessKey
