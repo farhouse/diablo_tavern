@@ -1005,11 +1005,16 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   }
   for (const contract of Object.values(cycle.contracts)) {
     const expedition = cycle.expeditions[contract.expeditionId]
-    if (!expedition || (expedition.state !== 'settled' && !contract.loanItemIds.every((itemId) => {
+    if (!expedition) return false
+    const pendingSettlement = expedition.settlementId ? cycle.settlements[expedition.settlementId] : undefined
+    if (expedition.state !== 'settled' && !contract.loanItemIds.every((itemId) => {
       const placement = itemPlacements[itemId]
-      return placement?.ownerKind === 'caravan'
-        && placement.custodyKind === 'expedition' && placement.custodyId === expedition.expeditionId
-    }))) return false
+      if (placement?.ownerKind !== 'caravan') return false
+      if (placement.custodyKind === 'expedition' && placement.custodyId === expedition.expeditionId) return true
+      return expedition.state === 'awaiting_settlement'
+        && pendingSettlement?.outcome !== 'death'
+        && placement.custodyKind === 'stash'
+    })) return false
   }
   for (const settlement of Object.values(cycle.settlements)) {
     const contract = cycle.contracts[cycle.expeditions[settlement.expeditionId]?.contractId ?? '']

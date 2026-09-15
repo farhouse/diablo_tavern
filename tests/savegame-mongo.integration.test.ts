@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -117,6 +117,138 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(stored.ledger).toHaveLength(1)
     expect(stored.gold).toBe(beforeGold + settlement.caravanGold)
     expect(stored.visitorCycle.settlements[settlement.settlementId]?.state).toBe('settled')
+  })
+
+  it('allows one Mongo CAS winner for a double expedition advance', async () => {
+    const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[19]!)
+    const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
+    const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    const now = new Date(initial.createdAt)
+    const dependencies = { now: () => now, random: () => 0.9, uuid: () => 'double-advance' }
+    const contracted = applyVisitorCycleCommand(initial, {
+      action: 'accept_contract', visitorId, optionId, loanItemIds: [initial.stash[0]!]
+    }, dependencies)
+    const contract = Object.values(contracted.visitorCycle.contracts)[0]!
+    const active = applyVisitorCycleCommand(contracted, { action: 'start_expedition', contractId: contract.contractId }, dependencies)
+    active.visitorCycle.expeditions[contract.expeditionId]!.events = [{
+      eventId: 'double-advance-event', occursAt: now.toISOString(), damage: 0, gold: 75
+    }]
+    await collection.replaceOne({ userId: userIds[19] }, active)
+    const execute = (requestId: string) => mutateVisitorCycleAtomic(
+      userIds[19]!, requestId, 0, { action: 'reconcile_game' }, `reconcile:${requestId}`,
+      mapPersistedGameToGameView, dependencies
+    )
+
+    const results = await Promise.allSettled([execute('advance-a'), execute('advance-b')])
+    const stored = await getPersistedGameV3(userIds[19]!)
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect(stored.revision).toBe(1)
+    expect(stored.ledger).toHaveLength(1)
+    expect(Object.values(stored.visitorCycle.settlements)).toHaveLength(1)
+    expect(Object.values(stored.visitorCycle.settlements)[0]).toMatchObject({ state: 'preview_ready', grossGold: 75 })
+    expect(isPersistedCanonical(stored)).toBe(true)
+  })
+
+  it('allows one Mongo CAS winner for loan return versus visitor departure', async () => {
+    const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic, RevisionConflictError, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[20]!)
+    const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
+    const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    const loanItemId = initial.stash[0]!
+    const now = new Date(initial.createdAt)
+    let id = 0
+    const dependencies = { now: () => now, random: () => 0.9, uuid: () => `return-departure-${++id}` }
+    const contracted = applyVisitorCycleCommand(initial, {
+      action: 'accept_contract', visitorId, optionId, loanItemIds: [loanItemId]
+    }, dependencies)
+    const contract = Object.values(contracted.visitorCycle.contracts)[0]!
+    const active = applyVisitorCycleCommand(contracted, { action: 'start_expedition', contractId: contract.contractId }, dependencies)
+    active.visitorCycle.expeditions[contract.expeditionId]!.events = [{
+      eventId: 'return-departure-event', occursAt: now.toISOString(), damage: 0, gold: 50
+    }]
+    const preview = applyVisitorCycleCommand(active, { action: 'reconcile_game' }, dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    settlement.departureResolution = 'departs'
+    await collection.replaceOne({ userId: userIds[20] }, preview)
+
+    const results = await Promise.allSettled([
+      transitionItemAtomic(userIds[20]!, 'concurrent-return', 0, {
+        operation: 'return', itemId: loanItemId, targetId: contract.expeditionId
+      }),
+      mutateVisitorCycleAtomic(userIds[20]!, 'concurrent-departure', 0, {
+        action: 'confirm_settlement', settlementId: settlement.settlementId,
+        previewVersion: settlement.previewVersion, selectedOptionIds: []
+      }, `settlement:${settlement.settlementId}`, mapPersistedGameToGameView, dependencies)
+    ])
+    const stored = await getPersistedGameV3(userIds[20]!)
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect(stored.revision).toBe(1)
+    expect(stored.ledger).toHaveLength(1)
+    expect(stored.itemPlacements[loanItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
+    expect(['awaiting_settlement', 'departed']).toContain(stored.visitorCycle.visitors[visitorId]?.state)
+    expect(isPersistedCanonical(stored)).toBe(true)
+  })
+
+  it('allows one Mongo CAS winner for recovery assignment versus abandonment', async () => {
+    const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[21]!)
+    const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
+    const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    const loanItemId = initial.stash[0]!
+    const now = new Date(initial.createdAt)
+    let id = 0
+    const dependencies = { now: () => now, random: () => 0.9, uuid: () => `recovery-abandon-${++id}` }
+    const contracted = applyVisitorCycleCommand(initial, {
+      action: 'accept_contract', visitorId, optionId, loanItemIds: [loanItemId]
+    }, dependencies)
+    const contract = Object.values(contracted.visitorCycle.contracts)[0]!
+    const active = applyVisitorCycleCommand(contracted, { action: 'start_expedition', contractId: contract.contractId }, dependencies)
+    active.visitorCycle.expeditions[contract.expeditionId]!.events = [{
+      eventId: 'recovery-abandon-event', occursAt: now.toISOString(), damage: 18, gold: 0
+    }]
+    const preview = applyVisitorCycleCommand(active, { action: 'reconcile_game' }, dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const dead = applyVisitorCycleCommand(preview, {
+      action: 'confirm_settlement', settlementId: settlement.settlementId,
+      previewVersion: settlement.previewVersion, selectedOptionIds: []
+    }, dependencies)
+    const recovery = Object.values(dead.visitorCycle.recoveries)[0]!
+    const rescuer = Object.values(dead.visitorCycle.visitors).find((visitor) => visitor.state === 'available')!
+    const supportLoanId = dead.stash[0]!
+    await collection.replaceOne({ userId: userIds[21] }, dead)
+
+    const results = await Promise.allSettled([
+      mutateVisitorCycleAtomic(userIds[21]!, 'concurrent-recovery', 0, {
+        action: 'assign_recovery', recoveryId: recovery.recoveryId, visitorId: rescuer.visitorId,
+        optionId: recovery.options[0]!.optionId, loanItemIds: [supportLoanId]
+      }, `recovery:${recovery.recoveryId}:assign`, mapPersistedGameToGameView, dependencies),
+      mutateVisitorCycleAtomic(userIds[21]!, 'concurrent-abandon', 0, {
+        action: 'abandon_recovery', recoveryId: recovery.recoveryId,
+        acknowledgementId: `${recovery.recoveryId}:abandon`
+      }, `recovery:${recovery.recoveryId}:abandon`, mapPersistedGameToGameView, dependencies)
+    ])
+    const stored = await getPersistedGameV3(userIds[21]!)
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect(stored.revision).toBe(1)
+    expect(stored.ledger).toHaveLength(1)
+    expect(['assigned', 'abandoned']).toContain(stored.visitorCycle.recoveries[recovery.recoveryId]?.state)
+    expect(isPersistedCanonical(stored)).toBe(true)
   })
 
   it('rejects stale CAS and a second requestId for one permanent business key', async () => {

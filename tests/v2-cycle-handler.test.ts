@@ -58,6 +58,19 @@ describe('V2 command handlers', () => {
     expect(executeVisitorCycleCommand).not.toHaveBeenCalled()
   })
 
+  it('rejects array identifiers that become duplicates after boundary normalization', async () => {
+    vi.stubGlobal('readBody', async () => ({
+      requestId: 'request-1', expectedRevision: 0,
+      payload: { visitorId: 'visitor-1', optionId: 'option-1', loanItemIds: ['item-1', ' item-1 '] }
+    }))
+    const { default: handler } = await import('../server/api/v2/contracts/accept.post')
+    await expect(handler({} as never)).rejects.toMatchObject({
+      statusCode: 400,
+      data: { error: { code: 'validation_error', retryable: false } }
+    })
+    expect(executeVisitorCycleCommand).not.toHaveBeenCalled()
+  })
+
   it('preserves the public conflict envelope from command execution', async () => {
     const { RevisionConflictError } = await import('../server/utils/savegame')
     executeVisitorCycleCommand.mockRejectedValueOnce(new RevisionConflictError('private revision'))

@@ -31,10 +31,14 @@ export async function readV2Command<T extends Record<string, unknown>>(
 }
 
 export function requireStringArray(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string' || !entry.trim()) || new Set(value).size !== value.length) {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string' || !entry.trim())) {
     throw new V2ValidationError(`${field} must contain unique non-empty strings`)
   }
-  return value.map((entry) => entry.trim())
+  const normalized = value.map((entry) => entry.trim())
+  if (new Set(normalized).size !== normalized.length) {
+    throw new V2ValidationError(`${field} must contain unique non-empty strings`)
+  }
+  return normalized
 }
 
 export function requireInteger(value: unknown, field: string): number {

@@ -378,11 +378,11 @@ export function reconcileGame(game: PersistedGameV3, now: Date, deps: Persistenc
       expedition.currentHp = Math.max(0, expedition.currentHp - event.damage)
       expedition.grossGold += event.gold
       expedition.nextEventIndex += 1
-      if (expedition.currentHp <= 0) resolveExpedition(game, expedition, contract, 'death', event.occursAt, deps)
+      if (expedition.currentHp <= 0) resolveExpedition(game, expedition, contract, 'death', event.occursAt, now, deps)
       else if (contract.option.retreatThreshold !== null && expedition.currentHp <= contract.option.retreatThreshold) {
-        resolveExpedition(game, expedition, contract, 'retreated', event.occursAt, deps)
+        resolveExpedition(game, expedition, contract, 'retreated', event.occursAt, now, deps)
       } else if (expedition.nextEventIndex === expedition.events.length) {
-        resolveExpedition(game, expedition, contract, 'returned', event.occursAt, deps)
+        resolveExpedition(game, expedition, contract, 'returned', event.occursAt, now, deps)
       }
     }
   }
@@ -406,6 +406,7 @@ function resolveExpedition(
   contract: PersistedMissionContract,
   outcome: ExpeditionOutcome,
   resolvedAt: string,
+  materializedAt: Date,
   deps: PersistenceDependencies
 ): void {
   if (expedition.state !== 'active') return
@@ -423,7 +424,7 @@ function resolveExpedition(
   visitor.settlementId = settlementId
   const settlement: PersistedCycleSettlement = {
     settlementId, expeditionId: expedition.expeditionId, state: 'preview_ready', previewVersion: 1, outcome,
-    createdAt: resolvedAt, expiresAt: new Date(Date.parse(resolvedAt) + SETTLEMENT_TTL_MS).toISOString(),
+    createdAt: materializedAt.toISOString(), expiresAt: new Date(materializedAt.getTime() + SETTLEMENT_TTL_MS).toISOString(),
     grossGold: gross, caravanGold, visitorGold: gross - caravanGold,
     loanItemIds: [...contract.loanItemIds], choiceGroups: [], departureSignal: visitor.departureSignal,
     rewardItemIds: [],
@@ -555,8 +556,18 @@ function archiveLegacyVisitor(game: PersistedGameV3, visitorId: string, now: Dat
     createdAt: now.toISOString()
   })
   game.visitHistory = game.visitHistory.slice(0, 20)
+  tombstoneEvictedVisitorItems(game)
   delete slot.visitor
   delete slot.nextArrivalCheckAt
+}
+
+function tombstoneEvictedVisitorItems(game: PersistedGameV3): void {
+  const retainedVisitorIds = new Set([game.visitRound, ...game.visitHistory]
+    .flatMap((round) => round.slots.flatMap((slot) => slot.visitor ? [slot.visitor.id] : [])))
+  for (const [itemId, placement] of Object.entries(game.itemPlacements)) {
+    if (placement.ownerKind !== 'visitor' || !placement.ownerId || retainedVisitorIds.has(placement.ownerId)) continue
+    game.itemPlacements[itemId] = { ownerKind: 'tombstone', custodyKind: 'tombstone' }
+  }
 }
 
 function assignRecovery(
