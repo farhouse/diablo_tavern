@@ -1,32 +1,13 @@
 import { requireUser } from '~/server/utils/auth'
-import { requireString } from '~/server/utils/body'
-import { mutateSaveGameAtomic } from '~/server/utils/savegame'
-import { readVisitorMutation, visitorMutationError, visitorOperationKey } from '~/server/utils/visitor-api'
-import { assignVisitorCommission } from '~/utils/visitor-logic'
+import { ActionUnavailableError } from '~/server/domain/v2-errors'
+import { handleVisitorMutation, readVisitorMutation, requireMutationEnum, requireMutationString } from '~/server/utils/visitor-api'
 
 export default defineEventHandler(async (event) => {
-  const user = await requireUser(event)
-  const visitorId = getRouterParam(event, 'visitorId') || ''
-  const body = await readVisitorMutation(event)
-  const selection = requireCommissionOptionId(body.optionId)
-  try {
-    return await mutateSaveGameAtomic(
-      user.id,
-      body.requestId,
-      visitorOperationKey('commission', visitorId, selection),
-      body.expectedRevision,
-      body,
-      (save, deps) => assignVisitorCommission(save, visitorId, selection, deps.random, deps.now())
-    )
-  } catch (error) {
-    visitorMutationError(error, 'Cannot assign commission')
-  }
+  await requireUser(event)
+  return handleVisitorMutation(async () => {
+    requireMutationString(getRouterParam(event, 'visitorId'), 'visitorId')
+    const body = await readVisitorMutation(event)
+    requireMutationEnum(body.optionId, 'optionId', ['safe', 'risky'] as const)
+    throw new ActionUnavailableError('TERMINAL_ENTITY', 'Legacy commissions were replaced by V2 contracts')
+  })
 })
-
-function requireCommissionOptionId(value: unknown): 'safe' | 'risky' {
-  const optionId = requireString(value, 'optionId')
-  if (optionId !== 'safe' && optionId !== 'risky') {
-    throw createError({ statusCode: 400, statusMessage: 'optionId must be safe or risky' })
-  }
-  return optionId
-}

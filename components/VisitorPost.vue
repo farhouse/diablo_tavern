@@ -13,7 +13,7 @@
             <span class="state-chip">{{ stateLabel }}</span>
           </div>
           <p>{{ classLabel }} · level {{ visitor.level }}</p>
-          <p class="muted">From {{ visitor.origin }}</p>
+          <p class="visitor-origin muted">From {{ visitor.origin }}</p>
         </div>
       </div>
       <div class="visitor-ledger" aria-label="Visitor resources">
@@ -371,9 +371,40 @@ function titleCase(value: string): string {
   gap: 0.75rem;
 }
 .visitor-header, .visitor-footer, .return-state { justify-content: space-between; }
-.visitor-title-row { flex-wrap: wrap; }
+.visitor-title-row { flex-wrap: wrap; min-width: 0; }
+.visitor-title-row h2,
+.visitor-origin {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+.visitor-identity,
+.visitor-identity > div,
+.visitor-title-row,
+.trade-item > div,
+.mission-option > div,
+.journey-log li > div {
+  min-width: 0;
+}
+.visitor-title-row h2,
+.equipment-copy strong,
 .visitor-header h2, .visitor-header p, .visitor-section h3, .visitor-section p, .away-state h3, .away-state p,
 .return-state h3, .return-state p, .departed-state h3, .departed-state p, .trade-item p { margin: 0; }
+.equipment-copy strong,
+.equipment-copy > span,
+.trade-item strong,
+.trade-item p,
+.trade-item .btn,
+.mission-review p,
+.mission-review .btn,
+.mission-consequences,
+.mission-consequences li,
+.journey-log li p,
+.journey-note,
+.mission-facts dd {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .visitor-ledger {
   display: grid;
   flex: 0 0 auto;
@@ -387,7 +418,7 @@ function titleCase(value: string): string {
 .visitor-equipment ul { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; margin: 0; padding: 0; }
 .visitor-equipment li { align-items: center; background: #14120f; border-radius: 6px; display: flex; gap: 0.55rem; min-width: min(100%, 12rem); padding: 0.35rem 0.55rem; }
 .visitor-equipment li :deep(.item-sprite) { height: 44px; width: 44px; }
-.equipment-copy { display: grid; gap: 0.1rem; }
+.equipment-copy { display: grid; gap: 0.1rem; min-width: 0; }
 .equipment-copy > span { color: var(--muted); font-size: 0.78rem; }
 .state-chip {
   background: #14120f;
@@ -426,6 +457,12 @@ function titleCase(value: string): string {
 .risk-chip--high { color: var(--bad); }
 .trade-complete { color: var(--ok); }
 .mission-review { border-top: 1px solid var(--line); display: grid; gap: 0.65rem; grid-column: 1 / -1; padding-top: 0.75rem; }
+.mission-review .btn {
+  align-self: stretch;
+  justify-content: center;
+  max-width: 100%;
+  white-space: normal;
+}
 .mission-consequences { color: var(--muted); display: grid; gap: 0.25rem; grid-column: 1 / -1; margin: 0; padding-left: 1.2rem; }
 .impact-note { background: #17231a; border: 1px solid #315b3b; border-radius: 8px; display: grid; gap: 0.25rem; padding: 0.8rem; }
 .away-state, .return-state, .departed-state { background: #14120f; border-radius: 8px; padding: 1rem; }

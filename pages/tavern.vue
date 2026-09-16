@@ -210,13 +210,29 @@ function arrivalLabel(timestamp?: string): string {
   min-height: 15rem;
   padding: 1.5rem;
 }
+.tavern-heading > div,
+.tavern-summary {
+  min-width: 0;
+}
 .tavern-heading h1 { font-size: 2rem; letter-spacing: -0.025em; margin: 0.15rem 0 0.35rem; text-wrap: balance; }
 .tavern-heading p { margin: 0; max-width: 66ch; text-wrap: pretty; }
 .round-mark { color: var(--accent-2); font-size: 0.82rem; font-weight: 750; }
 .tavern-summary { align-items: center; display: flex; flex-wrap: wrap; gap: 0.65rem; justify-content: flex-end; }
 .tavern-summary > span { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0.55rem 0.7rem; }
+.tavern-summary > span,
+.tavern-summary .btn,
+.visitor-slot--empty > div,
+.visitor-slot--empty p {
+  min-width: 0;
+}
+.tavern-heading p,
+.tavern-summary > span,
+.visitor-slot--empty p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .visitor-grid { align-items: start; display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.visitor-slot--empty { align-items: start; background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; display: flex; gap: 1rem; min-height: 15rem; padding: 1.1rem; }
+.visitor-slot--empty { align-items: start; background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; display: flex; gap: 1rem; min-height: 15rem; min-width: 0; padding: 1.1rem; }
 .visitor-slot--empty h2, .visitor-slot--empty p { margin: 0; }
 .visitor-slot--empty > div { display: grid; gap: 0.65rem; }
 .empty-sigil { align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 50%; color: var(--muted); display: inline-flex; flex: 0 0 2.75rem; font-weight: 800; height: 2.75rem; justify-content: center; }
