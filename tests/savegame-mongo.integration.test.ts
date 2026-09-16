@@ -437,7 +437,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     ['sell', 'dismantle', userIds[4]!],
     ['service', 'loan', userIds[5]!]
   ])('allows one Mongo CAS winner for %s versus %s', async (firstName, secondName, userId) => {
-    const { getPersistedGameV3, mutateEquipmentV2Atomic, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, RevisionConflictError, transitionItemAtomic } = await import('../server/utils/savegame')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const initial = await getPersistedGameV3(userId)
     const itemId = initial.stash[0]!
@@ -465,11 +465,29 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
       runOperation(secondName)
     ])
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0]!.reason).toBeInstanceOf(RevisionConflictError)
     const persisted = await collection.findOne({ userId })
     expect(persisted?.ledger).toHaveLength(1)
     expect(persisted?.revision).toBe(1)
     expect(persisted?.ledger[0].itemChanges).toHaveLength(1)
     expect(persisted?.itemPlacements[itemId]).not.toMatchObject({ custodyKind: 'stash' })
+    if ([firstName, secondName].includes('service')) {
+      const fulfilledIndex = results.findIndex((result) => result.status === 'fulfilled')
+      const winner = [firstName, secondName][fulfilledIndex]
+      const placement = persisted?.itemPlacements[itemId]
+      if (winner === 'service') {
+        const jobId = placement?.custodyId
+        expect(placement).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: jobId })
+        expect(persisted?.serviceJobsById[jobId!]?.itemIds).toContain(itemId)
+        expect(persisted?.serviceJobStateById[jobId!]).toMatchObject({ status: 'active', itemId, service: 'blacksmith' })
+      } else {
+        const expeditionId = targetFor('loan')
+        expect(placement).toEqual({ ownerKind: 'caravan', custodyKind: 'expedition', custodyId: expeditionId })
+        expect(persisted?.expeditionsById[expeditionId]?.itemIds).toContain(itemId)
+      }
+    }
   })
 
   it('resets schema 2 without importing its economy and keeps the unique index', async () => {
