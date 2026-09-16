@@ -823,6 +823,21 @@ describe('atomic persisted-game mutation', () => {
     expect(collection.replaceOne).not.toHaveBeenCalled()
   })
 
+  it('accepts semantically equal sealed affixes regardless of BSON property order', async () => {
+    const { getPersistedGameV3, isPersistedCanonical } = await import('../server/utils/savegame')
+    document = historicalClaimedRewardFixture() as unknown as PersistedGameV3
+    const backfilled = await getPersistedGameV3('atomic-user')
+    const rewardItemId = backfilled.visitRound.slots[0]!.visitor!.commission!.rewardItemId!
+    const item = backfilled.itemsById[rewardItemId]!
+    backfilled.itemV2ById[rewardItemId]!.sealedAffixes = item.affixes.map(({ stat, value }) => ({ value, stat }))
+    document = backfilled
+    vi.clearAllMocks()
+
+    await expect(getPersistedGameV3('atomic-user')).resolves.toEqual(backfilled)
+    expect(isPersistedCanonical(backfilled)).toBe(true)
+    expect(collection.replaceOne).not.toHaveBeenCalled()
+  })
+
   it('accepts a completed historical commission without a reward item id', async () => {
     const { getPersistedGameV3, isPersistedCanonical } = await import('../server/utils/savegame')
     const legacyV3 = historicalClaimedRewardFixture()

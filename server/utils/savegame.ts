@@ -1425,12 +1425,16 @@ function isCommissionRewardLoot(game: PersistedGameV3, commission: PersistedVisi
   } catch {
     return false
   }
+  const sealedAffixes = state.sealedAffixes ?? []
+  const itemAffixes = item.affixes ?? []
   return provenance.businessKey === `loot:${commission.id}:reward`
     && provenance.zoneId === commission.regionId
     && provenance.configVersion === LOOT_CONFIG_VERSION
     && provenance.lootTableId === lootTableId
     && provenance.droppedAt === commission.finishesAt
-    && JSON.stringify(state.sealedAffixes ?? []) === JSON.stringify(item.affixes ?? [])
+    && sealedAffixes.length === itemAffixes.length
+    && sealedAffixes.every((affix, index) => affix.stat === itemAffixes[index]?.stat
+      && affix.value === itemAffixes[index]?.value)
 }
 
 function isServiceJobStateMap(value: unknown): value is Record<string, PersistedServiceJobState> {
