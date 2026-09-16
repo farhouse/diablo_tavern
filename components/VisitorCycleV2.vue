@@ -22,6 +22,7 @@ const props = defineProps<{
   operationState?: 'idle' | 'pending' | 'uncertain' | 'conflict' | 'unavailable' | 'terminal'
   errorMessage?: string
   unavailableReason?: string
+  snapshotStale?: boolean
   nowMs?: number
 }>()
 
@@ -33,14 +34,17 @@ const emit = defineEmits<{
   assignRecovery: [selection: Extract<VisitorV2Selection, { kind: 'recovery' }>]
   abandonRecovery: [selection: Extract<VisitorV2Selection, { kind: 'abandon_recovery' }>]
   retry: []
+  reload: []
 }>()
 
 const operationState = computed(() => props.operationState ?? 'idle')
 const busy = computed(() => operationState.value === 'pending' || operationState.value === 'uncertain')
+const locked = computed(() => busy.value || props.snapshotStale === true)
 const contractOptions = ref<Record<Id, Id>>({})
 const contractLoans = ref<Record<Id, Id[]>>({})
 const recoveryBindings = ref<Record<Id, string>>({})
 const recoveryLoans = ref<Record<Id, Id[]>>({})
+const settlementChoices = ref<Record<Id, Record<Id, Id>>>({})
 const abandonConfirmations = ref<Record<Id, boolean>>({})
 const currentNowMs = ref(0)
 const clockClientStartedAt = ref(0)
@@ -109,12 +113,12 @@ function onVisibilityChange() {
 }
 
 function emitDueReconcile() {
-  if (!props.game?.nextTransitionAt || !reconcileAction.value || !visible()) return
+  if (!props.game?.nextTransitionAt || !reconcileAction.value || !visible() || locked.value) return
   if (Date.parse(props.game.nextTransitionAt) > currentNowMs.value) return
   const key = `${props.game.revision}:${props.game.nextTransitionAt}`
   if (emittedTransitionKeys.has(key)) return
-  emittedTransitionKeys.add(key)
   emit('reconcileGame')
+  emittedTransitionKeys.add(key)
 }
 
 function selectedContractBinding(visitor: VisitorView) {
@@ -129,6 +133,18 @@ function selectedRecoveryBinding(recovery: RecoveryView) {
   if (!action) return null
   const key = recoveryBindings.value[recovery.recoveryId] ?? bindingKey(action.execution.bindings[0])
   return action.execution.bindings.find((binding) => bindingKey(binding) === key) ?? action.execution.bindings[0] ?? null
+}
+
+function selectedSettlementOption(settlement: SettlementView, groupId: Id): Id {
+  if (!('choiceGroups' in settlement)) return ''
+  const action = settlementAction(settlement)
+  const group = settlement.choiceGroups.find((candidate) => candidate.groupId === groupId)
+  const eligible = action?.execution.groups.find((candidate) => candidate.groupId === groupId)?.eligibleOptionIds ?? []
+  const optionIds = group?.options.map((option) => option.optionId) ?? []
+  const selected = settlementChoices.value[settlement.settlementId]?.[groupId]
+  if (selected && eligible.includes(selected) && optionIds.includes(selected)) return selected
+  if (group?.defaultOptionId && eligible.includes(group.defaultOptionId)) return group.defaultOptionId
+  return eligible.find((optionId) => optionIds.includes(optionId)) ?? ''
 }
 
 function contractAction(visitor: VisitorView): AcceptContractAction | null {
@@ -165,6 +181,13 @@ function eventChecked(event: Event): boolean {
   return Boolean((event.target as HTMLInputElement | null)?.checked)
 }
 
+function setSettlementChoice(settlementId: Id, groupId: Id, optionId: Id) {
+  settlementChoices.value[settlementId] = {
+    ...(settlementChoices.value[settlementId] ?? {}),
+    [groupId]: optionId
+  }
+}
+
 function actionReason(actions: readonly ActionAvailability[], actionName: ActionAvailability['action']): string {
   const disabled = actions.find((action) => action.action === actionName && !action.enabled)
   if (disabled && !disabled.enabled) return label(disabled.reasonText)
@@ -196,7 +219,7 @@ function confirm(settlement: SettlementView) {
   emit('confirmSettlement', {
     kind: 'settlement',
     settlementId: settlement.settlementId,
-    selectedOptionIds: Object.fromEntries(settlement.choiceGroups.map((group) => [group.groupId, group.defaultOptionId]))
+    selectedOptionIds: Object.fromEntries(settlement.choiceGroups.map((group) => [group.groupId, selectedSettlementOption(settlement, group.groupId)]))
   })
 }
 
@@ -232,7 +255,67 @@ function actionsOf(entity: { actions: readonly ActionAvailability[] }): readonly
   return entity.actions
 }
 
+function syncLocalSelections() {
+  if (!props.game) {
+    contractOptions.value = {}
+    contractLoans.value = {}
+    recoveryBindings.value = {}
+    recoveryLoans.value = {}
+    settlementChoices.value = {}
+    abandonConfirmations.value = {}
+    return
+  }
+
+  const nextContractOptions: Record<Id, Id> = {}
+  const nextContractLoans: Record<Id, Id[]> = {}
+  for (const visitor of props.game.visitors) {
+    const action = contractAction(visitor)
+    if (!action) continue
+    const current = contractOptions.value[visitor.visitorId]
+    const binding = action.execution.bindings.find((candidate) => candidate.optionId === current) ?? action.execution.bindings[0]
+    if (!binding) continue
+    nextContractOptions[visitor.visitorId] = binding.optionId
+    nextContractLoans[visitor.visitorId] = (contractLoans.value[visitor.visitorId] ?? []).filter((itemId) => binding.eligibleLoanItemIds.includes(itemId))
+  }
+  contractOptions.value = nextContractOptions
+  contractLoans.value = nextContractLoans
+
+  const nextRecoveryBindings: Record<Id, string> = {}
+  const nextRecoveryLoans: Record<Id, Id[]> = {}
+  const nextAbandonConfirmations: Record<Id, boolean> = {}
+  for (const recovery of props.game.recoveries) {
+    const action = assignAction(recovery)
+    if (action) {
+      const current = recoveryBindings.value[recovery.recoveryId]
+      const binding = action.execution.bindings.find((candidate) => bindingKey(candidate) === current) ?? action.execution.bindings[0]
+      if (binding) {
+        nextRecoveryBindings[recovery.recoveryId] = bindingKey(binding)
+        nextRecoveryLoans[recovery.recoveryId] = (recoveryLoans.value[recovery.recoveryId] ?? []).filter((itemId) => binding.eligibleLoanItemIds.includes(itemId))
+      }
+    }
+    if (abandonAction(recovery) && abandonConfirmations.value[recovery.recoveryId]) {
+      nextAbandonConfirmations[recovery.recoveryId] = true
+    }
+  }
+  recoveryBindings.value = nextRecoveryBindings
+  recoveryLoans.value = nextRecoveryLoans
+  abandonConfirmations.value = nextAbandonConfirmations
+
+  const nextSettlementChoices: Record<Id, Record<Id, Id>> = {}
+  for (const settlement of props.game.settlements) {
+    if (!('choiceGroups' in settlement) || !settlementAction(settlement)) continue
+    const groups: Record<Id, Id> = {}
+    for (const group of settlement.choiceGroups) {
+      const selected = selectedSettlementOption(settlement, group.groupId)
+      if (selected) groups[group.groupId] = selected
+    }
+    nextSettlementChoices[settlement.settlementId] = groups
+  }
+  settlementChoices.value = nextSettlementChoices
+}
+
 watch(() => [props.game?.revision, props.game?.serverNow, props.nowMs] as const, resetClock, { immediate: true })
+watch(() => props.game?.revision, syncLocalSelections, { immediate: true })
 
 onMounted(() => {
   startClock()
@@ -257,7 +340,7 @@ onBeforeUnmount(() => {
       <button
         class="v2-cycle__button"
         type="button"
-        :disabled="busy || !game || !reconcileAction"
+        :disabled="locked || !game || !reconcileAction"
         :aria-describedby="reconcileDisabledReason ? 'reconcile-reason' : undefined"
         @click="emit('reconcileGame')"
       >
@@ -297,7 +380,7 @@ onBeforeUnmount(() => {
               v-if="visitor.state === 'available' || visitor.state === 'negotiating'"
               class="v2-cycle__button"
               type="button"
-              :disabled="busy || !enabledAction(actionsOf(visitor), 'accept_contract')"
+              :disabled="locked || !enabledAction(actionsOf(visitor), 'accept_contract')"
               :aria-describedby="actionReason(actionsOf(visitor), 'accept_contract') ? reasonId('accept', visitor.visitorId) : undefined"
               @click="accept(visitor)"
             >
@@ -308,7 +391,7 @@ onBeforeUnmount(() => {
               <select
                 v-model="contractOptions[visitor.visitorId]"
                 class="v2-cycle__select"
-                :disabled="busy"
+                :disabled="locked"
               >
                 <option
                   v-for="binding in contractAction(visitor)?.execution.bindings"
@@ -322,7 +405,7 @@ onBeforeUnmount(() => {
             <fieldset
               v-if="selectedContractBinding(visitor)?.eligibleLoanItemIds.length"
               class="v2-cycle__fieldset"
-              :disabled="busy"
+              :disabled="locked"
             >
               <legend>Préstamos</legend>
               <label
@@ -349,7 +432,7 @@ onBeforeUnmount(() => {
               v-if="visitor.state === 'contracted'"
               class="v2-cycle__button"
               type="button"
-              :disabled="busy || !enabledAction(actionsOf(visitor), 'start_expedition')"
+              :disabled="locked || !enabledAction(actionsOf(visitor), 'start_expedition')"
               :aria-describedby="actionReason(actionsOf(visitor), 'start_expedition') ? reasonId('start', visitor.visitorId) : undefined"
               @click="start(visitor)"
             >
@@ -391,17 +474,35 @@ onBeforeUnmount(() => {
             <p v-if="'gold' in settlement" class="v2-cycle__muted">
               Oro bruto {{ settlement.gold.gross }}, caravana {{ settlement.gold.caravan }}, visitante {{ settlement.gold.visitor }}.
             </p>
-            <ul v-if="'choiceGroups' in settlement" class="v2-cycle__list">
-              <li v-for="group in settlement.choiceGroups" :key="group.groupId">
-                {{ label(group.label) }}: {{ group.options.map((option) => label(option.label)).join(', ') }}
-              </li>
-            </ul>
+            <fieldset
+              v-for="group in 'choiceGroups' in settlement ? settlement.choiceGroups : []"
+              :key="group.groupId"
+              class="v2-cycle__fieldset"
+              :disabled="locked"
+            >
+              <legend>{{ label(group.label) }}</legend>
+              <label
+                v-for="option in group.options"
+                :key="option.optionId"
+                class="v2-cycle__check"
+              >
+                <input
+                  type="radio"
+                  :name="`settlement-${settlement.settlementId}-${group.groupId}`"
+                  :checked="selectedSettlementOption(settlement, group.groupId) === option.optionId"
+                  :disabled="!settlementAction(settlement)?.execution.groups.find((candidate) => candidate.groupId === group.groupId)?.eligibleOptionIds.includes(option.optionId)"
+                  @change="setSettlementChoice(settlement.settlementId, group.groupId, option.optionId)"
+                  @keydown.space.prevent="setSettlementChoice(settlement.settlementId, group.groupId, option.optionId)"
+                >
+                {{ label(option.label) }}
+              </label>
+            </fieldset>
           </div>
           <button
             v-if="settlement.state === 'preview_ready'"
             class="v2-cycle__button"
             type="button"
-            :disabled="busy || !settlementAction(settlement)"
+            :disabled="locked || !settlementAction(settlement)"
             :aria-describedby="actionReason(actionsOf(settlement), 'confirm_settlement') ? reasonId('settlement', settlement.settlementId) : undefined"
             @click="confirm(settlement)"
           >
@@ -437,7 +538,7 @@ onBeforeUnmount(() => {
             <button
               class="v2-cycle__button"
               type="button"
-              :disabled="busy || !enabledAction(actionsOf(recovery), 'assign_recovery')"
+              :disabled="locked || !enabledAction(actionsOf(recovery), 'assign_recovery')"
               :aria-describedby="actionReason(actionsOf(recovery), 'assign_recovery') ? reasonId('assign', recovery.recoveryId) : undefined"
               @click="assign(recovery)"
             >
@@ -448,7 +549,7 @@ onBeforeUnmount(() => {
               <select
                 v-model="recoveryBindings[recovery.recoveryId]"
                 class="v2-cycle__select"
-                :disabled="busy"
+                :disabled="locked"
               >
                 <option
                   v-for="binding in assignAction(recovery)?.execution.bindings"
@@ -462,7 +563,7 @@ onBeforeUnmount(() => {
             <fieldset
               v-if="selectedRecoveryBinding(recovery)?.eligibleLoanItemIds.length"
               class="v2-cycle__fieldset"
-              :disabled="busy"
+              :disabled="locked"
             >
               <legend>Préstamos</legend>
               <label
@@ -493,14 +594,14 @@ onBeforeUnmount(() => {
               <input
                 v-model="abandonConfirmations[recovery.recoveryId]"
                 type="checkbox"
-                :disabled="busy"
+                :disabled="locked"
               >
               {{ label(abandonAction(recovery)!.execution.acknowledgement.text) }}
             </label>
             <button
               class="v2-cycle__button v2-cycle__button--danger"
               type="button"
-              :disabled="busy || !abandonAction(recovery) || !abandonConfirmations[recovery.recoveryId]"
+              :disabled="locked || !abandonAction(recovery) || !abandonConfirmations[recovery.recoveryId]"
               :aria-describedby="[
                 actionReason(actionsOf(recovery), 'abandon_recovery') ? reasonId('abandon', recovery.recoveryId) : '',
                 abandonAction(recovery) ? `abandon-ack-${recovery.recoveryId}` : ''
@@ -529,6 +630,15 @@ onBeforeUnmount(() => {
       @click="emit('retry')"
     >
       Reintentar misma orden
+    </button>
+    <button
+      v-if="operationState === 'conflict' && snapshotStale"
+      class="v2-cycle__button v2-cycle__button--primary"
+      type="button"
+      data-testid="v2-reload"
+      @click="emit('reload')"
+    >
+      Reintentar carga del snapshot
     </button>
   </section>
 </template>

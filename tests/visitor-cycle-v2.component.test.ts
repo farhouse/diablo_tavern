@@ -24,6 +24,7 @@ describe('VisitorCycleV2', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    document.body.innerHTML = ''
   })
 
   it('renders loading, empty and ready states with polite announcements', () => {
@@ -135,9 +136,12 @@ describe('VisitorCycleV2', () => {
     expect(terminal.get('[data-testid="v2-status"]').text()).toContain('internal_error')
 
     const conflict = mount(VisitorCycleV2, {
-      props: { game: fixture('integrated-contract'), loadState: 'ready', operationState: 'conflict', errorMessage: 'No se pudo actualizar' }
+      props: { game: fixture('integrated-contract'), loadState: 'ready', operationState: 'conflict', errorMessage: 'No se pudo actualizar', snapshotStale: true }
     })
     expect(conflict.get('[data-testid="v2-status"]').text()).toContain('No se pudo actualizar')
+    expect(conflict.get('[data-testid="visitor-available"] button').attributes('disabled')).toBeDefined()
+    await conflict.get('[data-testid="v2-reload"]').trigger('click')
+    expect(conflict.emitted('reload')).toHaveLength(1)
   })
 
   it('derives reconcile availability from game actions and emits once when visible transition is due', async () => {
@@ -151,7 +155,7 @@ describe('VisitorCycleV2', () => {
     const game = fixture('integrated-system')
     game.serverNow = '2026-09-14T10:30:00Z'
     game.nextTransitionAt = '2026-09-14T10:30:01Z'
-    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    const wrapper = mount(VisitorCycleV2, { attachTo: document.body, props: { game, loadState: 'ready' } })
 
     await vi.advanceTimersByTimeAsync(1000)
     expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
@@ -166,7 +170,7 @@ describe('VisitorCycleV2', () => {
     const game = fixture('integrated-system')
     game.serverNow = '2026-09-14T10:30:00Z'
     game.nextTransitionAt = '2026-09-14T10:30:01Z'
-    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    const wrapper = mount(VisitorCycleV2, { attachTo: document.body, props: { game, loadState: 'ready' } })
 
     await vi.advanceTimersByTimeAsync(2000)
     expect(wrapper.emitted('reconcileGame')).toBeUndefined()
@@ -176,6 +180,106 @@ describe('VisitorCycleV2', () => {
     expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
     document.dispatchEvent(new Event('visibilitychange'))
     expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+  })
+
+  it('does not consume a due transition while pending or uncertain', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-14T10:30:00Z'))
+    const game = fixture('integrated-system')
+    game.serverNow = '2026-09-14T10:30:00Z'
+    game.nextTransitionAt = '2026-09-14T10:30:01Z'
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready', operationState: 'pending' } })
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(wrapper.emitted('reconcileGame')).toBeUndefined()
+
+    await wrapper.setProps({ operationState: 'uncertain' })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(wrapper.emitted('reconcileGame')).toBeUndefined()
+
+    await wrapper.setProps({ operationState: 'idle' })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+  })
+
+  it('resets contract and recovery selections when a newer snapshot removes the selected binding', async () => {
+    const contractGame = fixture('integrated-contract')
+    const visitor = contractGame.visitors[0]
+    if (!visitor || !('contractOptions' in visitor)) throw new Error('Expected contract visitor')
+    visitor.contractOptions.push({ ...visitor.contractOptions[0]!, optionId: 'o2', label: { key: 'contract.two', fallback: 'Contrato alterno' } })
+    const acceptAction = visitor.actions.find((action) => action.action === 'accept_contract' && action.enabled)
+    if (!acceptAction || acceptAction.action !== 'accept_contract' || !acceptAction.enabled) throw new Error('Expected accept action')
+    acceptAction.execution.bindings.push({ optionId: 'o2', eligibleLoanItemIds: [], expiresAt: '2026-09-15T10:30:00Z' })
+    const contract = mount(VisitorCycleV2, { props: { game: contractGame, loadState: 'ready' } })
+    await contract.get('[data-testid="visitor-available"] select').setValue('o2')
+
+    const contractReplacement = fixture('integrated-contract')
+    contractReplacement.revision = contractGame.revision + 1
+    await contract.setProps({ game: contractReplacement })
+    await contract.get('[data-testid="visitor-available"] button').trigger('click')
+    expect(contract.emitted('acceptContract')?.[0]).toEqual([{ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: [] }])
+
+    const recoveryGame = fixture('integrated-recovery')
+    const recoveryView = recoveryGame.recoveries[0]
+    if (!recoveryView) throw new Error('Expected recovery')
+    const assignAction = recoveryView.actions.find((action) => action.action === 'assign_recovery' && action.enabled)
+    if (!assignAction || assignAction.action !== 'assign_recovery' || !assignAction.enabled) throw new Error('Expected assign action')
+    assignAction.execution.bindings.push({ visitorId: 'v3', optionId: 'ro2', eligibleLoanItemIds: [], expiresAt: '2026-09-15T10:30:00Z' })
+    const recovery = mount(VisitorCycleV2, { props: { game: recoveryGame, loadState: 'ready' } })
+    await recovery.get('[data-testid="recovery-open"] select').setValue('v3:ro2')
+
+    const recoveryReplacement = fixture('integrated-recovery')
+    recoveryReplacement.revision = recoveryGame.revision + 1
+    await recovery.setProps({ game: recoveryReplacement })
+    await recovery.get('[data-testid="recovery-open"] button').trigger('click')
+    expect(recovery.emitted('assignRecovery')?.[0]).toEqual([{ kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: [] }])
+  })
+
+  it('lets settlement choose one native option per required group with keyboard focus', async () => {
+    const game = fixture('integrated-settlement')
+    const settlement = game.settlements[0]
+    if (!settlement || !('choiceGroups' in settlement)) throw new Error('Expected settlement fixture')
+    settlement.choiceGroups[0]!.options.push({
+      optionId: 'keep-foreign',
+      label: { key: 'option.keep', fallback: 'Conservar botín' },
+      itemIds: ['reward1'],
+      capacityDelta: 1,
+      consequences: []
+    })
+    settlement.choiceGroups.push({
+      groupId: 'g2',
+      required: true,
+      defaultOptionId: 'leave-map',
+      label: { key: 'settlement.map', fallback: 'Mapa encontrado' },
+      options: [
+        { optionId: 'leave-map', label: { key: 'option.leave-map', fallback: 'Dejar mapa' }, itemIds: [], capacityDelta: 0, consequences: [] },
+        { optionId: 'take-map', label: { key: 'option.take-map', fallback: 'Tomar mapa' }, itemIds: ['map1'], capacityDelta: 1, consequences: [] }
+      ]
+    })
+    const action = settlement.actions.find((candidate) => candidate.action === 'confirm_settlement' && candidate.enabled)
+    if (!action || action.action !== 'confirm_settlement' || !action.enabled) throw new Error('Expected settlement action')
+    action.execution.groups = [
+      { groupId: 'g1', eligibleOptionIds: ['renounce', 'keep-foreign'] },
+      { groupId: 'g2', eligibleOptionIds: ['leave-map', 'take-map'] }
+    ]
+
+    const wrapper = mount(VisitorCycleV2, { attachTo: document.body, props: { game, loadState: 'ready' } })
+    const radios = wrapper.findAll('[data-testid="settlement-preview_ready"] input[type="radio"]')
+    const keepForeign = radios.find((radio) => radio.attributes('name') === 'settlement-s1-g1' && radio.element.getAttribute('type') === 'radio' && radio.element.nextSibling?.textContent?.includes('Conservar'))
+    const takeMap = radios.find((radio) => radio.attributes('name') === 'settlement-s1-g2' && radio.element.nextSibling?.textContent?.includes('Tomar'))
+    if (!keepForeign || !takeMap) throw new Error('Expected settlement radios')
+
+    const keepForeignInput = keepForeign.element as HTMLInputElement
+    const takeMapInput = takeMap.element as HTMLInputElement
+    keepForeignInput.focus()
+    expect(document.activeElement).toBe(keepForeignInput)
+    await keepForeign.trigger('keydown', { key: ' ' })
+    takeMapInput.focus()
+    expect(document.activeElement).toBe(takeMapInput)
+    await takeMap.trigger('keydown', { key: ' ' })
+    await wrapper.get('[data-testid="settlement-preview_ready"] button').trigger('click')
+
+    expect(wrapper.emitted('confirmSettlement')?.[0]).toEqual([{ kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'keep-foreign', g2: 'take-map' } }])
   })
 
   it('represents terminal visitor, expedition, settlement and recovery variants from frontend-only derivatives', () => {

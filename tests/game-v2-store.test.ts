@@ -120,21 +120,34 @@ describe('game V2 store', () => {
   it('keeps conflict honest and retryable when the conflict reload fails', async () => {
     const store = useGameV2Store()
     const initial = fixture('integrated-contract')
+    const reloaded = fixture('integrated-system')
     store.applySnapshot(initial)
     store.select({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1'] })
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(apiError({ code: 'revision_conflict', retryable: true }))
       .mockRejectedValueOnce({ statusMessage: 'database stack detail' })
+      .mockResolvedValueOnce(reloaded)
     vi.stubGlobal('$fetch', fetchMock)
 
     await store.acceptContract({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1'] })
 
     expect(store.operationState).toBe('conflict')
+    expect(store.snapshotStale).toBe(true)
     expect(store.game).toEqual(initial)
-    expect(store.selection).toEqual({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1'] })
+    expect(store.selection).toBeNull()
     expect(store.errorMessage).toContain('no se pudo actualizar')
     expect(store.errorMessage).toContain('Error inesperado')
     expect(store.errorMessage).not.toContain('database stack detail')
+
+    await store.acceptContract({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: [] })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    await store.retryConflictReload()
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/api/v2/contracts/accept', '/api/v2/game', '/api/v2/game'])
+    expect(store.operationState).toBe('idle')
+    expect(store.snapshotStale).toBe(false)
+    expect(store.game).toEqual(reloaded)
   })
 
   it('keeps confirmed snapshot for unavailable and terminal errors', async () => {
@@ -160,6 +173,7 @@ describe('game V2 store', () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(apiError({ code: 'made_up', retryable: false, statusMessage: 'leak me' }))
       .mockRejectedValueOnce(new Error('raw stack detail'))
+      .mockRejectedValueOnce(apiError({ code: 'action_unavailable', retryable: false, reason: 'INTERNAL_ONLY_RULE' }))
     vi.stubGlobal('$fetch', fetchMock)
 
     await store.assignRecovery({ kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: [] })
@@ -168,6 +182,12 @@ describe('game V2 store', () => {
 
     store.operationState = 'idle'
     await store.assignRecovery({ kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: [] })
+    expect(store.errorMessage).toBe('Error inesperado')
+
+    store.operationState = 'idle'
+    await store.assignRecovery({ kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: [] })
+    expect(store.operationState).toBe('terminal')
+    expect(store.unavailableReason).toBe('')
     expect(store.errorMessage).toBe('Error inesperado')
   })
 
@@ -185,5 +205,25 @@ describe('game V2 store', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v2/reconcile')
+  })
+
+  it('does not consume due transition keys while pending or uncertain', async () => {
+    const store = useGameV2Store()
+    const game = fixture('integrated-system')
+    game.nextTransitionAt = '2026-09-14T10:31:00Z'
+    store.applySnapshot(game)
+    const fetchMock = vi.fn().mockResolvedValue({ requestId: 'r', revision: 10, game })
+    vi.stubGlobal('$fetch', fetchMock)
+
+    store.operationState = 'pending'
+    await store.reconcileDueTransition(Date.parse('2026-09-14T10:31:01Z'), true)
+    store.operationState = 'uncertain'
+    await store.reconcileDueTransition(Date.parse('2026-09-14T10:31:02Z'), true)
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    store.operationState = 'idle'
+    await store.reconcileDueTransition(Date.parse('2026-09-14T10:31:03Z'), true)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
