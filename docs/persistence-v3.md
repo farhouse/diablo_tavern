@@ -45,7 +45,7 @@ git diff --check
 Run real-Mongo integration against an isolated database:
 
 ```bash
-MONGO_TEST_URI=mongodb://127.0.0.1:27017 pnpm exec vitest run tests/savegame-mongo.integration.test.ts
+MONGO_TEST_URI=mongodb://127.0.0.1:27017 JWT_SECRET=<secreto-de-test> pnpm exec vitest run tests/savegame-mongo.integration.test.ts
 ```
 
 The suite always uses database `diablo_tavern_alta43_integration`, prefixes test user IDs with `alta43-<pid>`, and deletes only the exact IDs created by that process. It never uses or clears `diablo_management`.

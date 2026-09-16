@@ -124,19 +124,21 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
   })
 
   it('preserves normative service custody through a generic Mongo mutation', async () => {
-    const { getPersistedGameV3, mutateSaveGameAtomic, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const initial = await getPersistedGameV3(userIds[12]!)
     const itemId = initial.stash[0]!
-    initial.serviceJobsById['mongo-service'] = {
-      id: 'mongo-service', itemIds: [],
-      projection: { kind: 'service', service: 'blacksmith', queuedAt: initial.updatedAt, startsAt: initial.updatedAt }
-    }
-    await collection.replaceOne({ userId: userIds[12] }, initial)
-    await transitionItemAtomic(userIds[12]!, 'mongo-service-item', 0, { operation: 'service', itemId, targetId: 'mongo-service' })
-    await mutateSaveGameAtomic(userIds[12]!, 'mongo-generic', 'generic:gold', 1, {}, (save) => { save.gold += 1 })
+    const deps = fixedDeps()
+    const blacksmith = executionOption(mapPersistedGameToGameView(initial, deps.now()), itemId, 'queue_blacksmith_job')
+    const queued = await mutateEquipmentV2Atomic(userIds[12]!, 'mongo-service-item', 0, {
+      action: 'queue_blacksmith_job', itemId, optionId: blacksmith.optionId
+    }, deps)
+    const jobId = Object.keys(queued.serviceJobStateById)[0]!
+    await mutateSaveGameAtomic(userIds[12]!, 'mongo-generic', 'generic:gold', queued.revision, {}, (save) => { save.gold += 1 }, deps)
     const reloaded = await getPersistedGameV3(userIds[12]!)
-    expect(reloaded.itemPlacements[itemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: 'mongo-service' })
-    expect(reloaded.serviceJobsById['mongo-service']?.itemIds).toEqual([itemId])
+    expect(reloaded.itemPlacements[itemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: jobId })
+    expect(reloaded.serviceJobsById[jobId]?.itemIds).toEqual([itemId])
+    expect(reloaded.serviceJobStateById[jobId]).toMatchObject({ status: 'active', itemId, service: 'blacksmith' })
   })
 
   it('returns the final retained loan after its visitor ages out and prunes the lifecycle', async () => {
@@ -435,7 +437,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     ['sell', 'dismantle', userIds[4]!],
     ['service', 'loan', userIds[5]!]
   ])('allows one Mongo CAS winner for %s versus %s', async (firstName, secondName, userId) => {
-    const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const initial = await getPersistedGameV3(userId)
     const itemId = initial.stash[0]!
     const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing-visitor'
@@ -443,14 +446,23 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     for (const operation of [firstName, secondName]) {
       const targetId = targetFor(operation)
       if (operation === 'loan') addExpedition(initial, targetId)
-      if (operation === 'service') initial.serviceJobsById[targetId] = {
-        id: targetId, itemIds: [], projection: { kind: 'service', service: 'blacksmith', queuedAt: initial.updatedAt, startsAt: initial.updatedAt }
-      }
     }
     await collection.replaceOne({ userId }, initial)
+    const deps = fixedDeps()
+    const serviceOption = [firstName, secondName].includes('service')
+      ? executionOption(mapPersistedGameToGameView(initial, deps.now()), itemId, 'queue_blacksmith_job')
+      : undefined
+    const runOperation = (operation: string) => {
+      if (operation === 'service') {
+        return mutateEquipmentV2Atomic(userId, `${operation}-request`, 0, {
+          action: 'queue_blacksmith_job', itemId, optionId: serviceOption!.optionId
+        }, deps)
+      }
+      return transitionItemAtomic(userId, `${operation}-request`, 0, { operation: operation as never, itemId, targetId: targetFor(operation) })
+    }
     const results = await Promise.allSettled([
-      transitionItemAtomic(userId, `${firstName}-request`, 0, { operation: firstName as never, itemId, targetId: targetFor(firstName) }),
-      transitionItemAtomic(userId, `${secondName}-request`, 0, { operation: secondName as never, itemId, targetId: targetFor(secondName) })
+      runOperation(firstName),
+      runOperation(secondName)
     ])
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
     const persisted = await collection.findOne({ userId })
