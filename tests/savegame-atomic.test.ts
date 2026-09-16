@@ -762,6 +762,24 @@ describe('atomic persisted-game mutation', () => {
     await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
 
+  it.each([
+    ['malformed service map', (partial: Record<string, unknown>) => {
+      delete partial.itemV2ById
+      partial.serviceJobStateById = { broken: 'invalid' }
+    }],
+    ['malformed item map', (partial: Record<string, unknown>) => {
+      partial.itemV2ById = { broken: 'invalid' }
+      delete partial.serviceJobStateById
+    }]
+  ])('rejects historical absence paired with a %s', async (_label, corrupt) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const partial = structuredClone(document as PersistedGameV3) as unknown as Record<string, unknown>
+    corrupt(partial)
+    document = partial as unknown as PersistedGameV3
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+  })
+
   it('signs equipment capabilities with the effective runtime secret instead of the public dev fallback', async () => {
     const { EquipmentV2Error } = await import('../server/domain/equipment-v2')
     const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')

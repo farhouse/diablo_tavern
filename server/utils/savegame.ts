@@ -702,14 +702,16 @@ function backfillPersistedV3(document: PersistedDbDocument): PersistedGameV3 | u
   const missingItemV2Map = !Object.prototype.hasOwnProperty.call(document, 'itemV2ById')
   const missingServiceJobStateMap = !Object.prototype.hasOwnProperty.call(document, 'serviceJobStateById')
   const missingV2Maps = missingItemV2Map || missingServiceJobStateMap
+  const itemV2Map = (document as { itemV2ById?: unknown }).itemV2ById
+  const serviceJobStateMap = (document as { serviceJobStateById?: unknown }).serviceJobStateById
+  if ((!missingItemV2Map && !isItemV2Map(itemV2Map))
+    || (!missingServiceJobStateMap && !isServiceJobStateMap(serviceJobStateMap))) return undefined
   const retained = backfillRetainedVisitorIdentity(document)
   const candidate = retained ?? (missingV2Maps ? toPersistedGame(document) : undefined)
   if (!candidate) return undefined
 
-  if (missingV2Maps) {
-    candidate.itemV2ById = readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById)
-    candidate.serviceJobStateById = readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById)
-  }
+  if (missingItemV2Map) candidate.itemV2ById = {}
+  if (missingServiceJobStateMap) candidate.serviceJobStateById = {}
   if (missingItemV2Map) backfillCommissionRewardV2State(candidate)
   return candidate
 }
