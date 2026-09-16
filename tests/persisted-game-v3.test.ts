@@ -1,11 +1,23 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createSaveGame } from '../utils/game-logic'
 import { buildPersistedFromPublic, isPersistedCanonical, sanitizeGameResponse, type PersistedGameV3 } from '../server/utils/savegame'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
 import { applyItemTransition, effectiveCapacityUsed } from '../server/domain/item-transitions'
 import { assignVisitorCommission, refreshVisitRound } from '../utils/visitor-logic'
+import { LOOT_CONFIG_VERSION } from '../server/domain/loot-v2'
+
+const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
 
 describe('PersistedGameV3 invariants', () => {
+  beforeEach(() => {
+    process.env.JWT_SECRET = 'test-secret-for-equipment-v2'
+  })
+
+  afterEach(() => {
+    if (ORIGINAL_JWT_SECRET === undefined) delete process.env.JWT_SECRET
+    else process.env.JWT_SECRET = ORIGINAL_JWT_SECRET
+  })
+
   it('stores each actionable item once and only references it from containers', () => {
     const persisted = buildPersistedFromPublic(createSaveGame('canonical-user'))
     expect(isPersistedCanonical(persisted)).toBe(true)
@@ -73,7 +85,7 @@ describe('PersistedGameV3 invariants', () => {
     const persisted = buildPersistedFromPublic(createSaveGame(`projection-${operation}`))
     const itemId = persisted.stash[0]!
     const targetId = `${operation}-target`
-    addTarget(persisted, operation, targetId)
+    addTarget(persisted, operation, targetId, itemId)
     const transitioned = applyItemTransition(persisted, { operation, itemId, targetId }).game
     const view = mapPersistedGameToGameView(transitioned, new Date('2026-09-13T12:00:00.000Z'))
     expect(view.items).toContainEqual(expect.objectContaining({ itemId }))
@@ -96,7 +108,7 @@ describe('PersistedGameV3 invariants', () => {
   it('preserves normative service custody through compatibility round trips', async () => {
     const persisted = buildPersistedFromPublic(createSaveGame('service-round-trip'))
     const itemId = persisted.stash[0]!
-    addTarget(persisted, 'service', 'blacksmith-job')
+    addTarget(persisted, 'service', 'blacksmith-job', itemId)
     const serviced = applyItemTransition(persisted, { operation: 'service', itemId, targetId: 'blacksmith-job' }).game
     const { hydratePersistedGame } = await import('../server/utils/savegame')
     const rebuilt = buildPersistedFromPublic(hydratePersistedGame(serviced), serviced)
@@ -108,7 +120,7 @@ describe('PersistedGameV3 invariants', () => {
 
   it('rejects sharing one normative service job between multiple items', () => {
     const persisted = buildPersistedFromPublic(createSaveGame('service-cardinality'))
-    addTarget(persisted, 'service', 'single-job')
+    addTarget(persisted, 'service', 'single-job', persisted.stash[0]!)
     const first = applyItemTransition(persisted, { operation: 'service', itemId: persisted.stash[0]!, targetId: 'single-job' }).game
     expect(() => applyItemTransition(first, { operation: 'service', itemId: first.stash[0]!, targetId: 'single-job' }))
       .toThrow('already has an item')
@@ -251,11 +263,60 @@ describe('PersistedGameV3 invariants', () => {
     visitor.state = 'returned'
     visitor.commission.rewardGold = visitor.commission.fullRewardGold
     visitor.commission.rewardItem!.id = 'pending-reward-item'
-    const persisted = buildPersistedFromPublic(save)
-    expect(persisted.itemPlacements['pending-reward-item']).toMatchObject({ ownerKind: 'caravan' })
+    const persisted = buildPersistedFromPublic(save, undefined, { now: () => new Date(save.updatedAt), random: () => 0.5, uuid: () => 'pending-reward' })
+    const rewardItemId = visitor.commission.rewardItem!.id
+    const generatedRewardId = persisted.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)?.visitor?.commission?.rewardItemId
+    expect(generatedRewardId).toBe('loot-pending-reward')
+    expect(generatedRewardId).not.toBe(rewardItemId)
+    expect(persisted.itemPlacements[generatedRewardId!]).toMatchObject({ ownerKind: 'caravan' })
+    expect(persisted.itemV2ById[generatedRewardId!]?.provenance).toMatchObject({
+      configVersion: LOOT_CONFIG_VERSION,
+      businessKey: 'loot:commission-reward:reward'
+    })
     expect(effectiveCapacityUsed(persisted)).toBe(save.stash.length + 1)
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
     expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: 'commission-reward' }))
+  })
+
+  it('keeps commission reward provenance as the invariant and rejects duplicate loot keys', () => {
+    const save = createSaveGame('reward-business-key')
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor)?.visitor!
+    visitor.state = 'returned'
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!, id: 'reward-business-commission', status: 'ready',
+      startedAt: save.createdAt, finishesAt: save.updatedAt, outcomeRoll: 0.1,
+      outcome: 'complete', rewardGold: visitor.commissionOptions[0]!.fullRewardGold,
+      rewardItem: structuredClone(save.stash[0]!)
+    }
+    const persisted = buildPersistedFromPublic(save, undefined, { now: () => new Date(save.updatedAt), random: () => 0.5, uuid: () => 'business-reward' })
+    const commission = persisted.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)!.visitor!.commission!
+    const rewardItemId = commission.rewardItemId!
+
+    const claimed = structuredClone(persisted)
+    const claimedCommission = claimed.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)!.visitor!.commission!
+    claimedCommission.status = 'claimed'
+    claimedCommission.claimedAt = save.updatedAt
+    claimed.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)!.visitor!.state = 'departed'
+    claimed.visitRound.slots.find((slot) => slot.visitor?.id === visitor.id)!.visitor!.departedAt = save.updatedAt
+    claimed.settlementsById[claimedCommission.id]!.itemIds = []
+    claimed.stash = claimed.stash.filter((itemId) => itemId !== rewardItemId)
+    claimed.itemPlacements[rewardItemId] = { ownerKind: 'tombstone', custodyKind: 'tombstone', custodyId: 'dismantle-reward' }
+    expect(isPersistedCanonical(claimed)).toBe(true)
+
+    const duplicate = structuredClone(persisted)
+    duplicate.itemsById['duplicate-reward'] = { ...structuredClone(duplicate.itemsById[rewardItemId]!), id: 'duplicate-reward' }
+    duplicate.itemPlacements['duplicate-reward'] = { ownerKind: 'caravan', custodyKind: 'stash' }
+    duplicate.stash.push('duplicate-reward')
+    duplicate.itemV2ById['duplicate-reward'] = structuredClone(duplicate.itemV2ById[rewardItemId]!)
+    expect(isPersistedCanonical(duplicate)).toBe(false)
+
+    const wrongRegion = structuredClone(persisted)
+    wrongRegion.itemV2ById[rewardItemId]!.provenance!.zoneId = 'cold-plains'
+    expect(isPersistedCanonical(wrongRegion)).toBe(false)
+
+    const emptyBusinessKey = structuredClone(persisted)
+    emptyBusinessKey.itemV2ById[rewardItemId]!.provenance!.businessKey = ''
+    expect(isPersistedCanonical(emptyBusinessKey)).toBe(false)
   })
 
   it.each(['partial', 'failed'] as const)('projects %s commission lifecycle without fabricating an item', (outcome) => {
@@ -432,7 +493,7 @@ describe('PersistedGameV3 invariants', () => {
           const targetId = operation === 'loan'
             ? Object.keys(candidate.expeditionsById)[0] ?? `target-${step}`
             : `target-${step}`
-          if (operation === 'loan' || operation === 'service' || operation === 'recover') addTarget(candidate, operation, targetId)
+          if (operation === 'loan' || operation === 'service' || operation === 'recover') addTarget(candidate, operation, targetId, itemId)
           const result = applyItemTransition(candidate, { operation, itemId, targetId })
           state = result.game
           expect(state.gold - beforeGold).toBe(result.effect.goldDelta)
@@ -456,14 +517,14 @@ describe('PersistedGameV3 invariants', () => {
     const itemId = initial.stash[0]!
     const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing'
     const target = (operation: typeof first | typeof second, fallback: string) => operation === 'sell' ? visitorId : fallback
-    if (first === 'service') initial.serviceJobsById.winner = { id: 'winner', itemIds: [] }
+    if (first === 'service') addTarget(initial, 'service', 'winner', itemId)
     const winner = applyItemTransition(initial, { operation: first, itemId, targetId: target(first, 'winner') }).game
     expect(() => applyItemTransition(winner, { operation: second, itemId, targetId: target(second, 'loser') }))
       .toThrow(expect.objectContaining({ name: 'ItemTransitionError' }))
   })
 })
 
-function addTarget(game: PersistedGameV3, operation: 'loan' | 'service' | 'recover', targetId: string): void {
+function addTarget(game: PersistedGameV3, operation: 'loan' | 'service' | 'recover', targetId: string, itemId?: string): void {
   const at = game.updatedAt
   if (operation === 'loan') {
     const visitor = game.visitRound.slots.find((slot) => slot.visitor)?.visitor
@@ -479,6 +540,17 @@ function addTarget(game: PersistedGameV3, operation: 'loan' | 'service' | 'recov
   } else if (operation === 'service') {
     game.serviceJobsById[targetId] = {
       id: targetId, itemIds: [], projection: { kind: 'service', service: 'blacksmith', queuedAt: at, startsAt: at }
+    }
+    if (itemId) {
+      game.serviceJobStateById[targetId] = {
+        status: 'active',
+        service: 'blacksmith',
+        itemId,
+        queuedAt: at,
+        startedAt: at,
+        completesAt: at,
+        result: { blacksmithLevel: 1 }
+      }
     }
   } else {
     const sourceExpeditionId = Object.keys(game.expeditionsById)[0] ?? `source-${targetId}`

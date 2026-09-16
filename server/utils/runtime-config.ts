@@ -12,7 +12,7 @@ export function resolveServerRuntimeConfig(
   return {
     mongoUri: String(environment.MONGO_URI ?? config.mongoUri ?? ''),
     mongoDbName: String(environment.MONGO_DB_NAME ?? config.mongoDbName ?? ''),
-    jwtSecret: String(environment.JWT_SECRET ?? config.jwtSecret ?? ''),
+    jwtSecret: String(environment.JWT_SECRET ?? environment.NUXT_JWT_SECRET ?? config.jwtSecret ?? ''),
     inviteCode: String(environment.INVITE_CODE ?? config.inviteCode ?? '')
   }
 }

@@ -4,9 +4,12 @@ import type { Item, SaveGame, VisitRound, Visitor, VisitorCommission, VisitorOff
 import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
 import { refreshVisitRound } from '~/utils/visitor-logic'
 import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
+import { applyEquipmentV2Command, authorizeEquipmentV2Command, type EquipmentV2Command } from '~/server/domain/equipment-v2'
+import { generateLootForZone, LOOT_CONFIG_VERSION } from '~/server/domain/loot-v2'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+const MAX_REQUEST_RECORDS = 100
 const MAX_MUTATE_ATTEMPTS = 5
 const PERSISTENCE_LEGACY_FIELDS = LEGACY_SAVE_FIELDS.filter((field) => field !== 'materials')
 
@@ -35,6 +38,7 @@ export interface PersistedRequestRecord {
   businessKey: string
   commandHash: string
   response: PublicSaveGame
+  persistedResponse?: PersistedGameV3
   revision: number
   createdAt: string
   updatedAt: string
@@ -69,6 +73,33 @@ export interface PersistedCustodyContainer {
     | { kind: 'legacy_appraiser' }
 }
 
+export interface PersistedItemV2State {
+  sealedAffixes?: Item['affixes']
+  blacksmithLevel?: number
+  enchantCount?: number
+  activeImprint?: { imprintId: string; label: string; grantedAt: string }
+  pendingImprint?: { imprintId: string; label: string; grantedAt: string }
+  imprintHistory?: Array<{ imprintId: string; label: string; grantedAt: string; replacedAt?: string }>
+  provenance?: { zoneId: string; lootTableId?: string; configVersion?: string; businessKey?: string; combinationId?: string; imperfectPieceId?: string; droppedAt: string }
+}
+
+export interface PersistedServiceJobState {
+  status: 'queued' | 'active' | 'completed' | 'failed' | 'cancelled'
+  service: 'blacksmith' | 'enchanter'
+  itemId: string
+  queuedAt: string
+  startedAt: string
+  completesAt: string
+  completedAt?: string
+  failedAt?: string
+  cancelledAt?: string
+  result: {
+    blacksmithLevel?: number
+    enchantCount?: number
+    affix?: Item['affixes'][number]
+  }
+}
+
 type PersistedVisitorOffer = Omit<VisitorOffer, 'item'> & { itemId: string }
 type PersistedVisitorCommission = Omit<VisitorCommission, 'rewardItem'> & { rewardItemId?: string }
 type PersistedVisitor = Omit<Visitor, 'offers' | 'commission'> & {
@@ -98,6 +129,8 @@ export interface PersistedGameV3 {
   recoveriesById: Record<string, PersistedCustodyContainer>
   settlementsById: Record<string, PersistedCustodyContainer>
   serviceJobsById: Record<string, PersistedCustodyContainer>
+  itemV2ById: Record<string, PersistedItemV2State>
+  serviceJobStateById: Record<string, PersistedServiceJobState>
   requestRecords: PersistedRequestRecord[]
   businessKeys: Record<string, string>
   ledger: PersistedLedgerEntry[]
@@ -130,7 +163,7 @@ export async function getPersistedGameV3(userId: string, dependencies = defaultD
     }
 
     if (existing.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(existing) || !isPersistedCanonical(existing))) {
-      const backfilled = !hasLegacyFields(existing) ? backfillRetainedVisitorIdentity(existing) : undefined
+      const backfilled = !hasLegacyFields(existing) ? backfillPersistedV3(existing) : undefined
       if (!backfilled || !isPersistedCanonical(backfilled)) {
         throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
       }
@@ -242,7 +275,7 @@ export async function mutateSaveGameAtomic(
     }
 
     if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(currentDocument) || !isPersistedCanonical(currentDocument))) {
-      const backfilled = !hasLegacyFields(currentDocument) ? backfillRetainedVisitorIdentity(currentDocument) : undefined
+      const backfilled = !hasLegacyFields(currentDocument) ? backfillPersistedV3(currentDocument) : undefined
       if (!backfilled || !isPersistedCanonical(backfilled)) {
         throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
       }
@@ -294,19 +327,16 @@ export async function mutateSaveGameAtomic(
     next.userId = userId
     next.revision = nextRevision
 
-    const requestRecords = [
-      ...persisted.requestRecords.filter((entry) => Date.parse(entry.createdAt) + REQUEST_RECORD_RETENTION_MS >= Date.parse(now)),
-      {
-        requestId,
-        operationKey,
-        businessKey,
-        commandHash: requestHash,
-        response: sanitizeGameResponse(validated),
-        revision: nextRevision,
-        createdAt: now,
-        updatedAt: now
-      }
-    ]
+    const requestRecords = appendRequestRecord(persisted.requestRecords, now, {
+      requestId,
+      operationKey,
+      businessKey,
+      commandHash: requestHash,
+      response: sanitizeGameResponse(hydratePersistedGame(next)),
+      revision: nextRevision,
+      createdAt: now,
+      updatedAt: now
+    })
 
     const nextPersisted: PersistedGameV3 = {
       ...next,
@@ -352,7 +382,7 @@ export async function mutateSaveGameAtomic(
       throw error
     }
     if (replaceResult.modifiedCount === 1) {
-      return sanitizeGameResponse(validated)
+      return sanitizeGameResponse(hydratePersistedGame(nextPersisted))
     }
 
     // Reload after a lost CAS. The next iteration can only return an exact
@@ -376,6 +406,10 @@ export class BusinessKeyConflictError extends Error {
 
 export class PersistedGameCorruptError extends Error {
   override name = 'PersistedGameCorruptError'
+}
+
+export class InvalidMutationRequestError extends Error {
+  override name = 'InvalidMutationRequestError'
 }
 
 export async function transitionItemAtomic(
@@ -413,10 +447,10 @@ export async function transitionItemAtomic(
   transitioned.revision = expectedRevision + 1
   transitioned.updatedAt = now
   const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
-  transitioned.requestRecords = [...current.requestRecords, {
+  transitioned.requestRecords = appendRequestRecord(current.requestRecords, now, {
     requestId, operationKey, businessKey, commandHash, response,
     revision: transitioned.revision, createdAt: now, updatedAt: now
-  }]
+  })
   transitioned.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
   transitioned.ledger = [...current.ledger, {
     at: now, requestId, operationKey, commandHash, businessKey,
@@ -448,6 +482,152 @@ export async function transitionItemAtomic(
   throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 }
 
+export async function mutateEquipmentV2Atomic(
+  userId: string,
+  requestId: string,
+  expectedRevision: number,
+  command: EquipmentV2Command,
+  dependencies = defaultDependencies
+): Promise<PersistedGameV3> {
+  if (!requestId || requestId.length > 128) throw new InvalidMutationRequestError('A valid requestId is required')
+  const saves = await saveGamesCollection()
+  const operationKey = JSON.stringify(['equipment-v2', command.action, command.itemId ?? command.jobId ?? '', command.optionId ?? ''])
+  const businessKey = operationKey
+  const commandHash = hashCommand(operationKey, command)
+
+  for (let attempt = 0; attempt < MAX_MUTATE_ATTEMPTS; attempt += 1) {
+    const currentDocument = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+    if (!currentDocument) {
+      await getPersistedGameV3(userId, dependencies)
+      continue
+    }
+    if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(currentDocument) || !isPersistedCanonical(currentDocument))) {
+      const backfilled = !hasLegacyFields(currentDocument) ? backfillPersistedV3(currentDocument) : undefined
+      if (!backfilled || !isPersistedCanonical(backfilled)) throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
+      await saves.replaceOne({ userId, revision: currentDocument.revision } as Filter<DbSaveGame>, backfilled as unknown as DbSaveGame)
+      continue
+    }
+
+    const current = toPersistedGame(currentDocument)
+    const replay = current.requestRecords.find((record) => record.requestId === requestId)
+    if (replay) {
+      if (replay.commandHash !== commandHash) throw new IdempotencyConflictError('requestId was already used for a different command')
+      if (replay.persistedResponse) return replay.persistedResponse
+      return current
+    }
+    if (current.ledger.some((entry) => entry.requestId === requestId)) {
+      throw new IdempotencyConflictError('requestId was already committed and its replay record is unavailable')
+    }
+    if (current.businessKeys[businessKey]) {
+      if (command.action === 'complete_service_job' && command.jobId && current.serviceJobStateById[command.jobId]?.status === 'completed') return current
+      throw new BusinessKeyConflictError('equipment command was already committed')
+    }
+    if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
+
+    authorizeEquipmentV2Command(current, command, dependencies)
+    const transitioned = applyEquipmentV2Command(current, command, dependencies)
+    pruneEmptyOrphanedLifecycle(
+      transitioned.expeditionsById,
+      transitioned.settlementsById,
+      transitioned.recoveriesById,
+      transitioned.visitRound,
+      transitioned.visitHistory
+    )
+    const now = dependencies.now().toISOString()
+    transitioned.revision = expectedRevision + 1
+    transitioned.updatedAt = now
+    const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
+    const persistedResponse = createReplaySnapshot(transitioned)
+    transitioned.requestRecords = appendRequestRecord(current.requestRecords, now, {
+      requestId, operationKey, businessKey, commandHash, response, persistedResponse,
+      revision: transitioned.revision, createdAt: now, updatedAt: now
+    })
+    transitioned.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
+    transitioned.ledger = [...current.ledger, {
+      at: now, requestId, operationKey, commandHash, businessKey,
+      revision: transitioned.revision,
+      goldDelta: transitioned.gold - current.gold,
+      materialDeltas: resourceDeltas(current.materials, transitioned.materials),
+      itemChanges: itemPlacementChanges(current, transitioned)
+    }]
+    if (!isPersistedCanonical(transitioned)) throw new PersistedGameCorruptError('Equipment mutation produced an invalid aggregate')
+
+    let result
+    try {
+      result = await saves.replaceOne(
+        { userId, revision: expectedRevision } as Filter<DbSaveGame>,
+        transitioned as unknown as DbSaveGame
+      )
+    } catch (error) {
+      const afterError = await saves.findOne({ userId } as Filter<DbSaveGame>) as PersistedDbDocument | null
+      if (afterError && isPersistedCanonical(afterError)) {
+        const exactReplay = afterError.requestRecords.find((record) => record.requestId === requestId)
+        if (exactReplay?.commandHash === commandHash) return exactReplay.persistedResponse ?? toPersistedGame(afterError)
+      }
+      throw error
+    }
+    if (result.modifiedCount === 1) return transitioned
+    const winner = await getPersistedGameV3(userId, dependencies)
+    const winnerReplay = winner.requestRecords.find((record) => record.requestId === requestId)
+    if (winnerReplay?.commandHash === commandHash) return winnerReplay.persistedResponse ?? winner
+    throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
+  }
+
+  throw new Error('Save changed concurrently; retry with the same requestId')
+}
+
+export async function reconcilePersistedGameV3(
+  userId: string,
+  dependencies = defaultDependencies
+): Promise<PersistedGameV3> {
+  let conflicts = 0
+  while (conflicts < MAX_MUTATE_ATTEMPTS) {
+    const current = await getPersistedGameV3(userId, dependencies)
+    const due = Object.entries(current.serviceJobStateById)
+      .find(([, state]) => state.status === 'active' && Date.parse(state.completesAt) <= dependencies.now().getTime())
+    if (!due) return current
+    const [jobId, state] = due
+    try {
+      await mutateEquipmentV2Atomic(
+        userId,
+        `complete-service:${jobId}:${state.completesAt}`,
+        current.revision,
+        { action: 'complete_service_job', jobId },
+        dependencies
+      )
+      conflicts = 0
+    } catch (error) {
+      if (!(error instanceof RevisionConflictError)) throw error
+      conflicts += 1
+    }
+  }
+  throw new Error('Save changed concurrently; retry reconciliation')
+}
+
+function createReplaySnapshot(game: PersistedGameV3): PersistedGameV3 {
+  return {
+    ...structuredClone(game),
+    requestRecords: [],
+    businessKeys: {},
+    ledger: []
+  }
+}
+
+function pruneRequestRecords(records: PersistedRequestRecord[], now: string, maxRecords: number): PersistedRequestRecord[] {
+  const cutoff = Date.parse(now) - REQUEST_RECORD_RETENTION_MS
+  return records
+    .filter((entry) => Date.parse(entry.createdAt) >= cutoff)
+    .slice(-maxRecords)
+}
+
+function appendRequestRecord(
+  records: PersistedRequestRecord[],
+  now: string,
+  record: PersistedRequestRecord
+): PersistedRequestRecord[] {
+  return [...pruneRequestRecords(records, now, MAX_REQUEST_RECORDS - 1), record]
+}
+
 function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
   return {
     userId: document.userId,
@@ -477,6 +657,8 @@ function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
     recoveriesById: readContainerMap(document.recoveriesById),
     settlementsById: readContainerMap(document.settlementsById),
     serviceJobsById: readContainerMap(document.serviceJobsById),
+    itemV2ById: readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById),
+    serviceJobStateById: readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById),
     requestRecords: Array.isArray((document as { requestRecords?: unknown }).requestRecords)
       ? [...((document as { requestRecords: PersistedRequestRecord[] }).requestRecords)]
       : [],
@@ -514,6 +696,24 @@ function backfillRetainedVisitorIdentity(document: PersistedDbDocument): Persist
   }
 
   return changed ? candidate : undefined
+}
+
+function backfillPersistedV3(document: PersistedDbDocument): PersistedGameV3 | undefined {
+  const missingV2Maps = !Object.prototype.hasOwnProperty.call(document, 'itemV2ById')
+    || !Object.prototype.hasOwnProperty.call(document, 'serviceJobStateById')
+  const retained = backfillRetainedVisitorIdentity(document)
+  if (retained) {
+    if (missingV2Maps) {
+      retained.itemV2ById = readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById)
+      retained.serviceJobStateById = readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById)
+    }
+    return retained
+  }
+  if (!missingV2Maps) return undefined
+  const candidate = toPersistedGame(document)
+  candidate.itemV2ById = readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById)
+  candidate.serviceJobStateById = readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById)
+  return candidate
 }
 
 export function hydratePersistedGame(document: PersistedGameV3): SaveGame {
@@ -589,8 +789,9 @@ export function buildPersistedFromPublic(
     if (!serviceJob && !preservesNormativeService) stash.push(item.id)
   }
 
-  const visitRound = persistRound(normalized.visitRound, itemsById, itemPlacements)
-  const visitHistory = normalized.visitHistory.map((round) => persistRound(round, itemsById, itemPlacements))
+  const generatedItemStates: Record<string, PersistedItemV2State> = {}
+  const visitRound = persistRound(normalized.visitRound, itemsById, itemPlacements, previous, generatedItemStates, dependencies)
+  const visitHistory = normalized.visitHistory.map((round) => persistRound(round, itemsById, itemPlacements, previous, generatedItemStates, dependencies))
   for (const round of [visitRound, ...visitHistory]) {
     for (const visitor of round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])) {
       for (const trade of visitor.trades.filter((entry) => entry.kind === 'player_sold')) {
@@ -671,6 +872,8 @@ export function buildPersistedFromPublic(
     recoveriesById,
     settlementsById,
     serviceJobsById,
+    itemV2ById: { ...structuredClone(previous?.itemV2ById ?? {}), ...generatedItemStates },
+    serviceJobStateById: structuredClone(previous?.serviceJobStateById ?? {}),
     requestRecords: structuredClone(previous?.requestRecords ?? []),
     businessKeys: structuredClone(previous?.businessKeys ?? {}),
     ledger: structuredClone(previous?.ledger ?? [])
@@ -695,7 +898,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     '_id', 'userId', 'schemaVersion', 'gold', 'materials', 'caravan', 'stashLimit', 'stash',
     'unlockedRegionIds', 'visitRound', 'visitHistory', 'revision', 'createdAt', 'updatedAt',
     'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById',
-    'serviceJobsById', 'requestRecords', 'businessKeys', 'ledger'
+    'serviceJobsById', 'itemV2ById', 'serviceJobStateById', 'requestRecords', 'businessKeys', 'ledger'
   ])) return false
 
   const stash = (document as { stash?: unknown }).stash
@@ -707,6 +910,8 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     settlement: candidate.settlementsById,
     service: candidate.serviceJobsById
   }
+  const itemV2ById = (candidate as { itemV2ById?: unknown }).itemV2ById
+  const serviceJobStateById = (candidate as { serviceJobStateById?: unknown }).serviceJobStateById
 
   if (candidate.schemaVersion !== SAVE_SCHEMA_VERSION) return false
   if (!Array.isArray(stash) || !isPlainRecord(itemsById) || !isPlainRecord(itemPlacements)) return false
@@ -731,6 +936,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   if (visitorIds.size !== visitors.length) return false
   const visitorContracts = new Map(visitors.map((visitor) => [visitor.id, visitor.commission?.id]))
   if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
+  if (!isItemV2Map(itemV2ById) || !isServiceJobStateMap(serviceJobStateById)) return false
   const expeditions = Object.values(candidate.expeditionsById as Record<string, PersistedCustodyContainer>)
   const settlements = Object.values(candidate.settlementsById as Record<string, PersistedCustodyContainer>)
   const recoveries = Object.values(candidate.recoveriesById as Record<string, PersistedCustodyContainer>)
@@ -782,6 +988,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
         : commission.outcome === 'partial' ? commission.partialRewardGold : 0
       if (commission.rewardGold !== expectedGold) return false
       if (commission.outcome !== 'complete' && commission.rewardItemId !== undefined) return false
+      if (commission.rewardItemId && !isCommissionRewardLoot(candidate as unknown as PersistedGameV3, commission)) return false
       const expectedSettlementItems = commission.status === 'ready' && commission.rewardItemId
         ? [commission.rewardItemId]
         : []
@@ -834,6 +1041,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
     for (const container of Object.values(containers as Record<string, PersistedCustodyContainer>)) {
       if (container.projection?.kind !== kind && !(kind === 'service' && container.projection?.kind === 'legacy_appraiser')) return false
       if (kind === 'service' && container.itemIds.length > 1) return false
+      if (kind === 'service' && container.projection?.kind === 'service' && !serviceJobStateById[container.id]) return false
       for (const itemId of container.itemIds) {
         if (activeReferences.has(itemId)) return false
         activeReferences.add(itemId)
@@ -841,6 +1049,31 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
         if (!placement || placement.custodyKind !== kind || placement.custodyId !== container.id) return false
       }
     }
+  }
+  for (const [itemId] of Object.entries(itemV2ById)) {
+    if (!itemsById[itemId]) return false
+  }
+  for (const [jobId, serviceState] of Object.entries(serviceJobStateById)) {
+    const container = (candidate.serviceJobsById as Record<string, PersistedCustodyContainer>)[jobId]
+    if (!container || container.projection?.kind !== 'service' || container.projection.service !== serviceState.service) return false
+    if (container.projection.queuedAt !== serviceState.queuedAt || container.projection.startsAt !== serviceState.startedAt) return false
+    if (!itemsById[serviceState.itemId]) return false
+    const placement = itemPlacements[serviceState.itemId]
+    if (serviceState.status === 'queued' || serviceState.status === 'active') {
+      if (container.itemIds.length !== 1 || container.itemIds[0] !== serviceState.itemId) return false
+      if (placement?.ownerKind !== 'caravan' || placement.custodyKind !== 'service' || placement.custodyId !== jobId) return false
+    } else {
+      if (container.itemIds.length !== 0) return false
+      if (placement?.ownerKind !== 'caravan' || placement.custodyKind !== 'stash') return false
+    }
+    if (Date.parse(serviceState.startedAt) < Date.parse(serviceState.queuedAt)) return false
+    if (Date.parse(serviceState.completesAt) < Date.parse(serviceState.startedAt)) return false
+    if (serviceState.status === 'completed' ? !serviceState.completedAt : serviceState.completedAt) return false
+    if (serviceState.status === 'failed' ? !serviceState.failedAt : serviceState.failedAt) return false
+    if (serviceState.status === 'cancelled' ? !serviceState.cancelledAt : serviceState.cancelledAt) return false
+    if (serviceState.service === 'blacksmith') {
+      if (!Number.isInteger(serviceState.result.blacksmithLevel) || serviceState.result.affix !== undefined || serviceState.result.enchantCount !== undefined) return false
+    } else if (!serviceState.result.affix || !Number.isInteger(serviceState.result.enchantCount) || serviceState.result.blacksmithLevel !== undefined) return false
   }
   if (Object.values(itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length > Number(candidate.stashLimit)) return false
 
@@ -861,9 +1094,9 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
       if (visitor.commission && Object.prototype.hasOwnProperty.call(visitor.commission, 'rewardItem')) return false
       if (visitor.commission?.rewardItemId) {
         const placement = itemPlacements[visitor.commission.rewardItemId]
-        if (!itemsById[visitor.commission.rewardItemId] || placement?.ownerKind !== 'caravan') return false
+        if (!itemsById[visitor.commission.rewardItemId] || !placement) return false
         if (visitor.commission.status === 'claimed') {
-          if (placement.custodyKind !== 'stash') return false
+          if (!isCommissionRewardLoot(candidate as unknown as PersistedGameV3, visitor.commission)) return false
         } else if (placement.custodyKind !== 'settlement' || placement.custodyId !== visitor.commission.id) return false
       }
     }
@@ -905,7 +1138,7 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
   }
   const requestIds = new Set<string>()
   for (const record of candidate.requestRecords as PersistedRequestRecord[]) {
-    if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'revision', 'createdAt', 'updatedAt'])) return false
+    if (!isPlainRecord(record) || !hasOnlyKeys(record, ['requestId', 'operationKey', 'businessKey', 'commandHash', 'response', 'persistedResponse', 'revision', 'createdAt', 'updatedAt'])) return false
     if (typeof record.requestId !== 'string' || !record.requestId || requestIds.has(record.requestId)) return false
     if (typeof record.operationKey !== 'string' || !record.operationKey
       || typeof record.businessKey !== 'string' || !record.businessKey || !isPublicSaveGame(record.response)) return false
@@ -914,6 +1147,8 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
       || record.response.revision !== record.revision) return false
     if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
     if (containsInternalFields(record.response)) return false
+    if (record.persistedResponse !== undefined
+      && (!isPersistedCanonical(record.persistedResponse) || record.persistedResponse.revision !== record.revision)) return false
     const ledgerEntry = ledgerByRequestId.get(record.requestId)
     if (!ledgerEntry || ledgerEntry.operationKey !== record.operationKey
       || ledgerEntry.businessKey !== record.businessKey
@@ -1071,6 +1306,14 @@ function readContainerMap(value: unknown): Record<string, PersistedCustodyContai
   return isContainerMap(value) ? structuredClone(value) : {}
 }
 
+function readItemV2Map(value: unknown): Record<string, PersistedItemV2State> {
+  return isItemV2Map(value) ? structuredClone(value) : {}
+}
+
+function readServiceJobStateMap(value: unknown): Record<string, PersistedServiceJobState> {
+  return isServiceJobStateMap(value) ? structuredClone(value) : {}
+}
+
 function isContainerMap(value: unknown): value is Record<string, PersistedCustodyContainer> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   return Object.entries(value as Record<string, unknown>).every(([id, entry]) => {
@@ -1082,6 +1325,83 @@ function isContainerMap(value: unknown): value is Record<string, PersistedCustod
       && container.itemIds.every((itemId) => typeof itemId === 'string' && Boolean(itemId))
       && (container.projection === undefined || isCustodyProjection(container.projection))
   })
+}
+
+function isItemV2Map(value: unknown): value is Record<string, PersistedItemV2State> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const lootBusinessKeys = new Set<string>()
+  return Object.values(value as Record<string, unknown>).every((entry) => {
+    if (!isPlainRecord(entry) || !hasOnlyKeys(entry, [
+      'sealedAffixes', 'blacksmithLevel', 'enchantCount', 'activeImprint', 'pendingImprint', 'imprintHistory', 'provenance'
+    ])) return false
+    if (entry.sealedAffixes !== undefined && (!Array.isArray(entry.sealedAffixes)
+      || !entry.sealedAffixes.every(isAffix))) return false
+    if (entry.blacksmithLevel !== undefined && (!Number.isInteger(entry.blacksmithLevel) || Number(entry.blacksmithLevel) < 0)) return false
+    if (entry.enchantCount !== undefined && (!Number.isInteger(entry.enchantCount) || Number(entry.enchantCount) < 0)) return false
+    if (entry.activeImprint !== undefined && !isImprint(entry.activeImprint, false)) return false
+    if (entry.pendingImprint !== undefined && !isImprint(entry.pendingImprint, false)) return false
+    if (entry.imprintHistory !== undefined && (!Array.isArray(entry.imprintHistory)
+      || !entry.imprintHistory.every((imprint) => isImprint(imprint, true)))) return false
+    if (entry.provenance === undefined) return true
+    if (!isPlainRecord(entry.provenance)
+      || !hasOnlyKeys(entry.provenance, ['zoneId', 'lootTableId', 'configVersion', 'businessKey', 'combinationId', 'imperfectPieceId', 'droppedAt'])
+      || typeof entry.provenance.zoneId !== 'string' || !entry.provenance.zoneId
+      || (entry.provenance.lootTableId !== undefined && (typeof entry.provenance.lootTableId !== 'string' || !entry.provenance.lootTableId))
+      || (entry.provenance.configVersion !== undefined && (typeof entry.provenance.configVersion !== 'string' || !entry.provenance.configVersion))
+      || (entry.provenance.businessKey !== undefined && (typeof entry.provenance.businessKey !== 'string' || !entry.provenance.businessKey))
+      || (entry.provenance.combinationId !== undefined && (typeof entry.provenance.combinationId !== 'string' || !entry.provenance.combinationId))
+      || (entry.provenance.imperfectPieceId !== undefined && (typeof entry.provenance.imperfectPieceId !== 'string' || !entry.provenance.imperfectPieceId))
+      || !Number.isFinite(Date.parse(String(entry.provenance.droppedAt)))) return false
+    if (entry.provenance.businessKey) {
+      if (lootBusinessKeys.has(entry.provenance.businessKey)) return false
+      lootBusinessKeys.add(entry.provenance.businessKey)
+    }
+    return true
+  })
+}
+
+function isCommissionRewardLoot(game: PersistedGameV3, commission: PersistedVisitorCommission): boolean {
+  if (!commission.rewardItemId || commission.outcome !== 'complete') return false
+  const state = game.itemV2ById[commission.rewardItemId]
+  const provenance = state?.provenance
+  if (!provenance) return false
+  return provenance.businessKey === `loot:${commission.id}:reward`
+    && provenance.zoneId === commission.regionId
+    && provenance.configVersion === LOOT_CONFIG_VERSION
+    && typeof provenance.lootTableId === 'string'
+    && Boolean(provenance.lootTableId)
+}
+
+function isServiceJobStateMap(value: unknown): value is Record<string, PersistedServiceJobState> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value as Record<string, unknown>).every((entry) => isPlainRecord(entry)
+    && hasOnlyKeys(entry, ['status', 'service', 'itemId', 'queuedAt', 'startedAt', 'completesAt', 'completedAt', 'failedAt', 'cancelledAt', 'result'])
+    && ['queued', 'active', 'completed', 'failed', 'cancelled'].includes(String(entry.status))
+    && ['blacksmith', 'enchanter'].includes(String(entry.service))
+    && typeof entry.itemId === 'string' && Boolean(entry.itemId)
+    && ['queuedAt', 'startedAt', 'completesAt'].every((key) => Number.isFinite(Date.parse(String(entry[key]))))
+    && (entry.completedAt === undefined || Number.isFinite(Date.parse(String(entry.completedAt))))
+    && (entry.failedAt === undefined || Number.isFinite(Date.parse(String(entry.failedAt))))
+    && (entry.cancelledAt === undefined || Number.isFinite(Date.parse(String(entry.cancelledAt))))
+    && isPlainRecord(entry.result)
+    && hasOnlyKeys(entry.result, ['blacksmithLevel', 'enchantCount', 'affix'])
+    && (entry.result.blacksmithLevel === undefined || (Number.isInteger(entry.result.blacksmithLevel) && Number(entry.result.blacksmithLevel) >= 0))
+    && (entry.result.enchantCount === undefined || (Number.isInteger(entry.result.enchantCount) && Number(entry.result.enchantCount) >= 0))
+    && (entry.result.affix === undefined || isAffix(entry.result.affix)))
+}
+
+function isAffix(value: unknown): boolean {
+  return isPlainRecord(value) && hasOnlyKeys(value, ['stat', 'value'])
+    && typeof value.stat === 'string' && Number.isFinite(value.value)
+}
+
+function isImprint(value: unknown, allowReplacedAt: boolean): boolean {
+  return isPlainRecord(value)
+    && hasOnlyKeys(value, allowReplacedAt ? ['imprintId', 'label', 'grantedAt', 'replacedAt'] : ['imprintId', 'label', 'grantedAt'])
+    && typeof value.imprintId === 'string' && Boolean(value.imprintId)
+    && typeof value.label === 'string' && Boolean(value.label)
+    && Number.isFinite(Date.parse(String(value.grantedAt)))
+    && (value.replacedAt === undefined || Number.isFinite(Date.parse(String(value.replacedAt))))
 }
 
 function isCustodyProjection(value: unknown): boolean {
@@ -1160,7 +1480,7 @@ function isPublicVisitor(value: unknown): boolean {
 function containsInternalFields(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
   const keys = new Set(Object.keys(value as object))
-  if (['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById', 'serviceJobsById', 'processedRequestIds', 'processedRequests', 'outcomeRoll']
+  if (['_id', 'userId', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById', 'serviceJobsById', 'itemV2ById', 'serviceJobStateById', 'processedRequestIds', 'processedRequests', 'outcomeRoll']
     .some((key) => keys.has(key))) return true
   return Object.values(value as Record<string, unknown>).some(containsInternalFields)
 }
@@ -1185,7 +1505,10 @@ function registerItem(
 function persistRound(
   round: VisitRound,
   items: Record<string, Item>,
-  placements: Record<string, PersistedItemPlacement>
+  placements: Record<string, PersistedItemPlacement>,
+  previous: PersistedGameV3 | undefined,
+  generatedItemStates: Record<string, PersistedItemV2State>,
+  dependencies: PersistenceDependencies
 ): PersistedVisitRound {
   return {
     ...structuredClone(round),
@@ -1201,16 +1524,62 @@ function persistRound(
       let commission: PersistedVisitorCommission | undefined
       if (visitor.commission) {
         const { rewardItem, ...rest } = visitor.commission
-        if (rewardItem) {
-          registerItem(items, placements, rewardItem, {
-            ownerKind: 'visitor', ownerId: visitor.id, custodyKind: 'visitor', custodyId: visitor.id
-          })
+        const loot = rewardItem ? rewardLootForCommission(visitor.commission, previous, generatedItemStates, dependencies) : undefined
+        if (loot) {
+          const previousPlacement = previous?.itemPlacements[loot.item.id]
+          const claimedFallbackPlacement = previousPlacement
+            && (previousPlacement.ownerKind !== 'caravan' || previousPlacement.custodyKind !== 'stash')
+            ? previousPlacement
+            : undefined
+          const alreadyPlaced = placements[loot.item.id]
+          if (visitor.commission.status !== 'claimed') {
+            registerItem(items, placements, loot.item, {
+              ownerKind: 'visitor', ownerId: visitor.id, custodyKind: 'visitor', custodyId: visitor.id
+            })
+          } else if (!alreadyPlaced && claimedFallbackPlacement) {
+            registerItem(items, placements, loot.item, structuredClone(claimedFallbackPlacement))
+          }
         }
-        commission = { ...structuredClone(rest), ...(rewardItem ? { rewardItemId: rewardItem.id } : {}) }
+        commission = { ...structuredClone(rest), ...(loot ? { rewardItemId: loot.item.id } : {}) }
       }
       return { ...structuredClone(slot), visitor: { ...structuredClone(visitor), offers, commission } }
     })
   }
+}
+
+function rewardLootForCommission(
+  commission: VisitorCommission,
+  previous: PersistedGameV3 | undefined,
+  generatedItemStates: Record<string, PersistedItemV2State>,
+  dependencies: PersistenceDependencies
+): { item: Item; state: PersistedItemV2State } {
+  const businessKey = `loot:${commission.id}:reward`
+  const previousRewardItemId = previous ? previousRewardIdForCommission(previous, commission.id) : undefined
+  const existing = previousRewardItemId && previous?.itemV2ById[previousRewardItemId]?.provenance?.businessKey === businessKey
+    ? [previousRewardItemId, previous.itemV2ById[previousRewardItemId]!] as const
+    : previous
+      ? Object.entries(previous.itemV2ById).filter(([, state]) => state.provenance?.businessKey === businessKey).at(0)
+      : undefined
+  if (existing) {
+    const [itemId, state] = existing
+    const item = previous?.itemsById[itemId]
+    if (item) return { item: structuredClone(item), state: structuredClone(state) }
+  }
+  const generated = generateLootForZone({
+    zoneId: commission.regionId,
+    businessKey,
+    droppedAt: commission.finishesAt
+  }, dependencies)
+  generatedItemStates[generated.item.id] = generated.state
+  return generated
+}
+
+function previousRewardIdForCommission(previous: PersistedGameV3, commissionId: string): string | undefined {
+  for (const round of [previous.visitRound, ...previous.visitHistory]) {
+    const commission = round.slots.find((slot) => slot.visitor?.commission?.id === commissionId)?.visitor?.commission
+    if (commission?.rewardItemId) return commission.rewardItemId
+  }
+  return undefined
 }
 
 function hydrateRound(round: PersistedVisitRound, items: Record<string, Item>): VisitRound {
@@ -1319,7 +1688,7 @@ export function sanitizeGameResponse(save: SaveGame): SaveGame {
 function stripPrivateFields(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripPrivateFields)
   if (value && typeof value === 'object') {
-    const privateKeys = new Set(['_id', 'userId', '_effectiveCapacityUsed', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'processedRequestIds', 'processedRequests', 'outcomeRoll'])
+    const privateKeys = new Set(['_id', 'userId', '_effectiveCapacityUsed', 'requestRecords', 'businessKeys', 'ledger', 'itemsById', 'itemPlacements', 'itemV2ById', 'serviceJobStateById', 'processedRequestIds', 'processedRequests', 'outcomeRoll'])
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
       .filter(([key, entry]) => entry !== undefined && !privateKeys.has(key))
       .map(([key, entry]) => [key, stripPrivateFields(entry)]))

@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -124,19 +124,21 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
   })
 
   it('preserves normative service custody through a generic Mongo mutation', async () => {
-    const { getPersistedGameV3, mutateSaveGameAtomic, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const initial = await getPersistedGameV3(userIds[12]!)
     const itemId = initial.stash[0]!
-    initial.serviceJobsById['mongo-service'] = {
-      id: 'mongo-service', itemIds: [],
-      projection: { kind: 'service', service: 'blacksmith', queuedAt: initial.updatedAt, startsAt: initial.updatedAt }
-    }
-    await collection.replaceOne({ userId: userIds[12] }, initial)
-    await transitionItemAtomic(userIds[12]!, 'mongo-service-item', 0, { operation: 'service', itemId, targetId: 'mongo-service' })
-    await mutateSaveGameAtomic(userIds[12]!, 'mongo-generic', 'generic:gold', 1, {}, (save) => { save.gold += 1 })
+    const deps = fixedDeps()
+    const blacksmith = executionOption(mapPersistedGameToGameView(initial, deps.now()), itemId, 'queue_blacksmith_job')
+    const queued = await mutateEquipmentV2Atomic(userIds[12]!, 'mongo-service-item', 0, {
+      action: 'queue_blacksmith_job', itemId, optionId: blacksmith.optionId
+    }, deps)
+    const jobId = Object.keys(queued.serviceJobStateById)[0]!
+    await mutateSaveGameAtomic(userIds[12]!, 'mongo-generic', 'generic:gold', queued.revision, {}, (save) => { save.gold += 1 }, deps)
     const reloaded = await getPersistedGameV3(userIds[12]!)
-    expect(reloaded.itemPlacements[itemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: 'mongo-service' })
-    expect(reloaded.serviceJobsById['mongo-service']?.itemIds).toEqual([itemId])
+    expect(reloaded.itemPlacements[itemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: jobId })
+    expect(reloaded.serviceJobsById[jobId]?.itemIds).toEqual([itemId])
+    expect(reloaded.serviceJobStateById[jobId]).toMatchObject({ status: 'active', itemId, service: 'blacksmith' })
   })
 
   it('returns the final retained loan after its visitor ages out and prunes the lifecycle', async () => {
@@ -265,6 +267,162 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     }
   })
 
+  it('replays an equipment V2 snapshot after reload and later commits', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[17]!
+    const initial = await getPersistedGameV3(userId)
+    const itemId = initial.stash[0]!
+    initial.itemsById[itemId]!.identified = false
+    initial.itemsById[itemId]!.rarity = 'magic'
+    await collection.replaceOne({ userId }, initial)
+    const deps = fixedDeps()
+    const identify = executionOption(mapPersistedGameToGameView(initial, deps.now()), itemId, 'identify_item')
+    const first = await mutateEquipmentV2Atomic(userId, 'mongo-identify-replay', 0, {
+      action: 'identify_item', itemId, optionId: identify.optionId
+    }, deps)
+    await mutateSaveGameAtomic(userId, 'mongo-after-equipment', 'mongo:after-equipment', 1, {}, (save) => { save.gold += 1 }, deps)
+
+    const replay = await mutateEquipmentV2Atomic(userId, 'mongo-identify-replay', 0, {
+      action: 'identify_item', itemId, optionId: identify.optionId
+    }, deps)
+
+    expect(replay.revision).toBe(first.revision)
+    expect(replay.gold).toBe(first.gold)
+    expect(replay.itemsById[itemId]!.identified).toBe(true)
+  })
+
+  it('recovers an uncertain equipment V2 response after Mongo acknowledges then throws', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[18]!
+    const initial = await getPersistedGameV3(userId)
+    const itemId = initial.stash[0]!
+    initial.itemsById[itemId]!.identified = false
+    initial.itemsById[itemId]!.rarity = 'magic'
+    await collection.replaceOne({ userId }, initial)
+    const deps = fixedDeps()
+    const identify = executionOption(mapPersistedGameToGameView(initial, deps.now()), itemId, 'identify_item')
+    repositoryCollection = {
+      findOne: (...args: Parameters<Collection['findOne']>) => collection.findOne(...args),
+      replaceOne: async (...args: Parameters<Collection['replaceOne']>) => {
+        await collection.replaceOne(...args)
+        throw new Error('simulated Mongo network loss after equipment commit')
+      }
+    } as unknown as Collection
+    try {
+      const response = await mutateEquipmentV2Atomic(userId, 'mongo-equipment-uncertain', 0, {
+        action: 'identify_item', itemId, optionId: identify.optionId
+      }, deps)
+      expect(response.revision).toBe(1)
+      expect((await collection.findOne({ userId }))?.ledger).toHaveLength(1)
+    } finally {
+      repositoryCollection = collection
+    }
+  })
+
+  it('allows one Mongo CAS winner for concurrent equipment commands', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[19]!
+    const initial = await getPersistedGameV3(userId)
+    const itemId = initial.stash[0]!
+    initial.itemsById[itemId]!.identified = false
+    initial.itemsById[itemId]!.rarity = 'magic'
+    await collection.replaceOne({ userId }, initial)
+    const deps = fixedDeps()
+    const view = mapPersistedGameToGameView(initial, deps.now())
+    const identify = executionOption(view, itemId, 'identify_item')
+    const dismantle = executionOption(view, itemId, 'dismantle_item')
+
+    const results = await Promise.allSettled([
+      mutateEquipmentV2Atomic(userId, 'mongo-equipment-identify', 0, {
+        action: 'identify_item', itemId, optionId: identify.optionId
+      }, deps),
+      mutateEquipmentV2Atomic(userId, 'mongo-equipment-dismantle', 0, {
+        action: 'dismantle_item', itemId, optionId: dismantle.optionId, acknowledgementId: dismantle.acknowledgementId
+      }, deps)
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect((await collection.findOne({ userId }))?.ledger).toHaveLength(1)
+  })
+
+  it('persists equipment job completion and V2 tombstone material deltas', async () => {
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, reconcilePersistedGameV3 } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[20]!
+    const initial = await getPersistedGameV3(userId)
+    const [jobItemId, tombstoneItemId] = initial.stash
+    if (!jobItemId || !tombstoneItemId) throw new Error('Expected two starter items')
+    const deps = fixedDeps()
+    const blacksmith = executionOption(mapPersistedGameToGameView(initial, deps.now()), jobItemId, 'queue_blacksmith_job')
+    const queued = await mutateEquipmentV2Atomic(userId, 'mongo-queue-blacksmith', 0, {
+      action: 'queue_blacksmith_job', itemId: jobItemId, optionId: blacksmith.optionId
+    }, deps)
+    const jobId = Object.keys(queued.serviceJobStateById)[0]!
+    const completed = await reconcilePersistedGameV3(userId, fixedDeps(new Date('2026-09-15T12:02:00.000Z')))
+    expect(completed.serviceJobStateById[jobId]!.status).toBe('completed')
+    expect(completed.itemPlacements[jobItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'stash' })
+
+    const dismantle = executionOption(mapPersistedGameToGameView(completed, deps.now()), tombstoneItemId, 'dismantle_item')
+    await mutateEquipmentV2Atomic(userId, 'mongo-v2-dismantle', completed.revision, {
+      action: 'dismantle_item', itemId: tombstoneItemId, optionId: dismantle.optionId, acknowledgementId: dismantle.acknowledgementId
+    }, deps)
+    const persisted = await collection.findOne({ userId })
+    expect(persisted?.itemPlacements[tombstoneItemId]).toMatchObject({ ownerKind: 'tombstone', custodyKind: 'tombstone' })
+    expect(persisted?.ledger.at(-1).materialDeltas.scrap).toBeGreaterThan(0)
+  })
+
+  it('replays an equipment V2 mutation against the configured reward after reload and later commits', async () => {
+    const { mutateEquipmentV2Atomic, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[21]!
+    const claimed = await claimConfiguredMongoReward(userId)
+    const rewardItemId = claimed.rewardItemId
+    const deps = fixedDeps()
+    const identify = executionOption(mapPersistedGameToGameView(claimed.persisted, deps.now()), rewardItemId, 'identify_item')
+
+    const first = await mutateEquipmentV2Atomic(userId, 'mongo-reward-identify', claimed.persisted.revision, {
+      action: 'identify_item', itemId: rewardItemId, optionId: identify.optionId
+    }, deps)
+    await mutateSaveGameAtomic(userId, 'mongo-after-reward', 'mongo:after-reward', first.revision, {}, (save) => { save.gold += 1 }, deps)
+    const replay = await mutateEquipmentV2Atomic(userId, 'mongo-reward-identify', claimed.persisted.revision, {
+      action: 'identify_item', itemId: rewardItemId, optionId: identify.optionId
+    }, deps)
+
+    expect(replay.revision).toBe(first.revision)
+    expect(replay.itemsById[rewardItemId]!.identified).toBe(true)
+  })
+
+  it('allows one Mongo CAS winner for concurrent equipment commands against the configured reward', async () => {
+    const { mutateEquipmentV2Atomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[22]!
+    const claimed = await claimConfiguredMongoReward(userId)
+    const rewardItemId = claimed.rewardItemId
+    const deps = fixedDeps()
+    const view = mapPersistedGameToGameView(claimed.persisted, deps.now())
+    const identify = executionOption(view, rewardItemId, 'identify_item')
+    const dismantle = executionOption(view, rewardItemId, 'dismantle_item')
+
+    const results = await Promise.allSettled([
+      mutateEquipmentV2Atomic(userId, 'mongo-reward-identify-cas', claimed.persisted.revision, {
+        action: 'identify_item', itemId: rewardItemId, optionId: identify.optionId
+      }, deps),
+      mutateEquipmentV2Atomic(userId, 'mongo-reward-dismantle-cas', claimed.persisted.revision, {
+        action: 'dismantle_item', itemId: rewardItemId, optionId: dismantle.optionId, acknowledgementId: dismantle.acknowledgementId
+      }, deps)
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect((await collection.findOne({ userId }))?.ledger).toHaveLength(4)
+  })
+
   it('rejects a declared V3 document with legacy or incomplete nested fields', async () => {
     const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
     const corrupt = await getPersistedGameV3(userIds[10]!)
@@ -279,7 +437,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     ['sell', 'dismantle', userIds[4]!],
     ['service', 'loan', userIds[5]!]
   ])('allows one Mongo CAS winner for %s versus %s', async (firstName, secondName, userId) => {
-    const { getPersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { getPersistedGameV3, mutateEquipmentV2Atomic, RevisionConflictError, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const initial = await getPersistedGameV3(userId)
     const itemId = initial.stash[0]!
     const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id ?? 'missing-visitor'
@@ -287,21 +446,48 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     for (const operation of [firstName, secondName]) {
       const targetId = targetFor(operation)
       if (operation === 'loan') addExpedition(initial, targetId)
-      if (operation === 'service') initial.serviceJobsById[targetId] = {
-        id: targetId, itemIds: [], projection: { kind: 'service', service: 'blacksmith', queuedAt: initial.updatedAt, startsAt: initial.updatedAt }
-      }
     }
     await collection.replaceOne({ userId }, initial)
+    const deps = fixedDeps()
+    const serviceOption = [firstName, secondName].includes('service')
+      ? executionOption(mapPersistedGameToGameView(initial, deps.now()), itemId, 'queue_blacksmith_job')
+      : undefined
+    const runOperation = (operation: string) => {
+      if (operation === 'service') {
+        return mutateEquipmentV2Atomic(userId, `${operation}-request`, 0, {
+          action: 'queue_blacksmith_job', itemId, optionId: serviceOption!.optionId
+        }, deps)
+      }
+      return transitionItemAtomic(userId, `${operation}-request`, 0, { operation: operation as never, itemId, targetId: targetFor(operation) })
+    }
     const results = await Promise.allSettled([
-      transitionItemAtomic(userId, `${firstName}-request`, 0, { operation: firstName as never, itemId, targetId: targetFor(firstName) }),
-      transitionItemAtomic(userId, `${secondName}-request`, 0, { operation: secondName as never, itemId, targetId: targetFor(secondName) })
+      runOperation(firstName),
+      runOperation(secondName)
     ])
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0]!.reason).toBeInstanceOf(RevisionConflictError)
     const persisted = await collection.findOne({ userId })
     expect(persisted?.ledger).toHaveLength(1)
     expect(persisted?.revision).toBe(1)
     expect(persisted?.ledger[0].itemChanges).toHaveLength(1)
     expect(persisted?.itemPlacements[itemId]).not.toMatchObject({ custodyKind: 'stash' })
+    if ([firstName, secondName].includes('service')) {
+      const fulfilledIndex = results.findIndex((result) => result.status === 'fulfilled')
+      const winner = [firstName, secondName][fulfilledIndex]
+      const placement = persisted?.itemPlacements[itemId]
+      if (winner === 'service') {
+        const jobId = placement?.custodyId
+        expect(placement).toEqual({ ownerKind: 'caravan', custodyKind: 'service', custodyId: jobId })
+        expect(persisted?.serviceJobsById[jobId!]?.itemIds).toContain(itemId)
+        expect(persisted?.serviceJobStateById[jobId!]).toMatchObject({ status: 'active', itemId, service: 'blacksmith' })
+      } else {
+        const expeditionId = targetFor('loan')
+        expect(placement).toEqual({ ownerKind: 'caravan', custodyKind: 'expedition', custodyId: expeditionId })
+        expect(persisted?.expeditionsById[expeditionId]?.itemIds).toContain(itemId)
+      }
+    }
   })
 
   it('resets schema 2 without importing its economy and keeps the unique index', async () => {
@@ -330,6 +516,18 @@ function addExpedition(game: PersistedGameV3, id: string, visitorIndex = 0): voi
   game.expeditionsById[id] = {
     id, itemIds: [], projection: { kind: 'expedition', visitorId, contractId, startsAt: game.updatedAt }
   }
+}
+
+function executionOption(view: { items: unknown[] }, itemId: string, action: string) {
+  const item = view.items.find((candidate) => (candidate as { itemId?: string }).itemId === itemId) as { actions?: unknown[] } | undefined
+  const availability = item?.actions?.find((candidate) => (candidate as { action?: string }).action === action) as { execution?: { options?: unknown[] } } | undefined
+  const option = availability?.execution?.options?.[0] as { optionId?: string; acknowledgement?: { acknowledgementId?: string } } | undefined
+  if (!option?.optionId) throw new Error(`Missing ${action} option for ${itemId}`)
+  return { optionId: option.optionId, acknowledgementId: option.acknowledgement?.acknowledgementId }
+}
+
+function fixedDeps(now = new Date('2026-09-15T12:00:00.000Z')) {
+  return { now: () => now, uuid: () => 'mongo-fixed-id', random: () => 0.5 }
 }
 
 async function createLegacyRetainedLifecycle(userId: string): Promise<{
@@ -381,4 +579,30 @@ async function createLegacyRetainedLifecycle(userId: string): Promise<{
   if (legacyProjection?.kind !== 'expedition') throw new Error('Expected retained expedition projection')
   delete legacyProjection.retainedVisitor
   return { retainedLifecycle, itemId, visitorId: visitor.id, historicalName, departedAt }
+}
+
+async function claimConfiguredMongoReward(userId: string): Promise<{ persisted: PersistedGameV3; rewardItemId: string; visitorId: string }> {
+  const { getPersistedGameV3, getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+  const { assignVisitorCommission, claimVisitorCommission } = await import('../utils/visitor-logic')
+  const initial = await getPersistedGameV3(userId)
+  const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
+  const start = new Date('2026-09-13T00:00:00.000Z')
+  const deps = fixedDeps(start)
+  await mutateSaveGameAtomic(userId, 'mongo-reward-assign', `mongo:reward-assign:${userId}`, initial.revision, {}, (save) => {
+    const visitor = save.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
+    visitor.state = 'traded'
+    assignVisitorCommission(save, visitorId, 'safe', () => 0, start)
+  }, deps)
+  const assigned = await getPersistedGameV3(userId)
+  const commission = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
+  await getSaveGame(userId, fixedDeps(new Date(commission.finishesAt)))
+  const ready = await getPersistedGameV3(userId)
+  await mutateSaveGameAtomic(userId, 'mongo-reward-claim', `mongo:reward-claim:${userId}`, ready.revision, {}, (save) => {
+    claimVisitorCommission(save, visitorId, new Date(commission.finishesAt))
+  }, fixedDeps(new Date(commission.finishesAt)))
+  const persisted = await getPersistedGameV3(userId)
+  const rewardItemId = [persisted.visitRound, ...persisted.visitHistory]
+    .flatMap((round) => round.slots)
+    .find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!.rewardItemId!
+  return { persisted, rewardItemId, visitorId }
 }
