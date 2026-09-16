@@ -103,7 +103,7 @@ describe('game V2 store', () => {
     const store = useGameV2Store()
     store.applySnapshot(fixture('integrated-contract'))
     store.select({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1'] })
-    const system = fixture('integrated-system')
+    const system = { ...fixture('integrated-system'), revision: 11 }
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(apiError({ code: 'revision_conflict', retryable: true }))
       .mockResolvedValueOnce(system)
@@ -117,10 +117,47 @@ describe('game V2 store', () => {
     expect(store.game).toEqual(system)
   })
 
+  it('keeps conflict blocked for equal revisions until a newer frontend-only snapshot arrives', async () => {
+    const store = useGameV2Store()
+    const initial = fixture('integrated-contract')
+    const equal = fixture('integrated-system')
+    const newer = { ...equal, revision: initial.revision + 1 }
+    store.applySnapshot(initial)
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(apiError({ code: 'revision_conflict', retryable: true }))
+      .mockResolvedValueOnce(equal)
+      .mockResolvedValueOnce(equal)
+      .mockResolvedValueOnce(newer)
+    vi.stubGlobal('$fetch', fetchMock)
+
+    await store.acceptContract({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: [] })
+    expect(store.snapshotStale).toBe(true)
+    expect(store.operationState).toBe('conflict')
+    expect(store.pendingOperation?.expectedRevision).toBe(initial.revision)
+    expect(store.game).toEqual(initial)
+    expect(store.errorMessage).toContain('Reintentá la carga')
+
+    await store.retryConflictReload()
+    expect(store.snapshotStale).toBe(true)
+    expect(store.operationState).toBe('conflict')
+    expect(store.loadState).toBe('ready')
+    await store.acceptContract({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: [] })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    await store.retryConflictReload()
+    expect(store.snapshotStale).toBe(false)
+    expect(store.operationState).toBe('idle')
+    expect(store.pendingOperation).toBeNull()
+    expect(store.game).toEqual(newer)
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v2/contracts/accept', '/api/v2/game', '/api/v2/game', '/api/v2/game'
+    ])
+  })
+
   it('keeps conflict honest and retryable when the conflict reload fails', async () => {
     const store = useGameV2Store()
     const initial = fixture('integrated-contract')
-    const reloaded = fixture('integrated-system')
+    const reloaded = { ...fixture('integrated-system'), revision: 11 }
     store.applySnapshot(initial)
     store.select({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1'] })
     const fetchMock = vi.fn()

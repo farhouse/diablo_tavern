@@ -45,8 +45,14 @@ export const useGameV2Store = defineStore('game-v2', {
   actions: {
     applySnapshot(game: GameView) {
       if (this.game && game.revision < this.game.revision) return
+      if (this.snapshotStale && this.pendingOperation && game.revision <= this.pendingOperation.expectedRevision) {
+        this.loadState = this.game ? 'ready' : 'empty'
+        this.errorMessage = 'La partida cambió. El snapshot aún no refleja una revisión nueva. Reintentá la carga.'
+        return
+      }
       this.game = game
       this.loadState = 'ready'
+      if (this.snapshotStale) this.pendingOperation = null
       this.snapshotStale = false
       this.selection = invalidateVisitorV2Selection(game, this.selection)
     },
@@ -153,13 +159,12 @@ export const useGameV2Store = defineStore('game-v2', {
         }
         if (parsed?.error.code === 'revision_conflict') {
           this.operationState = 'conflict'
-          this.pendingOperation = null
           this.snapshotStale = true
           this.selection = null
           try {
             const game = await this.api<GameView>('/api/v2/game')
             this.applySnapshot(game)
-            this.errorMessage = 'La partida cambió. Revisá las opciones disponibles.'
+            if (!this.snapshotStale) this.errorMessage = 'La partida cambió. Revisá las opciones disponibles.'
           } catch (reloadError) {
             this.loadState = this.game ? 'ready' : 'empty'
             this.errorMessage = `La partida cambió, pero no se pudo actualizar el snapshot. ${publicErrorMessage(reloadError)}`

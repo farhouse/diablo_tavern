@@ -293,9 +293,6 @@ function syncLocalSelections() {
         nextRecoveryLoans[recovery.recoveryId] = (recoveryLoans.value[recovery.recoveryId] ?? []).filter((itemId) => binding.eligibleLoanItemIds.includes(itemId))
       }
     }
-    if (abandonAction(recovery) && abandonConfirmations.value[recovery.recoveryId]) {
-      nextAbandonConfirmations[recovery.recoveryId] = true
-    }
   }
   recoveryBindings.value = nextRecoveryBindings
   recoveryLoans.value = nextRecoveryLoans
@@ -699,6 +696,8 @@ onBeforeUnmount(() => {
   align-items: center;
   grid-auto-flow: column;
   justify-content: start;
+  min-height: 44px;
+  min-width: 44px;
 }
 
 .v2-cycle__fieldset {

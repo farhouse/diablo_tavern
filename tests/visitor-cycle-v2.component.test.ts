@@ -67,6 +67,35 @@ describe('VisitorCycleV2', () => {
     expect(recovery.emitted('abandonRecovery')?.[0]).toEqual([{ kind: 'abandon_recovery', recoveryId: 'r1', acknowledgementId: 'ack-r1' }])
   })
 
+  it('requires accepting the new acknowledgement after a frontend-only revision change', async () => {
+    const game = fixture('integrated-recovery')
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    const checkbox = wrapper.get('#abandon-ack-r1 input')
+    const button = wrapper.get('.v2-cycle__button--danger')
+    await checkbox.setValue(true)
+    expect(button.attributes('disabled')).toBeUndefined()
+
+    const replacement = fixture('integrated-recovery')
+    replacement.revision = game.revision + 1
+    const action = replacement.recoveries[0]?.actions.find((candidate) => candidate.action === 'abandon_recovery')
+    if (!action || action.action !== 'abandon_recovery' || !action.enabled) throw new Error('Expected abandon action')
+    action.execution.acknowledgement.acknowledgementId = 'ack-r1-new'
+    action.execution.acknowledgement.text = { key: 'ack.new', fallback: 'Acepto las nuevas consecuencias.' }
+    await wrapper.setProps({ game: replacement })
+
+    expect(wrapper.get('#abandon-ack-r1').text()).toContain('Acepto las nuevas consecuencias.')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(false)
+    expect(button.attributes('disabled')).toBeDefined()
+    await button.trigger('click')
+    expect(wrapper.emitted('abandonRecovery')).toBeUndefined()
+    await checkbox.setValue(true)
+    await button.trigger('click')
+    expect(wrapper.emitted('abandonRecovery')).toEqual([[{
+      kind: 'abandon_recovery', recoveryId: 'r1', acknowledgementId: 'ack-r1-new'
+    }]])
+    wrapper.unmount()
+  })
+
   it('renders explicit binding and loan choices for contract and recovery', async () => {
     const contractGame = fixture('integrated-contract')
     const visitor = contractGame.visitors[0]
@@ -319,7 +348,27 @@ describe('VisitorCycleV2', () => {
     const source = readFileSync(join(process.cwd(), 'components/VisitorCycleV2.vue'), 'utf8')
 
     expect(wrapper.html()).toContain('v2-cycle__button')
-    expect(source).toContain('min-height: 44px')
+    for (const selector of ['v2-cycle__button', 'v2-cycle__select', 'v2-cycle__check']) {
+      const rule = source.match(new RegExp(`}\\s*\\.${selector}\\s*\\{([^}]+)\\}`))?.[1]
+      expect(rule, selector).toMatch(/min-height:\s*44px/)
+    }
+    for (const id of ['integrated-contract', 'integrated-settlement', 'integrated-recovery']) {
+      const game = fixture(id)
+      if (id === 'integrated-recovery') {
+        const action = game.recoveries[0]?.actions.find((candidate) => candidate.action === 'assign_recovery')
+        if (!action || action.action !== 'assign_recovery' || !action.enabled) throw new Error('Expected assign action')
+        action.execution.bindings[0]!.eligibleLoanItemIds = ['i4']
+      }
+      const controls = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+      const inputs = controls.findAll('input[type="checkbox"], input[type="radio"]')
+      expect(inputs.length).toBeGreaterThan(0)
+      if (id === 'integrated-recovery') expect(inputs).toHaveLength(2)
+      for (const input of inputs) {
+        expect(input.element.closest('label')?.classList.contains('v2-cycle__check')).toBe(true)
+      }
+      controls.unmount()
+    }
+    wrapper.unmount()
     expect(source).toContain('prefers-reduced-motion')
   })
 })
