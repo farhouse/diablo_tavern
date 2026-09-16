@@ -5,7 +5,7 @@ import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERS
 import { refreshVisitRound } from '~/utils/visitor-logic'
 import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
 import { applyEquipmentV2Command, authorizeEquipmentV2Command, type EquipmentV2Command } from '~/server/domain/equipment-v2'
-import { generateLootForZone, LOOT_CONFIG_VERSION } from '~/server/domain/loot-v2'
+import { generateLootForZone, lootTableIdForZone, LOOT_CONFIG_VERSION } from '~/server/domain/loot-v2'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -702,18 +702,47 @@ function backfillPersistedV3(document: PersistedDbDocument): PersistedGameV3 | u
   const missingV2Maps = !Object.prototype.hasOwnProperty.call(document, 'itemV2ById')
     || !Object.prototype.hasOwnProperty.call(document, 'serviceJobStateById')
   const retained = backfillRetainedVisitorIdentity(document)
-  if (retained) {
-    if (missingV2Maps) {
-      retained.itemV2ById = readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById)
-      retained.serviceJobStateById = readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById)
-    }
-    return retained
+  const candidate = retained ?? (missingV2Maps ? toPersistedGame(document) : undefined)
+  if (!candidate) return undefined
+
+  if (missingV2Maps) {
+    candidate.itemV2ById = readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById)
+    candidate.serviceJobStateById = readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById)
   }
-  if (!missingV2Maps) return undefined
-  const candidate = toPersistedGame(document)
-  candidate.itemV2ById = readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById)
-  candidate.serviceJobStateById = readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById)
+  backfillCommissionRewardV2State(candidate)
   return candidate
+}
+
+function backfillCommissionRewardV2State(candidate: PersistedGameV3): void {
+  for (const commission of persistedCommissions(candidate)) {
+    if (!commission.rewardItemId || commission.outcome !== 'complete') continue
+    if (!candidate.itemsById[commission.rewardItemId]) continue
+    const current = candidate.itemV2ById[commission.rewardItemId]
+    if (current?.provenance) continue
+    let lootTableId: string
+    try {
+      lootTableId = lootTableIdForZone(commission.regionId)
+    } catch {
+      continue
+    }
+    candidate.itemV2ById[commission.rewardItemId] = {
+      ...structuredClone(current ?? {}),
+      sealedAffixes: structuredClone(candidate.itemsById[commission.rewardItemId]!.affixes),
+      provenance: {
+        zoneId: commission.regionId,
+        lootTableId,
+        configVersion: LOOT_CONFIG_VERSION,
+        businessKey: `loot:${commission.id}:reward`,
+        droppedAt: commission.finishesAt
+      }
+    }
+  }
+}
+
+function persistedCommissions(game: PersistedGameV3): PersistedVisitorCommission[] {
+  if (!isPersistedRound(game.visitRound) || !Array.isArray(game.visitHistory) || !game.visitHistory.every(isPersistedRound)) return []
+  return [game.visitRound, ...game.visitHistory].flatMap((round) =>
+    round.slots.flatMap((slot) => slot.visitor?.commission ? [slot.visitor.commission] : []))
 }
 
 export function hydratePersistedGame(document: PersistedGameV3): SaveGame {
@@ -1595,7 +1624,8 @@ function hydrateRound(round: PersistedVisitRound, items: Record<string, Item>): 
       const commission = visitor.commission
         ? (() => {
             const { rewardItemId, ...rest } = visitor.commission
-            return { ...structuredClone(rest), ...(rewardItemId ? { rewardItem: requirePersistedItem(items, rewardItemId) } : {}) }
+            const rewardItem = rewardItemId ? items[rewardItemId] : undefined
+            return { ...structuredClone(rest), ...(rewardItem ? { rewardItem: structuredClone(rewardItem) } : {}) }
           })()
         : undefined
       return { ...structuredClone(slot), visitor: { ...structuredClone(visitor), offers, commission } as Visitor }

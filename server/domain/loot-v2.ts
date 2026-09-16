@@ -121,6 +121,10 @@ export function validateLootConfig(tables: LootTableMap): void {
   for (const quest of quests) requireLootTable(quest.lootTableId, tables, quest.minLevel)
 }
 
+export function lootTableIdForZone(zoneId: string): string {
+  return requireQuest(zoneId).lootTableId
+}
+
 function requireQuest(zoneId: string) {
   const quest = quests.find((entry) => entry.id === zoneId)
   if (!quest) throw new Error(`Unknown loot zone ${zoneId}`)

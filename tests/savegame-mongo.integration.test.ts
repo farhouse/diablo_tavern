@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -243,6 +243,60 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(after?.businessKeys).toEqual(before.businessKeys)
     expect(after?.expeditionsById['retained-expedition'].projection.retainedVisitor)
       .toEqual({ name: historicalName, departedAt })
+  })
+
+  it('converges concurrent historical reward backfill readers and stays idempotent', async () => {
+    const { getPersistedGameV3, isPersistedCanonical } = await import('../server/utils/savegame')
+    const userId = userIds[23]!
+    const legacyV3 = await createHistoricalClaimedRewardFixture(userId)
+    await collection.replaceOne({ userId }, legacyV3, { upsert: true })
+    const before = await collection.findOne({ userId })
+    if (!before) throw new Error('Expected recoverable historical reward document')
+
+    let initialReads = 0
+    let replacements = 0
+    let releaseReaders!: () => void
+    const bothRead = new Promise<void>((resolve) => { releaseReaders = resolve })
+    repositoryCollection = {
+      findOne: async (...args: Parameters<Collection['findOne']>) => {
+        const found = await collection.findOne(...args)
+        initialReads += 1
+        if (initialReads === 2) releaseReaders()
+        else if (initialReads < 2) await bothRead
+        return found
+      },
+      replaceOne: async (...args: Parameters<Collection['replaceOne']>) => {
+        replacements += 1
+        return collection.replaceOne(...args)
+      }
+    } as unknown as Collection
+
+    let readers: PersistedGameV3[]
+    try {
+      readers = await Promise.all([getPersistedGameV3(userId), getPersistedGameV3(userId)])
+      await getPersistedGameV3(userId)
+    } finally {
+      repositoryCollection = collection
+    }
+
+    const after = await collection.findOne({ userId })
+    expect(after).not.toBeNull()
+    expect(isPersistedCanonical(after)).toBe(true)
+    expect(readers[0]).toEqual(readers[1])
+    expect(replacements).toBe(2)
+    expect(after?._id).toEqual(before._id)
+    expect(after?.revision).toBe(before.revision)
+    expect(after?.gold).toBe(before.gold)
+    expect(after?.materials).toEqual(before.materials)
+    expect(after?.ledger).toEqual(before.ledger)
+    expect(after?.requestRecords).toEqual(before.requestRecords)
+    expect(after?.stash).not.toContain('historical-sold-reward')
+    expect(after?.itemPlacements['historical-moved-reward']).toEqual(before.itemPlacements['historical-moved-reward'])
+    expect(after?.itemPlacements['historical-sold-reward']).toEqual(before.itemPlacements['historical-sold-reward'])
+    expect(after?.itemV2ById['historical-moved-reward'].provenance.businessKey)
+      .toBe('loot:historical-moved-commission:reward')
+    expect(after?.itemV2ById['historical-sold-reward'].provenance.businessKey)
+      .toBe('loot:historical-sold-commission:reward')
   })
 
   it('recovers the committed response after the repository driver throws', async () => {
@@ -579,6 +633,72 @@ async function createLegacyRetainedLifecycle(userId: string): Promise<{
   if (legacyProjection?.kind !== 'expedition') throw new Error('Expected retained expedition projection')
   delete legacyProjection.retainedVisitor
   return { retainedLifecycle, itemId, visitorId: visitor.id, historicalName, departedAt }
+}
+
+async function createHistoricalClaimedRewardFixture(userId: string): Promise<Omit<PersistedGameV3, 'itemV2ById' | 'serviceJobStateById'>> {
+  const { getPersistedGameV3 } = await import('../server/utils/savegame')
+  const persisted = await getPersistedGameV3(userId)
+  const [firstSlot, secondSlot] = persisted.visitRound.slots
+  const first = firstSlot?.visitor
+  const second = secondSlot?.visitor
+  if (!first || !second) throw new Error('Expected two visitors')
+  const [movedRewardId, soldRewardId] = ['historical-moved-reward', 'historical-sold-reward']
+  const template = persisted.itemsById[persisted.stash[0]!]!
+  persisted.itemsById[movedRewardId] = { ...structuredClone(template), id: movedRewardId }
+  persisted.itemsById[soldRewardId] = { ...structuredClone(template), id: soldRewardId }
+  persisted.stash = persisted.stash.filter((itemId) => itemId !== movedRewardId && itemId !== soldRewardId)
+  attachHistoricalClaimedCommission(persisted, first, movedRewardId, 'historical-moved-commission')
+  attachHistoricalClaimedCommission(persisted, second, soldRewardId, 'historical-sold-commission')
+  persisted.expeditionsById['historical-moved-commission']!.itemIds = [movedRewardId]
+  persisted.itemPlacements[movedRewardId] = {
+    ownerKind: 'caravan', custodyKind: 'expedition', custodyId: 'historical-moved-commission'
+  }
+  second.trades.push({
+    requestId: 'historical-sold-reward-sale',
+    kind: 'player_sold',
+    itemId: soldRewardId,
+    price: 123,
+    createdAt: persisted.updatedAt
+  })
+  persisted.itemPlacements[soldRewardId] = {
+    ownerKind: 'visitor', ownerId: second.id, custodyKind: 'visitor', custodyId: second.id
+  }
+  delete (persisted as Partial<PersistedGameV3>).itemV2ById
+  delete (persisted as Partial<PersistedGameV3>).serviceJobStateById
+  return persisted
+}
+
+function attachHistoricalClaimedCommission(
+  persisted: PersistedGameV3,
+  visitor: PersistedGameV3['visitRound']['slots'][number]['visitor'],
+  rewardItemId: string,
+  commissionId: string
+): void {
+  if (!visitor) throw new Error('Expected visitor')
+  visitor.state = 'departed'
+  visitor.departedAt = persisted.updatedAt
+  visitor.commission = {
+    ...visitor.commissionOptions[0]!,
+    id: commissionId,
+    status: 'claimed',
+    startedAt: persisted.createdAt,
+    finishesAt: persisted.updatedAt,
+    outcomeRoll: 0,
+    outcome: 'complete',
+    rewardGold: visitor.commissionOptions[0]!.fullRewardGold,
+    rewardItemId,
+    claimedAt: persisted.updatedAt
+  }
+  persisted.expeditionsById[commissionId] = {
+    id: commissionId,
+    itemIds: [],
+    projection: { kind: 'expedition', visitorId: visitor.id, contractId: commissionId, startsAt: persisted.createdAt }
+  }
+  persisted.settlementsById[commissionId] = {
+    id: commissionId,
+    itemIds: [],
+    projection: { kind: 'settlement', expeditionId: commissionId, outcome: 'returned', appliedAt: persisted.updatedAt }
+  }
 }
 
 async function claimConfiguredMongoReward(userId: string): Promise<{ persisted: PersistedGameV3; rewardItemId: string; visitorId: string }> {

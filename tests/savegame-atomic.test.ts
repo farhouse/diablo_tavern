@@ -700,6 +700,55 @@ describe('atomic persisted-game mutation', () => {
     expect(collection.replaceOne).toHaveBeenCalledTimes(2)
   })
 
+  it('backfills historical claimed commission rewards without moving or recreating them', async () => {
+    const { getPersistedGameV3, hydratePersistedGame, isPersistedCanonical } = await import('../server/utils/savegame')
+    const legacyV3 = historicalClaimedRewardFixture()
+    const movedRewardId = 'historical-moved-reward'
+    const soldRewardId = 'historical-sold-reward'
+    const before = structuredClone(legacyV3)
+    document = legacyV3 as unknown as PersistedGameV3
+
+    const backfilled = await getPersistedGameV3('atomic-user')
+    const replay = await getPersistedGameV3('atomic-user')
+
+    expect(backfilled).toEqual(replay)
+    expect(isPersistedCanonical(backfilled)).toBe(true)
+    expect(collection.replaceOne).toHaveBeenCalledTimes(1)
+    expect(backfilled.revision).toBe(before.revision)
+    expect(backfilled.gold).toBe(before.gold)
+    expect(backfilled.materials).toEqual(before.materials)
+    expect(backfilled.ledger).toEqual(before.ledger)
+    expect(backfilled.requestRecords).toEqual(before.requestRecords)
+    expect(backfilled.itemPlacements[movedRewardId]).toEqual(before.itemPlacements[movedRewardId])
+    expect(backfilled.itemPlacements[soldRewardId]).toEqual(before.itemPlacements[soldRewardId])
+    expect(backfilled.stash).not.toContain(movedRewardId)
+    expect(backfilled.stash).not.toContain(soldRewardId)
+    expect(backfilled.itemV2ById[movedRewardId]?.provenance).toMatchObject({
+      zoneId: 'blood-moor',
+      lootTableId: 'act1-low',
+      configVersion: LOOT_CONFIG_VERSION,
+      businessKey: 'loot:historical-moved-commission:reward'
+    })
+    expect(backfilled.itemV2ById[soldRewardId]?.provenance).toMatchObject({
+      zoneId: 'blood-moor',
+      lootTableId: 'act1-low',
+      configVersion: LOOT_CONFIG_VERSION,
+      businessKey: 'loot:historical-sold-commission:reward'
+    })
+    expect(hydratePersistedGame(backfilled).stash.map((item) => item.id)).not.toContain(soldRewardId)
+  })
+
+  it('rejects contradictory historical claimed rewards after backfill', async () => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const legacyV3 = historicalClaimedRewardFixture()
+    const firstCommission = legacyV3.visitRound.slots[0]!.visitor!.commission!
+    const secondCommission = legacyV3.visitRound.slots[1]!.visitor!.commission!
+    secondCommission.rewardItemId = firstCommission.rewardItemId
+    document = legacyV3 as unknown as PersistedGameV3
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+  })
+
   it('signs equipment capabilities with the effective runtime secret instead of the public dev fallback', async () => {
     const { EquipmentV2Error } = await import('../server/domain/equipment-v2')
     const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
@@ -1209,6 +1258,71 @@ function executionOption(view: { items: unknown[] }, itemId: string, action: str
   const option = availability?.execution?.options?.[0] as { optionId?: string; expiresAt?: string; acknowledgement?: { acknowledgementId?: string } } | undefined
   if (!option?.optionId || !option.expiresAt) throw new Error(`Missing ${action} option for ${itemId}`)
   return { optionId: option.optionId, expiresAt: option.expiresAt, acknowledgementId: option.acknowledgement?.acknowledgementId }
+}
+
+function historicalClaimedRewardFixture(): Omit<PersistedGameV3, 'itemV2ById' | 'serviceJobStateById'> {
+  const persisted = structuredClone(document as PersistedGameV3)
+  const [firstSlot, secondSlot] = persisted.visitRound.slots
+  const first = firstSlot?.visitor
+  const second = secondSlot?.visitor
+  if (!first || !second) throw new Error('Expected two visitors')
+  const [movedRewardId, soldRewardId] = ['historical-moved-reward', 'historical-sold-reward']
+  const template = persisted.itemsById[persisted.stash[0]!]!
+  persisted.itemsById[movedRewardId] = { ...structuredClone(template), id: movedRewardId }
+  persisted.itemsById[soldRewardId] = { ...structuredClone(template), id: soldRewardId }
+  persisted.stash = persisted.stash.filter((itemId) => itemId !== movedRewardId && itemId !== soldRewardId)
+  attachHistoricalClaimedCommission(persisted, first, movedRewardId, 'historical-moved-commission')
+  attachHistoricalClaimedCommission(persisted, second, soldRewardId, 'historical-sold-commission')
+  persisted.expeditionsById['historical-moved-commission']!.itemIds = [movedRewardId]
+  persisted.itemPlacements[movedRewardId] = {
+    ownerKind: 'caravan', custodyKind: 'expedition', custodyId: 'historical-moved-commission'
+  }
+  second.trades.push({
+    requestId: 'historical-sold-reward-sale',
+    kind: 'player_sold',
+    itemId: soldRewardId,
+    price: 123,
+    createdAt: persisted.updatedAt
+  })
+  persisted.itemPlacements[soldRewardId] = {
+    ownerKind: 'visitor', ownerId: second.id, custodyKind: 'visitor', custodyId: second.id
+  }
+  delete (persisted as Partial<PersistedGameV3>).itemV2ById
+  delete (persisted as Partial<PersistedGameV3>).serviceJobStateById
+  return persisted
+}
+
+function attachHistoricalClaimedCommission(
+  persisted: PersistedGameV3,
+  visitor: PersistedGameV3['visitRound']['slots'][number]['visitor'],
+  rewardItemId: string,
+  commissionId: string
+): void {
+  if (!visitor) throw new Error('Expected visitor')
+  visitor.state = 'departed'
+  visitor.departedAt = persisted.updatedAt
+  visitor.commission = {
+    ...visitor.commissionOptions[0]!,
+    id: commissionId,
+    status: 'claimed',
+    startedAt: persisted.createdAt,
+    finishesAt: persisted.updatedAt,
+    outcomeRoll: 0,
+    outcome: 'complete',
+    rewardGold: visitor.commissionOptions[0]!.fullRewardGold,
+    rewardItemId,
+    claimedAt: persisted.updatedAt
+  }
+  persisted.expeditionsById[commissionId] = {
+    id: commissionId,
+    itemIds: [],
+    projection: { kind: 'expedition', visitorId: visitor.id, contractId: commissionId, startsAt: persisted.createdAt }
+  }
+  persisted.settlementsById[commissionId] = {
+    id: commissionId,
+    itemIds: [],
+    projection: { kind: 'settlement', expeditionId: commissionId, outcome: 'returned', appliedAt: persisted.updatedAt }
+  }
 }
 
 async function claimConfiguredReward(
