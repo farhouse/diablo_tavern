@@ -699,8 +699,9 @@ function backfillRetainedVisitorIdentity(document: PersistedDbDocument): Persist
 }
 
 function backfillPersistedV3(document: PersistedDbDocument): PersistedGameV3 | undefined {
-  const missingV2Maps = !Object.prototype.hasOwnProperty.call(document, 'itemV2ById')
-    || !Object.prototype.hasOwnProperty.call(document, 'serviceJobStateById')
+  const missingItemV2Map = !Object.prototype.hasOwnProperty.call(document, 'itemV2ById')
+  const missingServiceJobStateMap = !Object.prototype.hasOwnProperty.call(document, 'serviceJobStateById')
+  const missingV2Maps = missingItemV2Map || missingServiceJobStateMap
   const retained = backfillRetainedVisitorIdentity(document)
   const candidate = retained ?? (missingV2Maps ? toPersistedGame(document) : undefined)
   if (!candidate) return undefined
@@ -709,7 +710,7 @@ function backfillPersistedV3(document: PersistedDbDocument): PersistedGameV3 | u
     candidate.itemV2ById = readItemV2Map((document as { itemV2ById?: unknown }).itemV2ById)
     candidate.serviceJobStateById = readServiceJobStateMap((document as { serviceJobStateById?: unknown }).serviceJobStateById)
   }
-  backfillCommissionRewardV2State(candidate)
+  if (missingItemV2Map) backfillCommissionRewardV2State(candidate)
   return candidate
 }
 
@@ -1624,8 +1625,7 @@ function hydrateRound(round: PersistedVisitRound, items: Record<string, Item>): 
       const commission = visitor.commission
         ? (() => {
             const { rewardItemId, ...rest } = visitor.commission
-            const rewardItem = rewardItemId ? items[rewardItemId] : undefined
-            return { ...structuredClone(rest), ...(rewardItem ? { rewardItem: structuredClone(rewardItem) } : {}) }
+            return { ...structuredClone(rest), ...(rewardItemId ? { rewardItem: requirePersistedItem(items, rewardItemId) } : {}) }
           })()
         : undefined
       return { ...structuredClone(slot), visitor: { ...structuredClone(visitor), offers, commission } as Visitor }

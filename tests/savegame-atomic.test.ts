@@ -717,8 +717,12 @@ describe('atomic persisted-game mutation', () => {
     expect(backfilled.revision).toBe(before.revision)
     expect(backfilled.gold).toBe(before.gold)
     expect(backfilled.materials).toEqual(before.materials)
+    expect(backfilled.itemsById).toEqual(before.itemsById)
+    expect(backfilled.visitRound).toEqual(before.visitRound)
+    expect(backfilled.visitHistory).toEqual(before.visitHistory)
     expect(backfilled.ledger).toEqual(before.ledger)
     expect(backfilled.requestRecords).toEqual(before.requestRecords)
+    expect(backfilled.businessKeys).toEqual(before.businessKeys)
     expect(backfilled.itemPlacements[movedRewardId]).toEqual(before.itemPlacements[movedRewardId])
     expect(backfilled.itemPlacements[soldRewardId]).toEqual(before.itemPlacements[soldRewardId])
     expect(backfilled.stash).not.toContain(movedRewardId)
@@ -745,6 +749,15 @@ describe('atomic persisted-game mutation', () => {
     const secondCommission = legacyV3.visitRound.slots[1]!.visitor!.commission!
     secondCommission.rewardItemId = firstCommission.rewardItemId
     document = legacyV3 as unknown as PersistedGameV3
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+  })
+
+  it('does not repair a partially declared item V2 map as historical absence', async () => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const partial = historicalClaimedRewardFixture() as PersistedGameV3
+    partial.itemV2ById = {}
+    document = partial
 
     await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
@@ -1262,6 +1275,7 @@ function executionOption(view: { items: unknown[] }, itemId: string, action: str
 
 function historicalClaimedRewardFixture(): Omit<PersistedGameV3, 'itemV2ById' | 'serviceJobStateById'> {
   const persisted = structuredClone(document as PersistedGameV3)
+  persisted.revision = 166
   const [firstSlot, secondSlot] = persisted.visitRound.slots
   const first = firstSlot?.visitor
   const second = secondSlot?.visitor

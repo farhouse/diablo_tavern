@@ -288,8 +288,12 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(after?.revision).toBe(before.revision)
     expect(after?.gold).toBe(before.gold)
     expect(after?.materials).toEqual(before.materials)
+    expect(after?.itemsById).toEqual(before.itemsById)
+    expect(after?.visitRound).toEqual(before.visitRound)
+    expect(after?.visitHistory).toEqual(before.visitHistory)
     expect(after?.ledger).toEqual(before.ledger)
     expect(after?.requestRecords).toEqual(before.requestRecords)
+    expect(after?.businessKeys).toEqual(before.businessKeys)
     expect(after?.stash).not.toContain('historical-sold-reward')
     expect(after?.itemPlacements['historical-moved-reward']).toEqual(before.itemPlacements['historical-moved-reward'])
     expect(after?.itemPlacements['historical-sold-reward']).toEqual(before.itemPlacements['historical-sold-reward'])
@@ -638,6 +642,7 @@ async function createLegacyRetainedLifecycle(userId: string): Promise<{
 async function createHistoricalClaimedRewardFixture(userId: string): Promise<Omit<PersistedGameV3, 'itemV2ById' | 'serviceJobStateById'>> {
   const { getPersistedGameV3 } = await import('../server/utils/savegame')
   const persisted = await getPersistedGameV3(userId)
+  persisted.revision = 166
   const [firstSlot, secondSlot] = persisted.visitRound.slots
   const first = firstSlot?.visitor
   const second = secondSlot?.visitor
