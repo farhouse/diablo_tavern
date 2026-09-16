@@ -290,14 +290,14 @@ describe('atomic persisted-game mutation', () => {
     expect(claimed.expeditionsById[readyVisitor.commission!.id]).toBeDefined()
   })
 
-  it.each(['queue_blacksmith_job', 'dismantle_item', 'sell', 'loan'] as const)('keeps claimed configured reward canonical after %s', async (action) => {
-    const { mutateEquipmentV2Atomic, transitionItemAtomic, isPersistedCanonical } = await import('../server/utils/savegame')
+  it.each(['queue_blacksmith_job', 'queue_enchanter_job', 'dismantle_item', 'sell', 'loan'] as const)('keeps claimed configured reward placement after %s and a legacy round-trip', async (action) => {
+    const { mutateEquipmentV2Atomic, mutateSaveGameAtomic, transitionItemAtomic, isPersistedCanonical } = await import('../server/utils/savegame')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const claimed = await claimConfiguredReward()
     const rewardItemId = claimed.rewardItemId
     document = claimed.persisted
 
-    if (action === 'queue_blacksmith_job') {
+    if (action === 'queue_blacksmith_job' || action === 'queue_enchanter_job') {
       const option = executionOption(mapPersistedGameToGameView(claimed.persisted, fixedDeps().now()), rewardItemId, action)
       await mutateEquipmentV2Atomic('atomic-user', `reward-${action}`, claimed.persisted.revision, {
         action, itemId: rewardItemId, optionId: option.optionId
@@ -317,6 +317,20 @@ describe('atomic persisted-game mutation', () => {
       })
     }
 
+    const afterAction = document as PersistedGameV3
+    const expectedPlacement = structuredClone(afterAction.itemPlacements[rewardItemId])
+    expect(isPersistedCanonical(document)).toBe(true)
+
+    await mutateSaveGameAtomic('atomic-user', `reward-${action}-legacy-round-trip`, `reward:${action}:legacy-round-trip`, afterAction.revision, {}, () => {}, fixedDeps())
+
+    const afterRoundTrip = document as PersistedGameV3
+    expect(afterRoundTrip.itemPlacements[rewardItemId]).toEqual(expectedPlacement)
+    if (action === 'dismantle_item') {
+      expect(afterRoundTrip.itemPlacements[rewardItemId]).toEqual({
+        ownerKind: 'tombstone', custodyKind: 'tombstone', custodyId: `dismantle-${rewardItemId}`
+      })
+      expect(afterRoundTrip.stash).not.toContain(rewardItemId)
+    }
     expect(isPersistedCanonical(document)).toBe(true)
   })
 
