@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type {
   ActionAvailability,
   AbandonRecoveryAction,
@@ -7,7 +7,10 @@ import type {
   AssignRecoveryAction,
   ConfirmSettlementAction,
   GameView,
+  Id,
+  LocalizedText,
   RecoveryView,
+  ReconcileGameAction,
   SettlementView,
   VisitorView
 } from '~/shared/types/v2-game-view'
@@ -33,13 +36,24 @@ const emit = defineEmits<{
 }>()
 
 const operationState = computed(() => props.operationState ?? 'idle')
-const busy = computed(() => operationState.value === 'pending')
+const busy = computed(() => operationState.value === 'pending' || operationState.value === 'uncertain')
+const contractOptions = ref<Record<Id, Id>>({})
+const contractLoans = ref<Record<Id, Id[]>>({})
+const recoveryBindings = ref<Record<Id, string>>({})
+const recoveryLoans = ref<Record<Id, Id[]>>({})
+const abandonConfirmations = ref<Record<Id, boolean>>({})
+const currentNowMs = ref(0)
+const clockClientStartedAt = ref(0)
+const clockServerStartedAt = ref(0)
+const emittedTransitionKeys = new Set<string>()
+let clockTimer: ReturnType<typeof setInterval> | null = null
+
 const statusText = computed(() => {
   if (props.loadState === 'loading') return 'Cargando snapshot V2.'
   if (props.loadState === 'empty') return 'No hay snapshot V2 confirmado.'
   if (operationState.value === 'pending') return 'Procesando orden.'
   if (operationState.value === 'uncertain') return 'Resultado incierto. Reintentá la misma orden.'
-  if (operationState.value === 'conflict') return 'La partida cambió. Revisá el snapshot actualizado.'
+  if (operationState.value === 'conflict') return props.errorMessage || 'La partida cambió. Revisá el snapshot actualizado.'
   if (operationState.value === 'unavailable') return props.unavailableReason || 'La acción ya no está disponible.'
   if (operationState.value === 'terminal') return props.errorMessage || 'La orden terminó sin cambiar el snapshot.'
   return 'Snapshot V2 listo.'
@@ -47,32 +61,129 @@ const statusText = computed(() => {
 
 const countdownText = computed(() => {
   if (!props.game?.nextTransitionAt) return 'Sin transición programada'
-  const now = props.nowMs ?? Date.parse(props.game.serverNow)
-  const remaining = Math.max(0, Date.parse(props.game.nextTransitionAt) - now)
+  const remaining = Math.max(0, Date.parse(props.game.nextTransitionAt) - currentNowMs.value)
   return remaining === 0 ? 'Transición lista para reconciliar' : `${Math.ceil(remaining / 1000)}s hasta la próxima transición`
 })
 
-function label(text: { fallback: string }): string {
+const reconcileAction = computed(() => enabledAction<ReconcileGameAction>(props.game?.actions, 'reconcile_game'))
+const reconcileDisabledReason = computed(() => actionReason(props.game?.actions ?? [], 'reconcile_game'))
+
+function label(text: LocalizedText): string {
   return text.fallback
 }
 
-function reason(action: ActionAvailability | undefined): string {
-  return action && !action.enabled ? label(action.reasonText) : ''
+function visible(): boolean {
+  return typeof document === 'undefined' || document.visibilityState === 'visible'
 }
 
-function disabledAction(actions: readonly ActionAvailability[], actionName: ActionAvailability['action']): ActionAvailability | undefined {
-  return actions.find((action) => action.action === actionName && !action.enabled)
+function resetClock() {
+  clockClientStartedAt.value = Date.now()
+  clockServerStartedAt.value = props.nowMs ?? (props.game ? Date.parse(props.game.serverNow) : Date.now())
+  updateClock()
+}
+
+function updateClock() {
+  currentNowMs.value = props.nowMs ?? clockServerStartedAt.value + Math.max(0, Date.now() - clockClientStartedAt.value)
+  emitDueReconcile()
+}
+
+function startClock() {
+  stopClock()
+  if (!visible()) return
+  updateClock()
+  clockTimer = setInterval(updateClock, 1000)
+}
+
+function stopClock() {
+  if (!clockTimer) return
+  clearInterval(clockTimer)
+  clockTimer = null
+}
+
+function onVisibilityChange() {
+  if (!visible()) {
+    stopClock()
+    return
+  }
+  startClock()
+}
+
+function emitDueReconcile() {
+  if (!props.game?.nextTransitionAt || !reconcileAction.value || !visible()) return
+  if (Date.parse(props.game.nextTransitionAt) > currentNowMs.value) return
+  const key = `${props.game.revision}:${props.game.nextTransitionAt}`
+  if (emittedTransitionKeys.has(key)) return
+  emittedTransitionKeys.add(key)
+  emit('reconcileGame')
+}
+
+function selectedContractBinding(visitor: VisitorView) {
+  const action = contractAction(visitor)
+  if (!action) return null
+  const optionId = contractOptions.value[visitor.visitorId] ?? action.execution.bindings[0]?.optionId
+  return action.execution.bindings.find((binding) => binding.optionId === optionId) ?? action.execution.bindings[0] ?? null
+}
+
+function selectedRecoveryBinding(recovery: RecoveryView) {
+  const action = assignAction(recovery)
+  if (!action) return null
+  const key = recoveryBindings.value[recovery.recoveryId] ?? bindingKey(action.execution.bindings[0])
+  return action.execution.bindings.find((binding) => bindingKey(binding) === key) ?? action.execution.bindings[0] ?? null
+}
+
+function contractAction(visitor: VisitorView): AcceptContractAction | null {
+  return enabledAction<AcceptContractAction>(actionsOf(visitor), 'accept_contract')
+}
+
+function assignAction(recovery: RecoveryView): AssignRecoveryAction | null {
+  return enabledAction<AssignRecoveryAction>(actionsOf(recovery), 'assign_recovery')
+}
+
+function abandonAction(recovery: RecoveryView): AbandonRecoveryAction | null {
+  return enabledAction<AbandonRecoveryAction>(actionsOf(recovery), 'abandon_recovery')
+}
+
+function bindingKey(binding: { visitorId: Id, optionId: Id } | undefined): string {
+  return binding ? `${binding.visitorId}:${binding.optionId}` : ''
+}
+
+function itemLabel(itemId: Id): string {
+  return label(props.game?.items.find((item) => item.itemId === itemId)?.name ?? { key: itemId, fallback: itemId })
+}
+
+function contractOptionLabel(visitor: VisitorView, optionId: Id): string {
+  if (!('contractOptions' in visitor)) return optionId
+  return label(visitor.contractOptions.find((option) => option.optionId === optionId)?.label ?? { key: optionId, fallback: optionId })
+}
+
+function toggleLoan(target: Record<Id, Id[]>, ownerId: Id, itemId: Id, checked: boolean) {
+  const current = target[ownerId] ?? []
+  target[ownerId] = checked ? [...new Set([...current, itemId])] : current.filter((candidate) => candidate !== itemId)
+}
+
+function eventChecked(event: Event): boolean {
+  return Boolean((event.target as HTMLInputElement | null)?.checked)
+}
+
+function actionReason(actions: readonly ActionAvailability[], actionName: ActionAvailability['action']): string {
+  const disabled = actions.find((action) => action.action === actionName && !action.enabled)
+  if (disabled && !disabled.enabled) return label(disabled.reasonText)
+  return enabledAction(actions, actionName) ? '' : 'Acción no publicada en el snapshot.'
+}
+
+function reasonId(prefix: string, id: Id): string | undefined {
+  return `${prefix}-reason-${id}`
 }
 
 function accept(visitor: VisitorView) {
-  const action = enabledAction<AcceptContractAction>(actionsOf(visitor), 'accept_contract')
-  const binding = action?.execution.bindings[0]
-  if (!binding) return
+  const action = contractAction(visitor)
+  const binding = selectedContractBinding(visitor)
+  if (!action || !binding) return
   emit('acceptContract', {
     kind: 'contract',
     visitorId: action.execution.visitorId,
     optionId: binding.optionId,
-    loanItemIds: []
+    loanItemIds: (contractLoans.value[visitor.visitorId] ?? []).filter((itemId) => binding.eligibleLoanItemIds.includes(itemId))
   })
 }
 
@@ -90,15 +201,15 @@ function confirm(settlement: SettlementView) {
 }
 
 function assign(recovery: RecoveryView) {
-  const action = enabledAction<AssignRecoveryAction>(actionsOf(recovery), 'assign_recovery')
-  const binding = action?.execution.bindings[0]
-  if (!binding) return
+  const action = assignAction(recovery)
+  const binding = selectedRecoveryBinding(recovery)
+  if (!action || !binding) return
   emit('assignRecovery', {
     kind: 'recovery',
     recoveryId: action.execution.recoveryId,
     visitorId: binding.visitorId,
     optionId: binding.optionId,
-    loanItemIds: []
+    loanItemIds: (recoveryLoans.value[recovery.recoveryId] ?? []).filter((itemId) => binding.eligibleLoanItemIds.includes(itemId))
   })
 }
 
@@ -120,6 +231,18 @@ function settlementAction(settlement: SettlementView): ConfirmSettlementAction |
 function actionsOf(entity: { actions: readonly ActionAvailability[] }): readonly ActionAvailability[] {
   return entity.actions
 }
+
+watch(() => [props.game?.revision, props.game?.serverNow, props.nowMs] as const, resetClock, { immediate: true })
+
+onMounted(() => {
+  startClock()
+  document.addEventListener('visibilitychange', onVisibilityChange)
+})
+
+onBeforeUnmount(() => {
+  stopClock()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 </script>
 
 <template>
@@ -134,11 +257,15 @@ function actionsOf(entity: { actions: readonly ActionAvailability[] }): readonly
       <button
         class="v2-cycle__button"
         type="button"
-        :disabled="busy || !game"
+        :disabled="busy || !game || !reconcileAction"
+        :aria-describedby="reconcileDisabledReason ? 'reconcile-reason' : undefined"
         @click="emit('reconcileGame')"
       >
         Reconciliar
       </button>
+      <span v-if="reconcileDisabledReason" id="reconcile-reason" class="v2-cycle__reason">
+        {{ reconcileDisabledReason }}
+      </span>
     </header>
 
     <p class="v2-cycle__status" aria-live="polite" data-testid="v2-status">
@@ -171,27 +298,70 @@ function actionsOf(entity: { actions: readonly ActionAvailability[] }): readonly
               class="v2-cycle__button"
               type="button"
               :disabled="busy || !enabledAction(actionsOf(visitor), 'accept_contract')"
-              :aria-describedby="disabledAction(actionsOf(visitor), 'accept_contract') ? `accept-reason-${visitor.visitorId}` : undefined"
+              :aria-describedby="actionReason(actionsOf(visitor), 'accept_contract') ? reasonId('accept', visitor.visitorId) : undefined"
               @click="accept(visitor)"
             >
               Aceptar contrato
             </button>
+            <label v-if="contractAction(visitor)" class="v2-cycle__field">
+              Contrato
+              <select
+                v-model="contractOptions[visitor.visitorId]"
+                class="v2-cycle__select"
+                :disabled="busy"
+              >
+                <option
+                  v-for="binding in contractAction(visitor)?.execution.bindings"
+                  :key="binding.optionId"
+                  :value="binding.optionId"
+                >
+                  {{ contractOptionLabel(visitor, binding.optionId) }}
+                </option>
+              </select>
+            </label>
+            <fieldset
+              v-if="selectedContractBinding(visitor)?.eligibleLoanItemIds.length"
+              class="v2-cycle__fieldset"
+              :disabled="busy"
+            >
+              <legend>Préstamos</legend>
+              <label
+                v-for="itemId in selectedContractBinding(visitor)?.eligibleLoanItemIds"
+                :key="itemId"
+                class="v2-cycle__check"
+              >
+                <input
+                  type="checkbox"
+                  :checked="(contractLoans[visitor.visitorId] ?? []).includes(itemId)"
+                  @change="toggleLoan(contractLoans, visitor.visitorId, itemId, eventChecked($event))"
+                >
+                {{ itemLabel(itemId) }}
+              </label>
+            </fieldset>
             <span
-              v-if="reason(disabledAction(actionsOf(visitor), 'accept_contract'))"
-              :id="`accept-reason-${visitor.visitorId}`"
+              v-if="actionReason(actionsOf(visitor), 'accept_contract')"
+              :id="reasonId('accept', visitor.visitorId)"
               class="v2-cycle__reason"
             >
-              {{ reason(disabledAction(actionsOf(visitor), 'accept_contract')) }}
+              {{ actionReason(actionsOf(visitor), 'accept_contract') }}
             </span>
             <button
               v-if="visitor.state === 'contracted'"
               class="v2-cycle__button"
               type="button"
               :disabled="busy || !enabledAction(actionsOf(visitor), 'start_expedition')"
+              :aria-describedby="actionReason(actionsOf(visitor), 'start_expedition') ? reasonId('start', visitor.visitorId) : undefined"
               @click="start(visitor)"
             >
               Iniciar expedición
             </button>
+            <span
+              v-if="visitor.state === 'contracted' && actionReason(actionsOf(visitor), 'start_expedition')"
+              :id="reasonId('start', visitor.visitorId)"
+              class="v2-cycle__reason"
+            >
+              {{ actionReason(actionsOf(visitor), 'start_expedition') }}
+            </span>
           </div>
         </article>
       </section>
@@ -232,10 +402,18 @@ function actionsOf(entity: { actions: readonly ActionAvailability[] }): readonly
             class="v2-cycle__button"
             type="button"
             :disabled="busy || !settlementAction(settlement)"
+            :aria-describedby="actionReason(actionsOf(settlement), 'confirm_settlement') ? reasonId('settlement', settlement.settlementId) : undefined"
             @click="confirm(settlement)"
           >
             Confirmar preview
           </button>
+          <span
+            v-if="settlement.state === 'preview_ready' && actionReason(actionsOf(settlement), 'confirm_settlement')"
+            :id="reasonId('settlement', settlement.settlementId)"
+            class="v2-cycle__reason"
+          >
+            {{ actionReason(actionsOf(settlement), 'confirm_settlement') }}
+          </span>
           <p v-else-if="settlement.state === 'preview_expired'" class="v2-cycle__muted">
             Preview expirado según snapshot.
           </p>
@@ -260,18 +438,84 @@ function actionsOf(entity: { actions: readonly ActionAvailability[] }): readonly
               class="v2-cycle__button"
               type="button"
               :disabled="busy || !enabledAction(actionsOf(recovery), 'assign_recovery')"
+              :aria-describedby="actionReason(actionsOf(recovery), 'assign_recovery') ? reasonId('assign', recovery.recoveryId) : undefined"
               @click="assign(recovery)"
             >
               Asignar recovery
             </button>
+            <label v-if="assignAction(recovery)" class="v2-cycle__field">
+              Recuperador
+              <select
+                v-model="recoveryBindings[recovery.recoveryId]"
+                class="v2-cycle__select"
+                :disabled="busy"
+              >
+                <option
+                  v-for="binding in assignAction(recovery)?.execution.bindings"
+                  :key="bindingKey(binding)"
+                  :value="bindingKey(binding)"
+                >
+                  {{ binding.visitorId }} · {{ binding.optionId }}
+                </option>
+              </select>
+            </label>
+            <fieldset
+              v-if="selectedRecoveryBinding(recovery)?.eligibleLoanItemIds.length"
+              class="v2-cycle__fieldset"
+              :disabled="busy"
+            >
+              <legend>Préstamos</legend>
+              <label
+                v-for="itemId in selectedRecoveryBinding(recovery)?.eligibleLoanItemIds"
+                :key="itemId"
+                class="v2-cycle__check"
+              >
+                <input
+                  type="checkbox"
+                  :checked="(recoveryLoans[recovery.recoveryId] ?? []).includes(itemId)"
+                  @change="toggleLoan(recoveryLoans, recovery.recoveryId, itemId, eventChecked($event))"
+                >
+                {{ itemLabel(itemId) }}
+              </label>
+            </fieldset>
+            <span
+              v-if="actionReason(actionsOf(recovery), 'assign_recovery')"
+              :id="reasonId('assign', recovery.recoveryId)"
+              class="v2-cycle__reason"
+            >
+              {{ actionReason(actionsOf(recovery), 'assign_recovery') }}
+            </span>
+            <label
+              v-if="abandonAction(recovery)"
+              class="v2-cycle__check"
+              :id="`abandon-ack-${recovery.recoveryId}`"
+            >
+              <input
+                v-model="abandonConfirmations[recovery.recoveryId]"
+                type="checkbox"
+                :disabled="busy"
+              >
+              {{ label(abandonAction(recovery)!.execution.acknowledgement.text) }}
+            </label>
             <button
               class="v2-cycle__button v2-cycle__button--danger"
               type="button"
-              :disabled="busy || !enabledAction(actionsOf(recovery), 'abandon_recovery')"
+              :disabled="busy || !abandonAction(recovery) || !abandonConfirmations[recovery.recoveryId]"
+              :aria-describedby="[
+                actionReason(actionsOf(recovery), 'abandon_recovery') ? reasonId('abandon', recovery.recoveryId) : '',
+                abandonAction(recovery) ? `abandon-ack-${recovery.recoveryId}` : ''
+              ].filter(Boolean).join(' ') || undefined"
               @click="abandon(recovery)"
             >
               Abandonar
             </button>
+            <span
+              v-if="actionReason(actionsOf(recovery), 'abandon_recovery')"
+              :id="reasonId('abandon', recovery.recoveryId)"
+              class="v2-cycle__reason"
+            >
+              {{ actionReason(actionsOf(recovery), 'abandon_recovery') }}
+            </span>
           </div>
         </article>
       </section>
@@ -332,6 +576,34 @@ function actionsOf(entity: { actions: readonly ActionAvailability[] }): readonly
   flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: end;
+}
+
+.v2-cycle__field,
+.v2-cycle__fieldset,
+.v2-cycle__check {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.v2-cycle__check {
+  align-items: center;
+  grid-auto-flow: column;
+  justify-content: start;
+}
+
+.v2-cycle__fieldset {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+
+.v2-cycle__select {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  min-height: 44px;
+  padding: 0.5rem;
 }
 
 .v2-cycle__button {

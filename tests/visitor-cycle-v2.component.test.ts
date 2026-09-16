@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import fixtures from '../contracts/v2-etapa0-3/fixtures.json'
@@ -17,6 +17,15 @@ function fixture(id: string): GameView {
 }
 
 describe('VisitorCycleV2', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('renders loading, empty and ready states with polite announcements', () => {
     const loading = mount(VisitorCycleV2, { props: { game: null, loadState: 'loading' } })
     expect(loading.find('[data-testid="v2-loading"]').exists()).toBe(true)
@@ -50,9 +59,44 @@ describe('VisitorCycleV2', () => {
     const [assignButton, abandonButton] = buttons
     if (!assignButton || !abandonButton) throw new Error('Expected recovery controls')
     await assignButton.trigger('click')
+    expect(abandonButton.attributes('disabled')).toBeDefined()
+    await recovery.get('[data-testid="recovery-open"] input[type="checkbox"]').setValue(true)
     await abandonButton.trigger('click')
     expect(recovery.emitted('assignRecovery')?.[0]).toEqual([{ kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: [] }])
     expect(recovery.emitted('abandonRecovery')?.[0]).toEqual([{ kind: 'abandon_recovery', recoveryId: 'r1', acknowledgementId: 'ack-r1' }])
+  })
+
+  it('renders explicit binding and loan choices for contract and recovery', async () => {
+    const contractGame = fixture('integrated-contract')
+    const visitor = contractGame.visitors[0]
+    if (!visitor || !('contractOptions' in visitor)) throw new Error('Expected contract visitor')
+    visitor.contractOptions.push({
+      ...visitor.contractOptions[0]!,
+      optionId: 'o2',
+      label: { key: 'contract.loan', fallback: 'Contrato con préstamo' }
+    })
+    const acceptAction = visitor.actions.find((action) => action.action === 'accept_contract' && action.enabled)
+    if (!acceptAction || acceptAction.action !== 'accept_contract' || !acceptAction.enabled) throw new Error('Expected accept action')
+    acceptAction.execution.bindings.push({ optionId: 'o2', eligibleLoanItemIds: ['i1'], expiresAt: '2026-09-15T10:30:00Z' })
+
+    const contract = mount(VisitorCycleV2, { props: { game: contractGame, loadState: 'ready' } })
+    await contract.get('[data-testid="visitor-available"] select').setValue('o2')
+    await contract.get('[data-testid="visitor-available"] input[type="checkbox"]').setValue(true)
+    await contract.get('[data-testid="visitor-available"] button').trigger('click')
+    expect(contract.emitted('acceptContract')?.[0]).toEqual([{ kind: 'contract', visitorId: 'v1', optionId: 'o2', loanItemIds: ['i1'] }])
+
+    const recoveryGame = fixture('integrated-recovery')
+    const recoveryView = recoveryGame.recoveries[0]
+    if (!recoveryView) throw new Error('Expected recovery')
+    const assignAction = recoveryView.actions.find((action) => action.action === 'assign_recovery' && action.enabled)
+    if (!assignAction || assignAction.action !== 'assign_recovery' || !assignAction.enabled) throw new Error('Expected assign action')
+    assignAction.execution.bindings.push({ visitorId: 'v3', optionId: 'ro2', eligibleLoanItemIds: ['i4'], expiresAt: '2026-09-15T10:30:00Z' })
+
+    const recovery = mount(VisitorCycleV2, { props: { game: recoveryGame, loadState: 'ready' } })
+    await recovery.get('[data-testid="recovery-open"] select').setValue('v3:ro2')
+    await recovery.get('[data-testid="recovery-open"] input[type="checkbox"]').setValue(true)
+    await recovery.get('[data-testid="recovery-open"] button').trigger('click')
+    expect(recovery.emitted('assignRecovery')?.[0]).toEqual([{ kind: 'recovery', recoveryId: 'r1', visitorId: 'v3', optionId: 'ro2', loanItemIds: ['i4'] }])
   })
 
   it('disables controls while pending and exposes conflict, unavailable, uncertain and terminal states', async () => {
@@ -66,6 +110,7 @@ describe('VisitorCycleV2', () => {
     const uncertain = mount(VisitorCycleV2, {
       props: { game: fixture('integrated-contract'), loadState: 'ready', operationState: 'uncertain' }
     })
+    expect(uncertain.get('[data-testid="visitor-available"] button').attributes('disabled')).toBeDefined()
     await uncertain.get('[data-testid="v2-retry"]').trigger('click')
     expect(uncertain.emitted('retry')).toHaveLength(1)
 
@@ -90,9 +135,47 @@ describe('VisitorCycleV2', () => {
     expect(terminal.get('[data-testid="v2-status"]').text()).toContain('internal_error')
 
     const conflict = mount(VisitorCycleV2, {
-      props: { game: fixture('integrated-contract'), loadState: 'ready', operationState: 'conflict' }
+      props: { game: fixture('integrated-contract'), loadState: 'ready', operationState: 'conflict', errorMessage: 'No se pudo actualizar' }
     })
-    expect(conflict.get('[data-testid="v2-status"]').text()).toContain('snapshot actualizado')
+    expect(conflict.get('[data-testid="v2-status"]').text()).toContain('No se pudo actualizar')
+  })
+
+  it('derives reconcile availability from game actions and emits once when visible transition is due', async () => {
+    const unavailable = mount(VisitorCycleV2, { props: { game: fixture('integrated-contract'), loadState: 'ready' } })
+    expect(unavailable.get('header button').attributes('disabled')).toBeDefined()
+    expect(unavailable.get('header button').attributes('aria-describedby')).toBe('reconcile-reason')
+    expect(unavailable.get('#reconcile-reason').text()).toContain('Acción no publicada')
+
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-14T10:30:00Z'))
+    const game = fixture('integrated-system')
+    game.serverNow = '2026-09-14T10:30:00Z'
+    game.nextTransitionAt = '2026-09-14T10:30:01Z'
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+  })
+
+  it('pauses transition checks while hidden and reconciles once after returning visible', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-14T10:30:00Z'))
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    const game = fixture('integrated-system')
+    game.serverNow = '2026-09-14T10:30:00Z'
+    game.nextTransitionAt = '2026-09-14T10:30:01Z'
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(wrapper.emitted('reconcileGame')).toBeUndefined()
+
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
   })
 
   it('represents terminal visitor, expedition, settlement and recovery variants from frontend-only derivatives', () => {

@@ -73,6 +73,32 @@ describe('game V2 store', () => {
     expect(store.operationState).toBe('idle')
   })
 
+  it('blocks competing intentions while uncertain; only retry reuses the envelope', async () => {
+    const store = useGameV2Store()
+    const game = fixture('integrated-contract')
+    const visitor = game.visitors[0]
+    if (!visitor || !('contractOptions' in visitor)) throw new Error('Expected contract fixture')
+    visitor.contractOptions.push({ ...visitor.contractOptions[0]!, optionId: 'o2' })
+    const action = visitor.actions.find((candidate) => candidate.action === 'accept_contract' && candidate.enabled)
+    if (!action || action.action !== 'accept_contract' || !action.enabled) throw new Error('Expected accept action')
+    action.execution.bindings.push({ optionId: 'o2', eligibleLoanItemIds: ['i1'], expiresAt: '2026-09-15T10:30:00Z' })
+    store.applySnapshot(game)
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(apiError({ code: 'uncertain', retryable: true, requestId: 'same' }))
+      .mockResolvedValueOnce({ requestId: 'same', revision: 11, game: { ...game, revision: 11 } })
+    vi.stubGlobal('$fetch', fetchMock)
+
+    await store.acceptContract({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: [] })
+    const firstBody = structuredClone(fetchMock.mock.calls[0]?.[1]?.body)
+    await store.acceptContract({ kind: 'contract', visitorId: 'v1', optionId: 'o2', loanItemIds: ['i1'] })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await store.retryUncertain()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toEqual(firstBody)
+  })
+
   it('loads a fresh snapshot after conflict and invalidates stale selection', async () => {
     const store = useGameV2Store()
     store.applySnapshot(fixture('integrated-contract'))
@@ -91,6 +117,26 @@ describe('game V2 store', () => {
     expect(store.game).toEqual(system)
   })
 
+  it('keeps conflict honest and retryable when the conflict reload fails', async () => {
+    const store = useGameV2Store()
+    const initial = fixture('integrated-contract')
+    store.applySnapshot(initial)
+    store.select({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1'] })
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(apiError({ code: 'revision_conflict', retryable: true }))
+      .mockRejectedValueOnce({ statusMessage: 'database stack detail' })
+    vi.stubGlobal('$fetch', fetchMock)
+
+    await store.acceptContract({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1'] })
+
+    expect(store.operationState).toBe('conflict')
+    expect(store.game).toEqual(initial)
+    expect(store.selection).toEqual({ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1'] })
+    expect(store.errorMessage).toContain('no se pudo actualizar')
+    expect(store.errorMessage).toContain('Error inesperado')
+    expect(store.errorMessage).not.toContain('database stack detail')
+  })
+
   it('keeps confirmed snapshot for unavailable and terminal errors', async () => {
     const store = useGameV2Store()
     const initial = fixture('integrated-recovery')
@@ -106,6 +152,23 @@ describe('game V2 store', () => {
     expect(store.game).toEqual(initial)
     expect(store.operationState).toBe('unavailable')
     expect(store.unavailableReason).toBe('RECOVERY_LIMIT_REACHED')
+  })
+
+  it('accepts only the closed public error union and hides non-public details', async () => {
+    const store = useGameV2Store()
+    store.applySnapshot(fixture('integrated-recovery'))
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(apiError({ code: 'made_up', retryable: false, statusMessage: 'leak me' }))
+      .mockRejectedValueOnce(new Error('raw stack detail'))
+    vi.stubGlobal('$fetch', fetchMock)
+
+    await store.assignRecovery({ kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: [] })
+    expect(store.operationState).toBe('terminal')
+    expect(store.errorMessage).toBe('Error inesperado')
+
+    store.operationState = 'idle'
+    await store.assignRecovery({ kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: [] })
+    expect(store.errorMessage).toBe('Error inesperado')
   })
 
   it('reconciles a due transition once per revision and transition while visible', async () => {

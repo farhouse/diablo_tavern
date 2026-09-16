@@ -39,7 +39,7 @@ export const useGameV2Store = defineStore('game-v2', {
   }),
   getters: {
     projection: (state) => visitorCycleProjection(state.game),
-    isBusy: (state) => state.operationState === 'pending'
+    isBusy: (state) => state.operationState === 'pending' || state.operationState === 'uncertain'
   },
   actions: {
     applySnapshot(game: GameView) {
@@ -99,16 +99,14 @@ export const useGameV2Store = defineStore('game-v2', {
       await this.reconcileGame()
     },
     async runOperation(name: OperationName, endpoint: string, payload: Record<string, unknown>) {
-      if (!this.game || this.operationState === 'pending') return
-      const operation = this.pendingOperation && this.pendingOperation.name === name && this.operationState === 'uncertain'
-        ? this.pendingOperation
-        : {
-            name,
-            endpoint,
-            requestId: createRequestId(),
-            expectedRevision: this.game.revision,
-            payload
-          }
+      if (!this.game || this.operationState === 'pending' || this.operationState === 'uncertain') return
+      const operation = {
+        name,
+        endpoint,
+        requestId: createRequestId(),
+        expectedRevision: this.game.revision,
+        payload
+      }
       await this.postPending(operation)
     },
     async postPending(operation: PendingOperation) {
@@ -138,8 +136,14 @@ export const useGameV2Store = defineStore('game-v2', {
         if (parsed?.error.code === 'revision_conflict') {
           this.operationState = 'conflict'
           this.pendingOperation = null
-          await this.load()
-          this.errorMessage = 'La partida cambió. Revisá las opciones disponibles.'
+          try {
+            const game = await this.api<GameView>('/api/v2/game')
+            this.applySnapshot(game)
+            this.errorMessage = 'La partida cambió. Revisá las opciones disponibles.'
+          } catch (reloadError) {
+            this.loadState = this.game ? 'ready' : 'empty'
+            this.errorMessage = `La partida cambió, pero no se pudo actualizar el snapshot. ${publicErrorMessage(reloadError)}`
+          }
           return
         }
         if (parsed?.error.code === 'action_unavailable') {
@@ -193,16 +197,54 @@ function publicApiError(error: unknown): PublicApiErrorEnvelope | null {
   if (typeof error !== 'object' || !error) return null
   const data = 'data' in error ? (error as { data?: unknown }).data : null
   if (!data || typeof data !== 'object' || !('error' in data)) return null
-  const envelope = data as PublicApiErrorEnvelope
-  return typeof envelope.error?.code === 'string' && typeof envelope.error.retryable === 'boolean' ? envelope : null
+  const publicError = (data as { error?: Partial<PublicApiErrorEnvelope['error']> }).error
+  if (!publicError || typeof publicError.retryable !== 'boolean') return null
+  switch (publicError.code) {
+    case 'revision_conflict':
+      return publicError.retryable === true ? { error: publicError } as PublicApiErrorEnvelope : null
+    case 'idempotency_conflict':
+    case 'validation_error':
+    case 'internal_corruption':
+      return publicError.retryable === false ? { error: publicError } as PublicApiErrorEnvelope : null
+    case 'action_unavailable':
+      return publicError.retryable === false && typeof publicError.reason === 'string'
+        ? { error: publicError } as PublicApiErrorEnvelope
+        : null
+    case 'uncertain':
+      return publicError.retryable === true && typeof publicError.requestId === 'string'
+        ? { error: publicError } as PublicApiErrorEnvelope
+        : null
+    case 'internal_error':
+      return publicError.retryable === true ? { error: publicError } as PublicApiErrorEnvelope : null
+    default:
+      return null
+  }
 }
 
 function publicErrorMessage(error: unknown): string {
   const parsed = publicApiError(error)
-  if (parsed?.error.code) return parsed.error.code
-  if (typeof error === 'object' && error && 'statusMessage' in error) return String((error as { statusMessage: string }).statusMessage)
-  if (error instanceof Error) return error.message
+  if (parsed?.error.code) return publicErrorCopy(parsed.error.code)
   return 'Error inesperado'
+}
+
+function publicErrorCopy(code: PublicApiErrorEnvelope['error']['code']): string {
+  switch (code) {
+    case 'revision_conflict':
+      return 'La partida cambió. Volvé a revisar las opciones disponibles.'
+    case 'idempotency_conflict':
+      return 'La orden no coincide con el intento anterior.'
+    case 'action_unavailable':
+      return 'La acción ya no está disponible.'
+    case 'uncertain':
+      return 'No se pudo confirmar el resultado. Reintentá la misma orden.'
+    case 'validation_error':
+      return 'La orden no pudo validarse.'
+    case 'internal_corruption':
+    case 'internal_error':
+      return 'Error inesperado'
+    default:
+      return 'Error inesperado'
+  }
 }
 
 function isFetchStatus(error: unknown, statusCode: number): boolean {
