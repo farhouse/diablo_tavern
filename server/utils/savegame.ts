@@ -706,13 +706,21 @@ function backfillPersistedV3(document: PersistedDbDocument): PersistedGameV3 | u
   const serviceJobStateMap = (document as { serviceJobStateById?: unknown }).serviceJobStateById
   if ((!missingItemV2Map && !isItemV2Map(itemV2Map))
     || (!missingServiceJobStateMap && !isServiceJobStateMap(serviceJobStateMap))) return undefined
+  if (missingV2Maps) {
+    const original = structuredClone(document) as PersistedGameV3
+    if (Object.prototype.hasOwnProperty.call(document, '_id')) {
+      const originalWithId = original as PersistedGameV3 & { _id?: unknown }
+      delete originalWithId._id
+    }
+    if (missingItemV2Map) original.itemV2ById = {}
+    if (missingServiceJobStateMap) original.serviceJobStateById = {}
+    if (!isPersistedCanonical(original, { allowMissingHistoricalRewardV2: missingItemV2Map })) return undefined
+    if (missingItemV2Map) backfillCommissionRewardV2State(original)
+    return original
+  }
   const retained = backfillRetainedVisitorIdentity(document)
-  const candidate = retained ?? (missingV2Maps ? toPersistedGame(document) : undefined)
+  const candidate = retained
   if (!candidate) return undefined
-
-  if (missingItemV2Map) candidate.itemV2ById = {}
-  if (missingServiceJobStateMap) candidate.serviceJobStateById = {}
-  if (missingItemV2Map) backfillCommissionRewardV2State(candidate)
   return candidate
 }
 
@@ -922,7 +930,10 @@ function hasLegacyFields(value: unknown): boolean {
   return PERSISTENCE_LEGACY_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(value, field))
 }
 
-export function isPersistedCanonical(document: unknown): document is PersistedGameV3 {
+export function isPersistedCanonical(
+  document: unknown,
+  options: { allowMissingHistoricalRewardV2?: boolean } = {}
+): document is PersistedGameV3 {
   if (!document || typeof document !== 'object') return false
 
   const candidate = document as Record<string, unknown>
@@ -1020,7 +1031,12 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
         : commission.outcome === 'partial' ? commission.partialRewardGold : 0
       if (commission.rewardGold !== expectedGold) return false
       if (commission.outcome !== 'complete' && commission.rewardItemId !== undefined) return false
-      if (commission.rewardItemId && !isCommissionRewardLoot(candidate as unknown as PersistedGameV3, commission)) return false
+      if (commission.rewardItemId && !isCommissionRewardLoot(candidate as unknown as PersistedGameV3, commission)) {
+        if (!options.allowMissingHistoricalRewardV2) return false
+        const itemId = commission.rewardItemId
+        if (!(itemsById as Record<string, unknown>)[itemId]) return false
+        if ((itemV2ById as Record<string, unknown>)[itemId] !== undefined) return false
+      }
       const expectedSettlementItems = commission.status === 'ready' && commission.rewardItemId
         ? [commission.rewardItemId]
         : []
@@ -1128,7 +1144,12 @@ export function isPersistedCanonical(document: unknown): document is PersistedGa
         const placement = itemPlacements[visitor.commission.rewardItemId]
         if (!itemsById[visitor.commission.rewardItemId] || !placement) return false
         if (visitor.commission.status === 'claimed') {
-          if (!isCommissionRewardLoot(candidate as unknown as PersistedGameV3, visitor.commission)) return false
+          if (!isCommissionRewardLoot(candidate as unknown as PersistedGameV3, visitor.commission)) {
+            if (!options.allowMissingHistoricalRewardV2) return false
+            const itemId = visitor.commission.rewardItemId
+            if (!itemId || !(itemsById as Record<string, unknown>)[itemId]) return false
+            if ((itemV2ById as Record<string, unknown>)[itemId] !== undefined) return false
+          }
         } else if (placement.custodyKind !== 'settlement' || placement.custodyId !== visitor.commission.id) return false
       }
     }
@@ -1394,14 +1415,22 @@ function isItemV2Map(value: unknown): value is Record<string, PersistedItemV2Sta
 
 function isCommissionRewardLoot(game: PersistedGameV3, commission: PersistedVisitorCommission): boolean {
   if (!commission.rewardItemId || commission.outcome !== 'complete') return false
+  const item = game.itemsById[commission.rewardItemId]
   const state = game.itemV2ById[commission.rewardItemId]
   const provenance = state?.provenance
-  if (!provenance) return false
+  if (!item || !provenance) return false
+  let lootTableId: string
+  try {
+    lootTableId = lootTableIdForZone(commission.regionId)
+  } catch {
+    return false
+  }
   return provenance.businessKey === `loot:${commission.id}:reward`
     && provenance.zoneId === commission.regionId
     && provenance.configVersion === LOOT_CONFIG_VERSION
-    && typeof provenance.lootTableId === 'string'
-    && Boolean(provenance.lootTableId)
+    && provenance.lootTableId === lootTableId
+    && provenance.droppedAt === commission.finishesAt
+    && JSON.stringify(state.sealedAffixes ?? []) === JSON.stringify(item.affixes ?? [])
 }
 
 function isServiceJobStateMap(value: unknown): value is Record<string, PersistedServiceJobState> {

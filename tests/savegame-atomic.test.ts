@@ -780,6 +780,67 @@ describe('atomic persisted-game mutation', () => {
     await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
 
+  it.each([
+    ['missing materials', (partial: Record<string, unknown>) => {
+      delete partial.materials
+    }],
+    ['malformed gold', (partial: Record<string, unknown>) => {
+      partial.gold = -1
+    }],
+    ['malformed timestamps', (partial: Record<string, unknown>) => {
+      partial.updatedAt = 'not-a-date'
+    }]
+  ])('rejects historical V2 map absence paired with %s without writing', async (_label, corrupt) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const partial = historicalClaimedRewardFixture() as unknown as Record<string, unknown>
+    corrupt(partial)
+    document = partial as unknown as PersistedGameV3
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(collection.replaceOne).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['loot table', (state: PersistedGameV3['itemV2ById'][string]) => {
+      state.provenance!.lootTableId = 'act1-mid'
+    }],
+    ['drop timestamp', (state: PersistedGameV3['itemV2ById'][string]) => {
+      state.provenance!.droppedAt = '2026-09-15T12:34:56.000Z'
+    }],
+    ['sealed affixes', (state: PersistedGameV3['itemV2ById'][string]) => {
+      state.sealedAffixes = [{ stat: 'attackPower', value: 999 }]
+    }]
+  ])('rejects historical reward metadata with contradictory %s', async (_label, corrupt) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    document = historicalClaimedRewardFixture() as unknown as PersistedGameV3
+    const backfilled = await getPersistedGameV3('atomic-user')
+    const rewardItemId = backfilled.visitRound.slots[0]!.visitor!.commission!.rewardItemId!
+    corrupt(backfilled.itemV2ById[rewardItemId]!)
+    document = backfilled
+    vi.clearAllMocks()
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(collection.replaceOne).not.toHaveBeenCalled()
+  })
+
+  it('accepts a completed historical commission without a reward item id', async () => {
+    const { getPersistedGameV3, isPersistedCanonical } = await import('../server/utils/savegame')
+    const legacyV3 = historicalClaimedRewardFixture()
+    const commission = legacyV3.visitRound.slots[0]!.visitor!.commission!
+    const rewardItemId = commission.rewardItemId!
+    delete commission.rewardItemId
+    legacyV3.expeditionsById[commission.id]!.itemIds = []
+    delete legacyV3.itemsById[rewardItemId]
+    delete legacyV3.itemPlacements[rewardItemId]
+    document = legacyV3 as unknown as PersistedGameV3
+
+    const backfilled = await getPersistedGameV3('atomic-user')
+
+    expect(isPersistedCanonical(backfilled)).toBe(true)
+    expect(backfilled.itemV2ById[rewardItemId]).toBeUndefined()
+    expect(collection.replaceOne).toHaveBeenCalledOnce()
+  })
+
   it('signs equipment capabilities with the effective runtime secret instead of the public dev fallback', async () => {
     const { EquipmentV2Error } = await import('../server/domain/equipment-v2')
     const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
