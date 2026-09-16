@@ -1527,11 +1527,17 @@ function persistRound(
         const loot = rewardItem ? rewardLootForCommission(visitor.commission, previous, generatedItemStates, dependencies) : undefined
         if (loot) {
           const previousPlacement = previous?.itemPlacements[loot.item.id]
+          const claimedFallbackPlacement = previousPlacement
+            && (previousPlacement.ownerKind !== 'caravan' || previousPlacement.custodyKind !== 'stash')
+            ? previousPlacement
+            : undefined
           const alreadyPlaced = placements[loot.item.id]
-          if (visitor.commission.status !== 'claimed' || !alreadyPlaced) {
-            registerItem(items, placements, loot.item, visitor.commission.status === 'claimed' && previousPlacement
-              ? structuredClone(previousPlacement)
-              : { ownerKind: 'visitor', ownerId: visitor.id, custodyKind: 'visitor', custodyId: visitor.id })
+          if (visitor.commission.status !== 'claimed') {
+            registerItem(items, placements, loot.item, {
+              ownerKind: 'visitor', ownerId: visitor.id, custodyKind: 'visitor', custodyId: visitor.id
+            })
+          } else if (!alreadyPlaced && claimedFallbackPlacement) {
+            registerItem(items, placements, loot.item, structuredClone(claimedFallbackPlacement))
           }
         }
         commission = { ...structuredClone(rest), ...(loot ? { rewardItemId: loot.item.id } : {}) }

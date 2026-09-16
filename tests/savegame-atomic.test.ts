@@ -334,6 +334,49 @@ describe('atomic persisted-game mutation', () => {
     expect(isPersistedCanonical(document)).toBe(true)
   })
 
+  it('keeps claimed configured reward sold through the real legacy visitor sale out of stash', async () => {
+    const { mutateSaveGameAtomic, isPersistedCanonical } = await import('../server/utils/savegame')
+    const { sellToVisitor } = await import('../utils/visitor-logic')
+    const claimed = await claimConfiguredReward()
+    const rewardItemId = claimed.rewardItemId
+    const reward = claimed.persisted.itemsById[rewardItemId]!
+    document = claimed.persisted
+
+    await mutateSaveGameAtomic('atomic-user', 'reward-real-legacy-sell', 'reward:real-legacy-sell', claimed.persisted.revision, {}, (save) => {
+      const stashReward = save.stash.find((item) => item.id === rewardItemId)
+      if (!stashReward) throw new Error('Expected claimed reward in public stash')
+      stashReward.identified = true
+      const buyer = {
+        id: 'reward-buyer',
+        name: 'Reward Buyer',
+        class: 'paladin' as const,
+        level: 5,
+        origin: 'Test Market',
+        equipmentSummary: [],
+        state: 'open' as const,
+        budget: 500,
+        initialBudget: 500,
+        acceptedItemTypes: [reward.type],
+        interestedItemTypes: [reward.type],
+        offers: [],
+        buyQuotes: { [rewardItemId]: 123 },
+        trades: [],
+        power: 50,
+        commissionOptions: [],
+        arrivedAt: save.updatedAt
+      }
+      save.visitRound.slots[0] = { id: save.visitRound.slots[0]?.id ?? 'visitor-slot-1', visitor: buyer }
+      sellToVisitor(save, buyer.id, rewardItemId, 'sell-claimed-reward', fixedDeps().now())
+    }, fixedDeps())
+
+    const afterSale = document as PersistedGameV3
+    expect(afterSale.itemPlacements[rewardItemId]).toEqual({
+      ownerKind: 'visitor', ownerId: 'reward-buyer', custodyKind: 'visitor', custodyId: 'reward-buyer'
+    })
+    expect(afterSale.stash).not.toContain(rewardItemId)
+    expect(isPersistedCanonical(document)).toBe(true)
+  })
+
   it('supports boss reward claim identify and imprint replacement from the configured reward', async () => {
     const { mutateEquipmentV2Atomic, isPersistedCanonical } = await import('../server/utils/savegame')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
