@@ -77,10 +77,16 @@ export function invalidateVisitorV2Selection(game: GameView, selection: VisitorV
 }
 
 export function acceptContractPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'contract' }>): AcceptContractPayload {
-  const action = findEnabledAction<AcceptContractAction>(findVisitor(game, selection.visitorId)?.actions, 'accept_contract')
+  const visitor = findVisitor(game, selection.visitorId)
+  const action = findEnabledAction<AcceptContractAction>(visitor?.actions, 'accept_contract')
   const binding = action?.execution.bindings.find((candidate) => candidate.optionId === selection.optionId)
-  if (!action || action.execution.visitorId !== selection.visitorId || !binding) throw new Error('contract_selection_unavailable')
-  if (!isSubset(selection.loanItemIds, binding.eligibleLoanItemIds)) throw new Error('contract_loan_unavailable')
+  const publishedOption = visitor && contractOptions(visitor).some((option) => option.optionId === selection.optionId)
+  if (!visitor || !action || action.targetId !== visitor.visitorId || action.execution.visitorId !== visitor.visitorId || !binding || !publishedOption) {
+    throw new Error('contract_selection_unavailable')
+  }
+  if (!isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !findItem(game, itemId))) {
+    throw new Error('contract_loan_unavailable')
+  }
   return {
     visitorId: action.execution.visitorId,
     optionId: binding.optionId,
@@ -89,8 +95,11 @@ export function acceptContractPayload(game: GameView, selection: Extract<Visitor
 }
 
 export function startExpeditionPayload(game: GameView, visitorId: Id): StartExpeditionPayload {
-  const action = findEnabledAction<StartExpeditionAction>(findVisitor(game, visitorId)?.actions, 'start_expedition')
-  if (!action) throw new Error('start_expedition_unavailable')
+  const visitor = findVisitor(game, visitorId)
+  const action = findEnabledAction<StartExpeditionAction>(visitor?.actions, 'start_expedition')
+  if (!visitor || visitor.state !== 'contracted' || !action || action.targetId !== visitor.visitorId || action.execution.contractId !== visitor.contractId) {
+    throw new Error('start_expedition_unavailable')
+  }
   return { contractId: action.execution.contractId }
 }
 
@@ -103,10 +112,18 @@ export function reconcileGamePayload(game: GameView): Record<string, never> {
 export function confirmSettlementPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'settlement' }>): ConfirmSettlementPayload {
   const settlement = findSettlement(game, selection.settlementId)
   const action = findEnabledAction<ConfirmSettlementAction>(settlement?.actions, 'confirm_settlement')
-  if (!settlement || !action || action.execution.settlementId !== selection.settlementId) throw new Error('settlement_selection_unavailable')
+  if (!settlement || !action || action.targetId !== settlement.settlementId || action.execution.settlementId !== settlement.settlementId) {
+    throw new Error('settlement_selection_unavailable')
+  }
+  if (Object.keys(selection.selectedOptionIds).some((groupId) => !action.execution.groups.some((group) => group.groupId === groupId))) {
+    throw new Error('settlement_option_unavailable')
+  }
   const selectedOptionIds = action.execution.groups.map((group) => {
-    const selected = selection.selectedOptionIds[group.groupId] ?? findChoiceGroup(settlement, group.groupId)?.defaultOptionId
-    if (!selected || !group.eligibleOptionIds.includes(selected)) throw new Error('settlement_option_unavailable')
+    const choiceGroup = findChoiceGroup(settlement, group.groupId)
+    const selected = selection.selectedOptionIds[group.groupId] ?? choiceGroup?.defaultOptionId
+    if (!choiceGroup || !selected || !group.eligibleOptionIds.includes(selected) || !choiceGroup.options.some((option) => option.optionId === selected)) {
+      throw new Error('settlement_option_unavailable')
+    }
     return selected
   })
   return {
@@ -117,12 +134,18 @@ export function confirmSettlementPayload(game: GameView, selection: Extract<Visi
 }
 
 export function assignRecoveryPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'recovery' }>): AssignRecoveryPayload {
-  const action = findEnabledAction<AssignRecoveryAction>(findRecovery(game, selection.recoveryId)?.actions, 'assign_recovery')
+  const recovery = findRecovery(game, selection.recoveryId)
+  const action = findEnabledAction<AssignRecoveryAction>(recovery?.actions, 'assign_recovery')
   const binding = action?.execution.bindings.find((candidate) =>
     candidate.optionId === selection.optionId && candidate.visitorId === selection.visitorId
   )
-  if (!action || action.execution.recoveryId !== selection.recoveryId || !binding) throw new Error('recovery_selection_unavailable')
-  if (!isSubset(selection.loanItemIds, binding.eligibleLoanItemIds)) throw new Error('recovery_loan_unavailable')
+  const publishedOption = recovery?.state === 'open' && recovery.options.some((option) => option.optionId === selection.optionId)
+  if (!recovery || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId || !binding || !publishedOption || !findVisitor(game, selection.visitorId)) {
+    throw new Error('recovery_selection_unavailable')
+  }
+  if (!isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !findItem(game, itemId))) {
+    throw new Error('recovery_loan_unavailable')
+  }
   return {
     recoveryId: action.execution.recoveryId,
     visitorId: binding.visitorId,
@@ -132,8 +155,11 @@ export function assignRecoveryPayload(game: GameView, selection: Extract<Visitor
 }
 
 export function abandonRecoveryPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'abandon_recovery' }>): AbandonRecoveryPayload {
-  const action = findEnabledAction<AbandonRecoveryAction>(findRecovery(game, selection.recoveryId)?.actions, 'abandon_recovery')
-  if (!action || action.execution.recoveryId !== selection.recoveryId) throw new Error('abandon_recovery_unavailable')
+  const recovery = findRecovery(game, selection.recoveryId)
+  const action = findEnabledAction<AbandonRecoveryAction>(recovery?.actions, 'abandon_recovery')
+  if (!recovery || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId) {
+    throw new Error('abandon_recovery_unavailable')
+  }
   if (action.execution.acknowledgement.acknowledgementId !== selection.acknowledgementId) throw new Error('recovery_acknowledgement_unavailable')
   return {
     recoveryId: action.execution.recoveryId,
@@ -183,6 +209,16 @@ function canAbandonRecovery(game: GameView, selection: Extract<VisitorV2Selectio
 
 function findVisitor(game: GameView, visitorId: Id): VisitorView | undefined {
   return game.visitors.find((visitor) => visitor.visitorId === visitorId)
+}
+
+function findItem(game: GameView, itemId: Id) {
+  return game.items.find((item) => item.itemId === itemId)
+}
+
+function contractOptions(visitor: VisitorView) {
+  if (visitor.state === 'available') return visitor.contractOptions
+  if (visitor.state === 'negotiating') return visitor.options
+  return []
 }
 
 function findSettlement(game: GameView, settlementId: Id): SettlementView | undefined {

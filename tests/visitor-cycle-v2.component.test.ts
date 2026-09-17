@@ -5,10 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import fixtures from '../contracts/v2-etapa0-3/fixtures.json'
-import type { GameView } from '../shared/types/v2-game-view'
+import type { GameView, VisitorView } from '../shared/types/v2-game-view'
 import VisitorCycleV2 from '../components/VisitorCycleV2.vue'
 
 const cases = fixtures.integratedPositiveCases as Array<{ id: string, value: GameView }>
+const retainedCases = fixtures.retainedPositiveCases as Array<{ id: string, value: unknown }>
 
 function fixture(id: string): GameView {
   const match = cases.find((candidate) => candidate.id === id)
@@ -65,6 +66,23 @@ describe('VisitorCycleV2', () => {
     await abandonButton.trigger('click')
     expect(recovery.emitted('assignRecovery')?.[0]).toEqual([{ kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: [] }])
     expect(recovery.emitted('abandonRecovery')?.[0]).toEqual([{ kind: 'abandon_recovery', recoveryId: 'r1', acknowledgementId: 'ack-r1' }])
+  })
+
+  it('renders the published negotiating option label and emits its exact selection', async () => {
+    const game = fixture('integrated-contract')
+    const available = game.visitors[0]
+    const retained = retainedCases.find((candidate) => candidate.id === 'visitor-negotiating')
+    if (!available || !retained) throw new Error('Expected contract and negotiating fixtures')
+    const negotiating = structuredClone(retained.value) as VisitorView
+    negotiating.actions = structuredClone(available.actions)
+    game.visitors = [negotiating]
+
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    expect(wrapper.get('[data-testid="visitor-negotiating"] option').text()).toBe('Reparto estándar')
+    await wrapper.get('[data-testid="visitor-negotiating"] button').trigger('click')
+    expect(wrapper.emitted('acceptContract')).toEqual([[
+      { kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: [] }
+    ]])
   })
 
   it('requires accepting the new acknowledgement after a frontend-only revision change', async () => {

@@ -168,8 +168,12 @@ function itemLabel(itemId: Id): string {
 }
 
 function contractOptionLabel(visitor: VisitorView, optionId: Id): string {
-  if (!('contractOptions' in visitor)) return optionId
-  return label(visitor.contractOptions.find((option) => option.optionId === optionId)?.label ?? { key: optionId, fallback: optionId })
+  const options = visitor.state === 'available'
+    ? visitor.contractOptions
+    : visitor.state === 'negotiating'
+      ? visitor.options
+      : []
+  return label(options.find((option) => option.optionId === optionId)?.label ?? { key: optionId, fallback: optionId })
 }
 
 function toggleLoan(target: Record<Id, Id[]>, ownerId: Id, itemId: Id, checked: boolean) {
