@@ -120,6 +120,8 @@ export interface SaveGame {
   updatedAt: string
   /** Server-only context; stripped from every public response. */
   _effectiveCapacityUsed?: number
+  /** Server-only V2 lifecycle gate used by legacy trade rules during the transition. */
+  _v2VisitorStates?: Record<string, string>
 }
 
 export interface User {

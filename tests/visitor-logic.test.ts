@@ -443,6 +443,40 @@ describe('visitor trade and commission loop', () => {
     expect(hasSaleAction(save)).toBe(true)
   })
 
+  it('does not let the legacy visitor flow dismiss or advance a V2-busy visitor', () => {
+    const save = createSaveGame('v2-busy-visitor')
+    const visitor = visitors(save)[0]!
+    visitor.state = 'commissioned'
+    visitor.commission = {
+      ...visitor.commissionOptions[0]!,
+      id: 'legacy-commission',
+      status: 'active',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      finishesAt: '2026-01-01T00:01:00.000Z',
+      outcomeRoll: 0
+    }
+    save._v2VisitorStates = { [visitor.id]: 'away' }
+
+    refreshVisitRound(save, new Date('2026-01-01T00:02:00.000Z'), () => 0, { resolveLegacyCommissions: false })
+
+    expect(visitor.state).toBe('commissioned')
+    expect(() => dismissVisitor(save, visitor.id, new Date('2026-01-01T00:02:00.000Z'), () => 0))
+      .toThrow('Visitor cannot be dismissed while contracted or away')
+  })
+
+  it('does not materialize a due arrival as a side effect of legacy dismissal', () => {
+    const save = createSaveGame('dismiss-with-due-slot')
+    const dueSlot = save.visitRound.slots[0]!
+    const dismissed = save.visitRound.slots[1]!.visitor!
+    delete dueSlot.visitor
+    dueSlot.nextArrivalCheckAt = '2026-01-01T00:00:00.000Z'
+
+    dismissVisitor(save, dismissed.id, new Date('2026-01-01T00:01:00.000Z'), () => 0)
+
+    expect(dueSlot.visitor).toBeUndefined()
+    expect(dueSlot.nextArrivalCheckAt).toBe('2026-01-01T00:00:00.000Z')
+  })
+
   it('offers exactly two commissions with distinct probability, duration, reward, and risk', () => {
     const save = createSaveGame('commission-options')
     const options = visitors(save)[0]!.commissionOptions

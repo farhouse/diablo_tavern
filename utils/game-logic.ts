@@ -1,4 +1,6 @@
 import type { AppraisalJob, CaravanUpgradeId, ItemRarity, SaveGame } from '~/types/game'
+import type { UnavailableReason } from '~/shared/types/v2-game-view'
+import { V2DomainRuleError } from '~/shared/errors/v2-domain'
 import { appraiserQueueSizes, caravanUpgradeCosts, quests, stashCapacities } from '~/utils/game-data'
 import { createStarterItems, createVisitRound, normalizeVisitorDetails, refreshVisitRound } from '~/utils/visitor-logic'
 
@@ -90,7 +92,7 @@ export function getMaxUpgradeLevel(upgradeId: CaravanUpgradeId): number {
 export function upgradeCaravan(save: SaveGame, upgradeId: CaravanUpgradeId, now = new Date()): SaveGame {
   save = normalizeSaveGame(save, { refreshVisitors: false })
   const currentLevel = save.caravan.upgrades[upgradeId]
-  if (currentLevel >= getMaxUpgradeLevel(upgradeId)) throw gameError('Upgrade is already at max level')
+  if (currentLevel >= getMaxUpgradeLevel(upgradeId)) throw gameError('Upgrade is already at max level', 'TERMINAL_ENTITY')
   const cost = getUpgradeCost(upgradeId, currentLevel)
   if (!cost) throw gameError('Upgrade cost not found')
   if (save.gold < cost.gold) throw gameError('Not enough gold')
@@ -105,15 +107,15 @@ export function upgradeCaravan(save: SaveGame, upgradeId: CaravanUpgradeId, now 
 export function startAppraisal(save: SaveGame, itemId: string, now = new Date(), uuid = randomId): SaveGame {
   save = normalizeSaveGame(save, { refreshVisitors: false })
   const queueSize = getAppraiserQueueSize(save)
-  if (queueSize <= 0) throw gameError('Appraiser not available. Upgrade your caravan.')
+  if (queueSize <= 0) throw gameError('Appraiser not available. Upgrade your caravan.', 'SERVICE_LOCKED')
   const item = save.stash.find((entry) => entry.id === itemId)
-  if (!item) throw gameError('Item not found in stash')
-  if (item.identified) throw gameError('Item is already identified')
-  if (save.caravan.services.appraiserQueue.some((job) => job.itemId === itemId)) throw gameError('Item is already in the appraiser queue')
-  if (save.caravan.services.appraiserQueue.length >= queueSize) throw gameError('Appraiser queue is full')
+  if (!item) throw gameError('Item not found in stash', 'ITEM_NOT_OWNED')
+  if (item.identified) throw gameError('Item is already identified', 'OPTION_STALE')
+  if (save.caravan.services.appraiserQueue.some((job) => job.itemId === itemId)) throw gameError('Item is already in the appraiser queue', 'ITEM_IN_USE')
+  if (save.caravan.services.appraiserQueue.length >= queueSize) throw gameError('Appraiser queue is full', 'CAPACITY_FULL')
 
   const durationMinutes = item.rarity === 'magic' ? 5 : item.rarity === 'rare' ? 15 : item.rarity === 'unique' ? 30 : 0
-  if (durationMinutes <= 0) throw gameError('Item does not need appraisal')
+  if (durationMinutes <= 0) throw gameError('Item does not need appraisal', 'OPTION_STALE')
   const job: AppraisalJob = {
     id: uuid(),
     itemId,
@@ -142,9 +144,9 @@ export function completeAppraisalQueue(save: SaveGame, now = new Date(), random 
 export function identifyItem(save: SaveGame, itemId: string, random = Math.random, now = new Date()): SaveGame {
   save = normalizeSaveGame(save, { refreshVisitors: false })
   const item = save.stash.find((entry) => entry.id === itemId)
-  if (!item) throw gameError('Item not found in stash')
+  if (!item) throw gameError('Item not found in stash', 'ITEM_NOT_OWNED')
   if (save.caravan.services.appraiserQueue.some((job) => job.itemId === itemId)) {
-    throw gameError('Item is already in the appraiser queue')
+    throw gameError('Item is already in the appraiser queue', 'ITEM_IN_USE')
   }
   if (item.identified) return save
   const cost = identifyCost(item.rarity)
@@ -197,8 +199,10 @@ function randomId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
-function gameError(message: string): Error {
-  const error = new Error(message)
-  error.name = 'GameDomainError'
-  return error
+class GameDomainError extends V2DomainRuleError {
+  override name = 'GameDomainError'
+}
+
+function gameError(message: string, unavailableReason?: UnavailableReason): GameDomainError {
+  return new GameDomainError(message, unavailableReason)
 }

@@ -1,4 +1,6 @@
 import type { PersistedGameV3, PersistedItemPlacement } from '~/server/utils/savegame'
+import type { UnavailableReason } from '~/shared/types/v2-game-view'
+import { V2DomainRuleError } from '~/shared/errors/v2-domain'
 
 export type ItemTransitionOperation = 'sell' | 'loan' | 'service' | 'recover' | 'return' | 'dismantle'
 
@@ -15,7 +17,7 @@ export interface ItemTransitionEffect {
   to: PersistedItemPlacement
 }
 
-export class ItemTransitionError extends Error {
+export class ItemTransitionError extends V2DomainRuleError {
   override name = 'ItemTransitionError'
 }
 
@@ -29,7 +31,7 @@ export function applyItemTransition(
 ): { game: PersistedGameV3; effect: ItemTransitionEffect } {
   const item = current.itemsById[command.itemId]
   const from = current.itemPlacements[command.itemId]
-  if (!item || !from) throw transitionError('Item does not exist')
+  if (!item || !from) throw transitionError('Item does not exist', 'ITEM_NOT_OWNED')
   if (!command.targetId) throw transitionError('A targetId is required')
   if (command.operation !== 'return') requireAuthoritativeTarget(current, command)
 
@@ -40,8 +42,8 @@ export function applyItemTransition(
   const materialDeltas: Record<string, number> = {}
 
   if (command.operation === 'return') {
-    if (from.ownerKind !== 'caravan' || from.custodyKind === 'stash') throw transitionError('Only an item away from stash can return')
-    if (from.custodyId !== command.targetId) throw transitionError('Return target does not match current authoritative custody')
+    if (from.ownerKind !== 'caravan' || from.custodyKind === 'stash') throw transitionError('Only an item away from stash can return', 'ITEM_NOT_OWNED')
+    if (from.custodyId !== command.targetId) throw transitionError('Return target does not match current authoritative custody', 'OPTION_STALE')
     to = { ownerKind: 'caravan', custodyKind: 'stash' }
     if (!game.stash.includes(command.itemId)) game.stash.push(command.itemId)
   } else {
@@ -49,7 +51,7 @@ export function applyItemTransition(
     game.stash = game.stash.filter((itemId) => itemId !== command.itemId)
     switch (command.operation) {
       case 'sell':
-        if (!hasVisitor(game, command.targetId)) throw transitionError('Target visitor does not exist')
+        if (!hasVisitor(game, command.targetId)) throw transitionError('Target visitor does not exist', 'VISITOR_NOT_AVAILABLE')
         to = { ownerKind: 'visitor', ownerId: command.targetId, custodyKind: 'visitor', custodyId: command.targetId }
         goldDelta = Math.max(0, item.value)
         game.gold += goldDelta
@@ -77,7 +79,7 @@ export function applyItemTransition(
 
   game.itemPlacements[command.itemId] = to
   addToCustodyContainer(game, command.itemId, to)
-  if (effectiveCapacityUsed(game) > game.stashLimit) throw transitionError('Caravan capacity exceeded')
+  if (effectiveCapacityUsed(game) > game.stashLimit) throw transitionError('Caravan capacity exceeded', 'CAPACITY_FULL')
   return { game, effect: { goldDelta, materialDeltas, from: structuredClone(from), to: structuredClone(to) } }
 }
 
@@ -115,7 +117,7 @@ function addToCustodyContainer(game: PersistedGameV3, itemId: string, placement:
   const containers = maps[placement.custodyKind as keyof typeof maps]
   const id = placement.custodyId!
   const existing = containers[id]
-  if (!existing) throw transitionError(`Authoritative ${placement.custodyKind} target does not exist`)
+  if (!existing) throw transitionError(`Authoritative ${placement.custodyKind} target does not exist`, 'OPTION_STALE')
   existing.itemIds.push(itemId)
 }
 
@@ -128,19 +130,22 @@ function requireAuthoritativeTarget(game: PersistedGameV3, command: ItemTransiti
   const containers = maps[command.operation as keyof typeof maps]
   const target = containers?.[command.targetId]
   if (containers && !target) {
-    throw transitionError(`Authoritative ${command.operation} target does not exist`)
+    throw transitionError(`Authoritative ${command.operation} target does not exist`, 'OPTION_STALE')
   }
   if (command.operation === 'service' && target!.itemIds.length > 0) {
-    throw transitionError('Authoritative service target already has an item')
+    throw transitionError('Authoritative service target already has an item', 'ITEM_IN_USE')
   }
 }
 
 function requireAvailableInStash(placement: PersistedItemPlacement): void {
   if (placement.ownerKind !== 'caravan' || placement.custodyKind !== 'stash') {
-    throw transitionError('Item is not available in caravan stash')
+    throw transitionError(
+      'Item is not available in caravan stash',
+      placement.ownerKind === 'caravan' ? 'ITEM_IN_USE' : 'ITEM_NOT_OWNED'
+    )
   }
 }
 
-function transitionError(message: string): ItemTransitionError {
-  return new ItemTransitionError(message)
+function transitionError(message: string, unavailableReason?: UnavailableReason): ItemTransitionError {
+  return new ItemTransitionError(message, unavailableReason)
 }
