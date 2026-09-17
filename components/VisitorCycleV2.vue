@@ -170,7 +170,8 @@ function recoveryBindingKey(binding: { visitorId: Id, optionId: Id } | undefined
 }
 
 function itemLabel(itemId: Id): string {
-  return label(props.game?.items.find((item) => item.itemId === itemId)?.name ?? { key: itemId, fallback: itemId })
+  const item = props.game?.items.find((candidate) => candidate.itemId === itemId)
+  return item ? label(item.name) : 'Objeto no disponible'
 }
 
 function contractOptionLabel(visitor: VisitorView, optionId: Id): string {
@@ -179,7 +180,27 @@ function contractOptionLabel(visitor: VisitorView, optionId: Id): string {
     : visitor.state === 'negotiating'
       ? visitor.options
       : []
-  return label(options.find((option) => option.optionId === optionId)?.label ?? { key: optionId, fallback: optionId })
+  const option = options.find((candidate) => candidate.optionId === optionId)
+  return option ? label(option.label) : 'Opción no disponible'
+}
+
+function visitorLabel(visitorId: Id): string {
+  const visitor = props.game?.visitors.find((candidate) => candidate.visitorId === visitorId)
+  return visitor ? label(visitor.name) : 'Visitante no disponible'
+}
+
+function expeditionTitle(visitorId: Id): string {
+  return `Expedición de ${visitorLabel(visitorId)}`
+}
+
+function settlementTitle(settlement: SettlementView): string {
+  const expedition = props.game?.expeditions.find((candidate) => candidate.expeditionId === settlement.expeditionId)
+  return expedition ? `Resolución de ${visitorLabel(expedition.visitorId)}` : 'Resolución de expedición'
+}
+
+function recoveryTitle(recovery: RecoveryView): string {
+  const names = recovery.itemIds.map(itemLabel)
+  return names.length ? `Recuperación de ${names.join(', ')}` : 'Recuperación pendiente'
 }
 
 function toggleLoan(target: Record<Id, Id[]>, ownerId: Id, itemId: Id, checked: boolean) {
@@ -204,8 +225,8 @@ function actionReason(actions: readonly ActionAvailability[], actionName: Action
   return enabledAction(actions, actionName) ? '' : 'Acción no publicada en el snapshot.'
 }
 
-function reasonId(prefix: string, id: Id): string | undefined {
-  return `${prefix}-reason-${id}`
+function internalId(scope: string, ...indices: number[]): string {
+  return `v2-${scope}-${indices.join('-')}`
 }
 
 function accept(visitor: VisitorView) {
@@ -374,7 +395,7 @@ onBeforeUnmount(() => {
     <div v-else class="v2-cycle__body" data-testid="v2-ready">
       <section class="v2-cycle__panel" aria-labelledby="v2-visitors-title">
         <h3 id="v2-visitors-title">Visitantes</h3>
-        <article v-for="visitor in game.visitors" :key="visitor.visitorId" class="v2-cycle__row" :data-testid="`visitor-${visitor.state}`">
+        <article v-for="(visitor, visitorIndex) in game.visitors" :key="visitor.visitorId" class="v2-cycle__row" :data-testid="`visitor-${visitor.state}`">
           <div>
             <strong>{{ label(visitor.name) }}</strong>
             <p class="v2-cycle__muted">Estado: {{ visitor.state }}</p>
@@ -388,7 +409,7 @@ onBeforeUnmount(() => {
               class="v2-cycle__button"
               type="button"
               :disabled="locked || !enabledAction(actionsOf(visitor), 'accept_contract')"
-              :aria-describedby="actionReason(actionsOf(visitor), 'accept_contract') ? reasonId('accept', visitor.visitorId) : undefined"
+              :aria-describedby="actionReason(actionsOf(visitor), 'accept_contract') ? internalId('accept-reason', visitorIndex) : undefined"
               @click="accept(visitor)"
             >
               Aceptar contrato
@@ -430,7 +451,7 @@ onBeforeUnmount(() => {
             </fieldset>
             <span
               v-if="actionReason(actionsOf(visitor), 'accept_contract')"
-              :id="reasonId('accept', visitor.visitorId)"
+              :id="internalId('accept-reason', visitorIndex)"
               class="v2-cycle__reason"
             >
               {{ actionReason(actionsOf(visitor), 'accept_contract') }}
@@ -440,14 +461,14 @@ onBeforeUnmount(() => {
               class="v2-cycle__button"
               type="button"
               :disabled="locked || !enabledAction(actionsOf(visitor), 'start_expedition')"
-              :aria-describedby="actionReason(actionsOf(visitor), 'start_expedition') ? reasonId('start', visitor.visitorId) : undefined"
+              :aria-describedby="actionReason(actionsOf(visitor), 'start_expedition') ? internalId('start-reason', visitorIndex) : undefined"
               @click="start(visitor)"
             >
               Iniciar expedición
             </button>
             <span
               v-if="visitor.state === 'contracted' && actionReason(actionsOf(visitor), 'start_expedition')"
-              :id="reasonId('start', visitor.visitorId)"
+              :id="internalId('start-reason', visitorIndex)"
               class="v2-cycle__reason"
             >
               {{ actionReason(actionsOf(visitor), 'start_expedition') }}
@@ -460,7 +481,7 @@ onBeforeUnmount(() => {
         <h3 id="v2-expeditions-title">Expediciones</h3>
         <article v-for="expedition in game.expeditions" :key="expedition.expeditionId" class="v2-cycle__row" :data-testid="`expedition-${expedition.state}`">
           <div>
-            <strong>{{ expedition.expeditionId }}</strong>
+            <strong>{{ expeditionTitle(expedition.visitorId) }}</strong>
             <p class="v2-cycle__muted">Estado: {{ expedition.state }}</p>
             <p v-if="expedition.state === 'active'" class="v2-cycle__muted">
               {{ expedition.currentHp }}/{{ expedition.maxHp }} vida. El reloj es informativo; sólo el servidor avanza estado.
@@ -474,15 +495,15 @@ onBeforeUnmount(() => {
 
       <section class="v2-cycle__panel" aria-labelledby="v2-settlements-title">
         <h3 id="v2-settlements-title">Settlement</h3>
-        <article v-for="settlement in game.settlements" :key="settlement.settlementId" class="v2-cycle__row" :data-testid="`settlement-${settlement.state}`">
+        <article v-for="(settlement, settlementIndex) in game.settlements" :key="settlement.settlementId" class="v2-cycle__row" :data-testid="`settlement-${settlement.state}`">
           <div>
-            <strong>{{ settlement.settlementId }}</strong>
+            <strong>{{ settlementTitle(settlement) }}</strong>
             <p class="v2-cycle__muted">Estado: {{ settlement.state }}</p>
             <p v-if="'gold' in settlement" class="v2-cycle__muted">
               Oro bruto {{ settlement.gold.gross }}, caravana {{ settlement.gold.caravan }}, visitante {{ settlement.gold.visitor }}.
             </p>
             <fieldset
-              v-for="group in 'choiceGroups' in settlement ? settlement.choiceGroups : []"
+              v-for="(group, groupIndex) in 'choiceGroups' in settlement ? settlement.choiceGroups : []"
               :key="group.groupId"
               class="v2-cycle__fieldset"
               :disabled="locked"
@@ -495,7 +516,7 @@ onBeforeUnmount(() => {
               >
                 <input
                   type="radio"
-                  :name="`settlement-${settlement.settlementId}-${group.groupId}`"
+                  :name="internalId('settlement-choice', settlementIndex, groupIndex)"
                   :checked="selectedSettlementOption(settlement, group.groupId) === option.optionId"
                   :disabled="!settlementAction(settlement)?.execution.groups.find((candidate) => candidate.groupId === group.groupId)?.eligibleOptionIds.includes(option.optionId)"
                   @change="setSettlementChoice(settlement.settlementId, group.groupId, option.optionId)"
@@ -510,14 +531,14 @@ onBeforeUnmount(() => {
             class="v2-cycle__button"
             type="button"
             :disabled="locked || !settlementAction(settlement)"
-            :aria-describedby="actionReason(actionsOf(settlement), 'confirm_settlement') ? reasonId('settlement', settlement.settlementId) : undefined"
+            :aria-describedby="actionReason(actionsOf(settlement), 'confirm_settlement') ? internalId('settlement-reason', settlementIndex) : undefined"
             @click="confirm(settlement)"
           >
             Confirmar preview
           </button>
           <span
             v-if="settlement.state === 'preview_ready' && actionReason(actionsOf(settlement), 'confirm_settlement')"
-            :id="reasonId('settlement', settlement.settlementId)"
+            :id="internalId('settlement-reason', settlementIndex)"
             class="v2-cycle__reason"
           >
             {{ actionReason(actionsOf(settlement), 'confirm_settlement') }}
@@ -530,12 +551,12 @@ onBeforeUnmount(() => {
 
       <section class="v2-cycle__panel" aria-labelledby="v2-recoveries-title">
         <h3 id="v2-recoveries-title">Recovery</h3>
-        <article v-for="recovery in game.recoveries" :key="recovery.recoveryId" class="v2-cycle__row" :data-testid="`recovery-${recovery.state}`">
+        <article v-for="(recovery, recoveryIndex) in game.recoveries" :key="recovery.recoveryId" class="v2-cycle__row" :data-testid="`recovery-${recovery.state}`">
           <div>
-            <strong>{{ recovery.recoveryId }}</strong>
-            <p class="v2-cycle__muted">Estado: {{ recovery.state }} · objetos {{ recovery.itemIds.join(', ') }}</p>
+            <strong>{{ recoveryTitle(recovery) }}</strong>
+            <p class="v2-cycle__muted">Estado: {{ recovery.state }}</p>
             <p v-if="recovery.state === 'assigned'" class="v2-cycle__muted">
-              Asignado a {{ recovery.assignedVisitorId }} hasta {{ recovery.completesAt }}.
+              Asignado a {{ visitorLabel(recovery.assignedVisitorId) }} hasta {{ recovery.completesAt }}.
             </p>
             <p v-if="recovery.state === 'failed' || recovery.state === 'abandoned'" class="v2-cycle__muted">
               {{ label(recovery.consequence.text) }}
@@ -546,7 +567,7 @@ onBeforeUnmount(() => {
               class="v2-cycle__button"
               type="button"
               :disabled="locked || !enabledAction(actionsOf(recovery), 'assign_recovery')"
-              :aria-describedby="actionReason(actionsOf(recovery), 'assign_recovery') ? reasonId('assign', recovery.recoveryId) : undefined"
+              :aria-describedby="actionReason(actionsOf(recovery), 'assign_recovery') ? internalId('assign-reason', recoveryIndex) : undefined"
               @click="assign(recovery)"
             >
               Asignar recovery
@@ -588,7 +609,7 @@ onBeforeUnmount(() => {
             </fieldset>
             <span
               v-if="actionReason(actionsOf(recovery), 'assign_recovery')"
-              :id="reasonId('assign', recovery.recoveryId)"
+              :id="internalId('assign-reason', recoveryIndex)"
               class="v2-cycle__reason"
             >
               {{ actionReason(actionsOf(recovery), 'assign_recovery') }}
@@ -596,7 +617,7 @@ onBeforeUnmount(() => {
             <label
               v-if="abandonAction(recovery)"
               class="v2-cycle__check"
-              :id="`abandon-ack-${recovery.recoveryId}`"
+              :id="internalId('abandon-ack', recoveryIndex)"
             >
               <input
                 v-model="abandonConfirmations[recovery.recoveryId]"
@@ -610,8 +631,8 @@ onBeforeUnmount(() => {
               type="button"
               :disabled="locked || !abandonAction(recovery) || !abandonConfirmations[recovery.recoveryId]"
               :aria-describedby="[
-                actionReason(actionsOf(recovery), 'abandon_recovery') ? reasonId('abandon', recovery.recoveryId) : '',
-                abandonAction(recovery) ? `abandon-ack-${recovery.recoveryId}` : ''
+                actionReason(actionsOf(recovery), 'abandon_recovery') ? internalId('abandon-reason', recoveryIndex) : '',
+                abandonAction(recovery) ? internalId('abandon-ack', recoveryIndex) : ''
               ].filter(Boolean).join(' ') || undefined"
               @click="abandon(recovery)"
             >
@@ -619,7 +640,7 @@ onBeforeUnmount(() => {
             </button>
             <span
               v-if="actionReason(actionsOf(recovery), 'abandon_recovery')"
-              :id="reasonId('abandon', recovery.recoveryId)"
+              :id="internalId('abandon-reason', recoveryIndex)"
               class="v2-cycle__reason"
             >
               {{ actionReason(actionsOf(recovery), 'abandon_recovery') }}

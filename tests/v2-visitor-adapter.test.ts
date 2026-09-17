@@ -178,6 +178,84 @@ describe('V2 visitor adapter', () => {
     })).toThrow('recovery_loan_unavailable')
   })
 
+  it('rejects expired contract, settlement, recovery and acknowledgement tokens and invalidates stale selections', () => {
+    const expiredContract = negativeFixture('expired-contract-binding')
+    const contractSelection: VisitorV2Selection = { kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: [] }
+    expect(() => acceptContractPayload(expiredContract, contractSelection)).toThrow('contract_selection_unavailable')
+    expect(invalidateVisitorV2Selection(expiredContract, contractSelection)).toBeNull()
+
+    const settlement = fixture('integrated-settlement')
+    const settlementView = settlement.settlements[0]
+    const settlementAction = settlementView?.actions.find((candidate) => candidate.action === 'confirm_settlement' && candidate.enabled)
+    if (!settlementView || !('expiresAt' in settlementView) || !settlementAction || settlementAction.action !== 'confirm_settlement' || !settlementAction.enabled) throw new Error('Expected settlement preview')
+    settlementView.expiresAt = settlement.serverNow
+    settlementAction.execution.expiresAt = settlement.serverNow
+    expect(() => confirmSettlementPayload(settlement, {
+      kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' }
+    })).toThrow('settlement_selection_unavailable')
+
+    const recovery = fixture('integrated-recovery')
+    const recoveryView = recovery.recoveries[0]
+    const assign = recoveryView?.actions.find((candidate) => candidate.action === 'assign_recovery' && candidate.enabled)
+    const abandon = recoveryView?.actions.find((candidate) => candidate.action === 'abandon_recovery' && candidate.enabled)
+    if (!assign || assign.action !== 'assign_recovery' || !assign.enabled || !abandon || abandon.action !== 'abandon_recovery' || !abandon.enabled) throw new Error('Expected recovery actions')
+    assign.execution.bindings[0]!.expiresAt = recovery.serverNow
+    expect(() => assignRecoveryPayload(recovery, {
+      kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: []
+    })).toThrow('recovery_selection_unavailable')
+
+    const expiredAcknowledgement = negativeFixture('expired-acknowledgement').items[0]?.actions
+      .find((candidate) => candidate.action === 'dismantle_item' && candidate.enabled)
+    if (!expiredAcknowledgement || expiredAcknowledgement.action !== 'dismantle_item' || !expiredAcknowledgement.enabled) throw new Error('Expected normative expired acknowledgement')
+    abandon.execution.acknowledgement.expiresAt = expiredAcknowledgement.execution.options[0]!.acknowledgement.expiresAt
+    expect(() => abandonRecoveryPayload(recovery, {
+      kind: 'abandon_recovery', recoveryId: 'r1', acknowledgementId: 'ack-r1'
+    })).toThrow('recovery_acknowledgement_unavailable')
+  })
+
+  it('requires eligible recovery visitors, stash-owned caravan loans and unambiguous bindings', () => {
+    const ineligibleVisitor = fixture('integrated-recovery')
+    const visitor = ineligibleVisitor.visitors[0]
+    if (!visitor) throw new Error('Expected visitor')
+    Object.assign(visitor, { state: 'contracted', contractId: 'contract-1' })
+    expect(() => assignRecoveryPayload(ineligibleVisitor, {
+      kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: []
+    })).toThrow('recovery_selection_unavailable')
+
+    for (const [owner, custody] of [
+      [{ kind: 'visitor', visitorId: 'v1' }, { kind: 'visitor', visitorId: 'v1' }],
+      [{ kind: 'caravan' }, { kind: 'recovery', recoveryId: 'r1' }]
+    ] as const) {
+      const game = fixture('integrated-contract')
+      Object.assign(game.items[0]!, { owner, custody })
+      expect(() => acceptContractPayload(game, {
+        kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1']
+      })).toThrow('contract_loan_unavailable')
+    }
+
+    const validRecoveryLoan = fixture('integrated-recovery')
+    const recoveryAction = validRecoveryLoan.recoveries[0]?.actions.find((candidate) => candidate.action === 'assign_recovery' && candidate.enabled)
+    if (!recoveryAction || recoveryAction.action !== 'assign_recovery' || !recoveryAction.enabled) throw new Error('Expected recovery action')
+    recoveryAction.execution.bindings[0]!.eligibleLoanItemIds = ['i4']
+    Object.assign(validRecoveryLoan.items[0]!, { owner: { kind: 'caravan' }, custody: { kind: 'stash' } })
+    expect(assignRecoveryPayload(validRecoveryLoan, {
+      kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: ['i4']
+    })).toEqual({ recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: ['i4'] })
+
+    const duplicateContract = fixture('integrated-contract')
+    const accept = duplicateContract.visitors[0]?.actions.find((candidate) => candidate.action === 'accept_contract' && candidate.enabled)
+    if (!accept || accept.action !== 'accept_contract' || !accept.enabled) throw new Error('Expected contract action')
+    accept.execution.bindings.push(structuredClone(accept.execution.bindings[0]!))
+    expect(() => acceptContractPayload(duplicateContract, {
+      kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: []
+    })).toThrow('contract_selection_unavailable')
+
+    recoveryAction.execution.bindings.push(structuredClone(recoveryAction.execution.bindings[0]!))
+    expect(() => assignRecoveryPayload(validRecoveryLoan, {
+      kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: []
+    })).toThrow('recovery_selection_unavailable')
+  })
+
   it.each([
     {
       id: 'contract',

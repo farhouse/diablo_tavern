@@ -79,12 +79,13 @@ export function invalidateVisitorV2Selection(game: GameView, selection: VisitorV
 export function acceptContractPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'contract' }>): AcceptContractPayload {
   const visitor = findVisitor(game, selection.visitorId)
   const action = findEnabledAction<AcceptContractAction>(visitor?.actions, 'accept_contract')
-  const binding = action?.execution.bindings.find((candidate) => candidate.optionId === selection.optionId)
+  const bindings = action?.execution.bindings.filter((candidate) => candidate.optionId === selection.optionId) ?? []
+  const binding = bindings.length === 1 ? bindings[0] : undefined
   const publishedOption = visitor && contractOptions(visitor).some((option) => option.optionId === selection.optionId)
-  if (!visitor || !action || action.targetId !== visitor.visitorId || action.execution.visitorId !== visitor.visitorId || !binding || !publishedOption) {
+  if (!visitor || !action || action.targetId !== visitor.visitorId || action.execution.visitorId !== visitor.visitorId || !binding || !publishedOption || !isFresh(binding.expiresAt, game.serverNow)) {
     throw new Error('contract_selection_unavailable')
   }
-  if (hasDuplicates(selection.loanItemIds) || !isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !findItem(game, itemId))) {
+  if (hasDuplicates(selection.loanItemIds) || !isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !isLoanableItem(game, itemId))) {
     throw new Error('contract_loan_unavailable')
   }
   return {
@@ -120,6 +121,7 @@ export function confirmSettlementPayload(game: GameView, selection: Extract<Visi
     || action.execution.settlementId !== settlement.settlementId
     || action.execution.previewVersion !== settlement.previewVersion
     || action.execution.expiresAt !== settlement.expiresAt
+    || !isFresh(action.execution.expiresAt, game.serverNow)
     || !hasSameUniqueIds(action.execution.groups.map((group) => group.groupId), settlement.choiceGroups.map((group) => group.groupId))
   ) {
     throw new Error('settlement_selection_unavailable')
@@ -145,14 +147,16 @@ export function confirmSettlementPayload(game: GameView, selection: Extract<Visi
 export function assignRecoveryPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'recovery' }>): AssignRecoveryPayload {
   const recovery = findRecovery(game, selection.recoveryId)
   const action = findEnabledAction<AssignRecoveryAction>(recovery?.actions, 'assign_recovery')
-  const binding = action?.execution.bindings.find((candidate) =>
+  const bindings = action?.execution.bindings.filter((candidate) =>
     candidate.optionId === selection.optionId && candidate.visitorId === selection.visitorId
-  )
+  ) ?? []
+  const binding = bindings.length === 1 ? bindings[0] : undefined
   const publishedOption = recovery?.state === 'open' && recovery.options.some((option) => option.optionId === selection.optionId)
-  if (!recovery || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId || !binding || !publishedOption || !findVisitor(game, selection.visitorId)) {
+  const visitor = findVisitor(game, selection.visitorId)
+  if (!recovery || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId || !binding || !publishedOption || !visitor || !['available', 'negotiating'].includes(visitor.state) || !isFresh(binding.expiresAt, game.serverNow)) {
     throw new Error('recovery_selection_unavailable')
   }
-  if (hasDuplicates(selection.loanItemIds) || !isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !findItem(game, itemId))) {
+  if (hasDuplicates(selection.loanItemIds) || !isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !isLoanableItem(game, itemId))) {
     throw new Error('recovery_loan_unavailable')
   }
   return {
@@ -169,7 +173,7 @@ export function abandonRecoveryPayload(game: GameView, selection: Extract<Visito
   if (!recovery || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId) {
     throw new Error('abandon_recovery_unavailable')
   }
-  if (action.execution.acknowledgement.acknowledgementId !== selection.acknowledgementId) throw new Error('recovery_acknowledgement_unavailable')
+  if (action.execution.acknowledgement.acknowledgementId !== selection.acknowledgementId || !isFresh(action.execution.acknowledgement.expiresAt, game.serverNow)) throw new Error('recovery_acknowledgement_unavailable')
   return {
     recoveryId: action.execution.recoveryId,
     acknowledgementId: action.execution.acknowledgement.acknowledgementId
@@ -222,6 +226,15 @@ function findVisitor(game: GameView, visitorId: Id): VisitorView | undefined {
 
 function findItem(game: GameView, itemId: Id) {
   return game.items.find((item) => item.itemId === itemId)
+}
+
+function isLoanableItem(game: GameView, itemId: Id): boolean {
+  const item = findItem(game, itemId)
+  return item?.owner.kind === 'caravan' && item.custody.kind === 'stash'
+}
+
+function isFresh(expiresAt: string, serverNow: string): boolean {
+  return Date.parse(expiresAt) > Date.parse(serverNow)
 }
 
 function contractOptions(visitor: VisitorView) {

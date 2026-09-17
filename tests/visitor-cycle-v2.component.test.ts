@@ -88,7 +88,7 @@ describe('VisitorCycleV2', () => {
   it('requires accepting the new acknowledgement after a frontend-only revision change', async () => {
     const game = fixture('integrated-recovery')
     const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
-    const checkbox = wrapper.get('#abandon-ack-r1 input')
+    const checkbox = wrapper.get('#v2-abandon-ack-0 input')
     const button = wrapper.get('.v2-cycle__button--danger')
     await checkbox.setValue(true)
     expect(button.attributes('disabled')).toBeUndefined()
@@ -101,7 +101,7 @@ describe('VisitorCycleV2', () => {
     action.execution.acknowledgement.text = { key: 'ack.new', fallback: 'Acepto las nuevas consecuencias.' }
     await wrapper.setProps({ game: replacement })
 
-    expect(wrapper.get('#abandon-ack-r1').text()).toContain('Acepto las nuevas consecuencias.')
+    expect(wrapper.get('#v2-abandon-ack-0').text()).toContain('Acepto las nuevas consecuencias.')
     expect((checkbox.element as HTMLInputElement).checked).toBe(false)
     expect(button.attributes('disabled')).toBeDefined()
     await button.trigger('click')
@@ -359,8 +359,8 @@ describe('VisitorCycleV2', () => {
 
     const wrapper = mount(VisitorCycleV2, { attachTo: document.body, props: { game, loadState: 'ready' } })
     const radios = wrapper.findAll('[data-testid="settlement-preview_ready"] input[type="radio"]')
-    const keepForeign = radios.find((radio) => radio.attributes('name') === 'settlement-s1-g1' && radio.element.getAttribute('type') === 'radio' && radio.element.nextSibling?.textContent?.includes('Conservar'))
-    const takeMap = radios.find((radio) => radio.attributes('name') === 'settlement-s1-g2' && radio.element.nextSibling?.textContent?.includes('Tomar'))
+    const keepForeign = radios.find((radio) => radio.attributes('name') === 'v2-settlement-choice-0-0' && radio.element.getAttribute('type') === 'radio' && radio.element.nextSibling?.textContent?.includes('Conservar'))
+    const takeMap = radios.find((radio) => radio.attributes('name') === 'v2-settlement-choice-0-1' && radio.element.nextSibling?.textContent?.includes('Tomar'))
     if (!keepForeign || !takeMap) throw new Error('Expected settlement radios')
 
     const keepForeignInput = keepForeign.element as HTMLInputElement
@@ -403,9 +403,62 @@ describe('VisitorCycleV2', () => {
     expect(wrapper.text()).toContain('Estado terminal sin acciones disponibles')
     expect(wrapper.text()).toContain('Resultado cerrado: death')
     expect(wrapper.text()).toContain('Preview expirado según snapshot')
-    expect(wrapper.text()).toContain('Asignado a v2')
+    expect(wrapper.text()).toContain('Asignado a Visitante no disponible')
     expect(wrapper.text()).toContain('El equipo se perdió.')
     expect(wrapper.text()).toContain('Abandono confirmado.')
+  })
+
+  it('keeps opaque tokens out of copy and uses safe, unique control identities', () => {
+    const game = fixture('integrated-settlement')
+    const visitor = game.visitors[0]!
+    const expedition = game.expeditions[0]!
+    const settlement = game.settlements[0]
+    if (!settlement || !('choiceGroups' in settlement)) throw new Error('Expected settlement preview')
+    visitor.visitorId = 'visitor token:one'
+    expedition.visitorId = visitor.visitorId
+    expedition.expeditionId = 'expedition token:one'
+    settlement.expeditionId = expedition.expeditionId
+    settlement.settlementId = 'settlement token:one'
+    settlement.choiceGroups[0]!.groupId = 'group token-one'
+    const action = settlement.actions.find((candidate) => candidate.action === 'confirm_settlement' && candidate.enabled)
+    if (!action || action.action !== 'confirm_settlement' || !action.enabled) throw new Error('Expected settlement action')
+    action.targetId = settlement.settlementId
+    action.execution.settlementId = settlement.settlementId
+    action.execution.groups[0]!.groupId = settlement.choiceGroups[0]!.groupId
+
+    const second = structuredClone(settlement)
+    second.settlementId = 'settlement-token one'
+    second.choiceGroups[0]!.groupId = 'group-token one'
+    const secondAction = second.actions.find((candidate) => candidate.action === 'confirm_settlement' && candidate.enabled)
+    if (!secondAction || secondAction.action !== 'confirm_settlement' || !secondAction.enabled) throw new Error('Expected second settlement action')
+    secondAction.targetId = second.settlementId
+    secondAction.execution.settlementId = second.settlementId
+    secondAction.execution.groups[0]!.groupId = second.choiceGroups[0]!.groupId
+    game.settlements.push(second)
+
+    const recoverySource = fixture('integrated-recovery')
+    const recovery = recoverySource.recoveries[0]!
+    recovery.recoveryId = 'recovery token:one'
+    recovery.itemIds = ['missing item token']
+    game.recoveries = [recovery]
+
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    const text = wrapper.text()
+    for (const token of [visitor.visitorId, expedition.expeditionId, settlement.settlementId, second.settlementId, recovery.recoveryId, 'missing item token']) {
+      expect(text).not.toContain(token)
+    }
+    expect(text).toContain('Expedición de Ada')
+    expect(text).toContain('Resolución de Ada')
+    expect(text).toContain('Recuperación de Objeto no disponible')
+
+    const ids = wrapper.findAll('[id]').map((node) => node.attributes('id')).filter((id): id is string => Boolean(id))
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids.every((id) => !/\s|:/.test(id))).toBe(true)
+    const radioNames = wrapper.findAll('input[type="radio"]').map((node) => node.attributes('name'))
+    expect(new Set(radioNames)).toEqual(new Set(['v2-settlement-choice-0-0', 'v2-settlement-choice-1-0']))
+    for (const node of wrapper.findAll('[aria-describedby]')) {
+      for (const id of node.attributes('aria-describedby')!.split(' ')) expect(wrapper.find(`#${id}`).exists()).toBe(true)
+    }
   })
 
   it('keeps touch targets at 44px and includes reduced-motion fallback CSS', () => {
