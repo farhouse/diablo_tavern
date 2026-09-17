@@ -80,13 +80,13 @@ export function acceptContractPayload(game: GameView, selection: Extract<Visitor
   const visitor = findVisitor(game, selection.visitorId)
   const action = findEnabledAction<AcceptContractAction>(visitor?.actions, 'accept_contract')
   const binding = findUnique(action?.execution.bindings, (candidate) => candidate.optionId === selection.optionId)
-  const publishedOption = visitor && findUnique(contractOptions(visitor), (option) => option.optionId === selection.optionId)
-  if (!visitor || !action || action.targetId !== visitor.visitorId || action.execution.visitorId !== visitor.visitorId || !binding || !publishedOption || !isFresh(binding.expiresAt, game.serverNow)) {
+  if (!visitor || !action || !validAcceptContractAction(game, visitor, action) || !binding) {
     throw new Error('contract_selection_unavailable')
   }
   if (hasDuplicates(selection.loanItemIds) || !isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !isLoanableItem(game, itemId))) {
     throw new Error('contract_loan_unavailable')
   }
+  if (!validLoanBindings(game, action.execution.bindings)) throw new Error('contract_selection_unavailable')
   return {
     visitorId: action.execution.visitorId,
     optionId: binding.optionId,
@@ -112,17 +112,7 @@ export function reconcileGamePayload(game: GameView): Record<string, never> {
 export function confirmSettlementPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'settlement' }>): ConfirmSettlementPayload {
   const settlement = findSettlement(game, selection.settlementId)
   const action = findEnabledAction<ConfirmSettlementAction>(settlement?.actions, 'confirm_settlement')
-  if (
-    !settlement
-    || settlement.state !== 'preview_ready'
-    || !action
-    || action.targetId !== settlement.settlementId
-    || action.execution.settlementId !== settlement.settlementId
-    || action.execution.previewVersion !== settlement.previewVersion
-    || action.execution.expiresAt !== settlement.expiresAt
-    || !isFresh(action.execution.expiresAt, game.serverNow)
-    || !hasSameUniqueIds(action.execution.groups.map((group) => group.groupId), settlement.choiceGroups.map((group) => group.groupId))
-  ) {
+  if (!settlement || !action || !validConfirmSettlementAction(game, settlement, action)) {
     throw new Error('settlement_selection_unavailable')
   }
   if (Object.keys(selection.selectedOptionIds).some((groupId) => !action.execution.groups.some((group) => group.groupId === groupId))) {
@@ -138,6 +128,7 @@ export function confirmSettlementPayload(game: GameView, selection: Extract<Visi
     }
     return selected
   })
+  if (!validSettlementGroups(settlement, action)) throw new Error('settlement_selection_unavailable')
   return {
     settlementId: action.execution.settlementId,
     previewVersion: action.execution.previewVersion,
@@ -151,14 +142,13 @@ export function assignRecoveryPayload(game: GameView, selection: Extract<Visitor
   const binding = findUnique(action?.execution.bindings, (candidate) =>
     candidate.optionId === selection.optionId && candidate.visitorId === selection.visitorId
   )
-  const publishedOption = recovery?.state === 'open' && findUnique(recovery.options, (option) => option.optionId === selection.optionId)
-  const visitor = findVisitor(game, selection.visitorId)
-  if (!recovery || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId || !binding || !publishedOption || !visitor || !['available', 'negotiating'].includes(visitor.state) || !isFresh(binding.expiresAt, game.serverNow)) {
+  if (!recovery || !action || !validAssignRecoveryAction(game, recovery, action) || !binding) {
     throw new Error('recovery_selection_unavailable')
   }
   if (hasDuplicates(selection.loanItemIds) || !isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !isLoanableItem(game, itemId))) {
     throw new Error('recovery_loan_unavailable')
   }
+  if (!validLoanBindings(game, action.execution.bindings)) throw new Error('recovery_selection_unavailable')
   return {
     recoveryId: action.execution.recoveryId,
     visitorId: binding.visitorId,
@@ -220,6 +210,72 @@ function canAbandonRecovery(game: GameView, selection: Extract<VisitorV2Selectio
   }
 }
 
+function validAcceptContractAction(game: GameView, visitor: VisitorView, action: AcceptContractAction): boolean {
+  const options = contractOptions(visitor)
+  return uniqueIds(game.visitors, ({ visitorId }) => visitorId)
+    && uniqueIds(options, ({ optionId }) => optionId)
+    && action.targetId === visitor.visitorId
+    && action.execution.visitorId === visitor.visitorId
+    && uniqueIds(action.execution.bindings, ({ optionId }) => optionId)
+    && action.execution.bindings.every(binding =>
+      isFresh(binding.expiresAt, game.serverNow)
+      && findUnique(options, ({ optionId }) => optionId === binding.optionId) !== undefined
+    )
+}
+
+function validConfirmSettlementAction(game: GameView, settlement: SettlementView, action: ConfirmSettlementAction): boolean {
+  if (
+    settlement.state !== 'preview_ready'
+    || !uniqueIds(game.settlements, ({ settlementId }) => settlementId)
+    || action.targetId !== settlement.settlementId
+    || action.execution.settlementId !== settlement.settlementId
+    || action.execution.previewVersion !== settlement.previewVersion
+    || action.execution.expiresAt !== settlement.expiresAt
+    || !isFresh(action.execution.expiresAt, game.serverNow)
+    || !hasSameUniqueIds(action.execution.groups.map(({ groupId }) => groupId), settlement.choiceGroups.map(({ groupId }) => groupId))
+  ) return false
+  return true
+}
+
+function validAssignRecoveryAction(game: GameView, recovery: RecoveryView, action: AssignRecoveryAction): boolean {
+  if (
+    recovery.state !== 'open'
+    || !uniqueIds(game.recoveries, ({ recoveryId }) => recoveryId)
+    || !uniqueIds(game.visitors, ({ visitorId }) => visitorId)
+    || !uniqueIds(recovery.options, ({ optionId }) => optionId)
+    || action.targetId !== recovery.recoveryId
+    || action.execution.recoveryId !== recovery.recoveryId
+    || !uniqueRecoveryBindings(action.execution.bindings)
+  ) return false
+
+  return action.execution.bindings.every((binding) => {
+    const visitor = findVisitor(game, binding.visitorId)
+    return isFresh(binding.expiresAt, game.serverNow)
+      && findUnique(recovery.options, ({ optionId }) => optionId === binding.optionId) !== undefined
+      && visitor !== undefined
+      && ['available', 'negotiating'].includes(visitor.state)
+  })
+}
+
+function validLoanBindings(game: GameView, bindings: readonly { eligibleLoanItemIds: readonly Id[] }[]): boolean {
+  return uniqueIds(game.items, ({ itemId }) => itemId)
+    && bindings.every(binding =>
+      uniqueIds(binding.eligibleLoanItemIds, itemId => itemId)
+      && binding.eligibleLoanItemIds.every(itemId => isLoanableItem(game, itemId))
+    )
+}
+
+function validSettlementGroups(settlement: SettlementView, action: ConfirmSettlementAction): boolean {
+  if (settlement.state !== 'preview_ready') return false
+  return settlement.choiceGroups.every(group => uniqueIds(group.options, ({ optionId }) => optionId))
+    && action.execution.groups.every((group) => {
+      const choiceGroup = findChoiceGroup(settlement, group.groupId)
+      return choiceGroup !== undefined
+        && uniqueIds(group.eligibleOptionIds, optionId => optionId)
+        && group.eligibleOptionIds.every(optionId => findUnique(choiceGroup.options, option => option.optionId === optionId) !== undefined)
+    })
+}
+
 function findVisitor(game: GameView, visitorId: Id): VisitorView | undefined {
   return findUnique(game.visitors, (visitor) => visitor.visitorId === visitorId)
 }
@@ -271,6 +327,16 @@ function isSubset(values: readonly Id[], allowed: readonly Id[]): boolean {
 
 function hasDuplicates(values: readonly Id[]): boolean {
   return new Set(values).size !== values.length
+}
+
+function uniqueIds<T>(values: readonly T[], id: (value: T) => Id): boolean {
+  return !hasDuplicates(values.map(id))
+}
+
+function uniqueRecoveryBindings(bindings: readonly { optionId: Id; visitorId: Id }[]): boolean {
+  return bindings.every((binding, index) =>
+    bindings.findIndex(candidate => candidate.optionId === binding.optionId && candidate.visitorId === binding.visitorId) === index
+  )
 }
 
 function hasSameUniqueIds(left: readonly Id[], right: readonly Id[]): boolean {

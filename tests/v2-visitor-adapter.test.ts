@@ -28,6 +28,11 @@ function negativeFixture(id: string): GameView {
   return structuredClone(match.value)
 }
 
+function expectRejectedAndInvalidated(game: GameView, selection: VisitorV2Selection, build: () => unknown, error: string) {
+  expect(build).toThrow(error)
+  expect(invalidateVisitorV2Selection(game, selection)).toBeNull()
+}
+
 describe('V2 visitor adapter', () => {
   it('projects only published GameView slices without calculating economy or timers', () => {
     const game = fixture('integrated-contract')
@@ -295,6 +300,129 @@ describe('V2 visitor adapter', () => {
     expect(() => abandonRecoveryPayload(recovery, {
       kind: 'abandon_recovery', recoveryId: 'r1', acknowledgementId: 'ack-r1'
     })).toThrow('recovery_acknowledgement_unavailable')
+  })
+
+  it.each([
+    ['expired binding', (game: GameView) => {
+      const visitor = game.visitors[0]
+      const action = visitor?.actions.find(candidate => candidate.action === 'accept_contract' && candidate.enabled)
+      if (!visitor || visitor.state !== 'available' || !action || action.action !== 'accept_contract' || !action.enabled) throw new Error('Expected contract action')
+      visitor.contractOptions.push({ ...structuredClone(visitor.contractOptions[0]!), optionId: 'o2' })
+      action.execution.bindings.push({ optionId: 'o2', eligibleLoanItemIds: [], expiresAt: game.serverNow })
+    }],
+    ['missing option', (game: GameView) => {
+      const visitor = game.visitors[0]
+      const action = visitor?.actions.find(candidate => candidate.action === 'accept_contract' && candidate.enabled)
+      if (!action || action.action !== 'accept_contract' || !action.enabled) throw new Error('Expected contract action')
+      action.execution.bindings.push({ optionId: 'missing-option', eligibleLoanItemIds: [], expiresAt: '2026-09-15T10:30:00Z' })
+    }],
+    ['ambiguous option', (game: GameView) => {
+      const visitor = game.visitors[0]
+      const action = visitor?.actions.find(candidate => candidate.action === 'accept_contract' && candidate.enabled)
+      if (!visitor || visitor.state !== 'available' || !action || action.action !== 'accept_contract' || !action.enabled) throw new Error('Expected contract action')
+      visitor.contractOptions.push({ ...structuredClone(visitor.contractOptions[0]!), optionId: 'o2' })
+      visitor.contractOptions.push(structuredClone(visitor.contractOptions[1]!))
+      action.execution.bindings.push({ optionId: 'o2', eligibleLoanItemIds: [], expiresAt: '2026-09-15T10:30:00Z' })
+    }],
+    ['missing loan', (game: GameView) => {
+      const visitor = game.visitors[0]
+      const action = visitor?.actions.find(candidate => candidate.action === 'accept_contract' && candidate.enabled)
+      if (!visitor || visitor.state !== 'available' || !action || action.action !== 'accept_contract' || !action.enabled) throw new Error('Expected contract action')
+      visitor.contractOptions.push({ ...structuredClone(visitor.contractOptions[0]!), optionId: 'o2' })
+      action.execution.bindings.push({ optionId: 'o2', eligibleLoanItemIds: ['missing-item'], expiresAt: '2026-09-15T10:30:00Z' })
+    }],
+    ['foreign loan', (game: GameView) => {
+      const visitor = game.visitors[0]
+      const action = visitor?.actions.find(candidate => candidate.action === 'accept_contract' && candidate.enabled)
+      if (!visitor || visitor.state !== 'available' || !action || action.action !== 'accept_contract' || !action.enabled) throw new Error('Expected contract action')
+      visitor.contractOptions.push({ ...structuredClone(visitor.contractOptions[0]!), optionId: 'o2' })
+      game.items.push({ ...structuredClone(game.items[0]!), itemId: 'i2', owner: { kind: 'visitor', visitorId: 'v1' }, custody: { kind: 'visitor', visitorId: 'v1' } })
+      action.execution.bindings.push({ optionId: 'o2', eligibleLoanItemIds: ['i2'], expiresAt: '2026-09-15T10:30:00Z' })
+    }],
+    ['ambiguous loan', (game: GameView) => {
+      const visitor = game.visitors[0]
+      const action = visitor?.actions.find(candidate => candidate.action === 'accept_contract' && candidate.enabled)
+      if (!visitor || visitor.state !== 'available' || !action || action.action !== 'accept_contract' || !action.enabled) throw new Error('Expected contract action')
+      visitor.contractOptions.push({ ...structuredClone(visitor.contractOptions[0]!), optionId: 'o2' })
+      game.items.push(structuredClone(game.items[0]!))
+      action.execution.bindings.push({ optionId: 'o2', eligibleLoanItemIds: ['i1'], expiresAt: '2026-09-15T10:30:00Z' })
+    }]
+  ])('rejects contract corruption in an unselected %s', (_name, mutate) => {
+    const game = fixture('integrated-contract')
+    const selection: VisitorV2Selection = { kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: [] }
+    mutate(game)
+    expectRejectedAndInvalidated(game, selection, () => acceptContractPayload(game, selection), 'contract_selection_unavailable')
+  })
+
+  it.each([
+    ['missing option', (game: GameView, binding: { optionId: string, visitorId: string, eligibleLoanItemIds: string[], expiresAt: string }) => { binding.optionId = 'missing-option' }],
+    ['ambiguous option', (game: GameView) => {
+      const recovery = game.recoveries[0]
+      if (recovery?.state !== 'open') throw new Error('Expected open recovery')
+      recovery.options.push(structuredClone(recovery.options[1]!))
+    }],
+    ['missing visitor', (_game: GameView, binding: { optionId: string, visitorId: string, eligibleLoanItemIds: string[], expiresAt: string }) => { binding.visitorId = 'missing-visitor' }],
+    ['ambiguous visitor', (game: GameView) => { game.visitors.push(structuredClone(game.visitors[1]!)) }],
+    ['ineligible visitor', (game: GameView) => { Object.assign(game.visitors[1]!, { state: 'contracted', contractId: 'c2' }) }],
+    ['missing loan', (_game: GameView, binding: { optionId: string, visitorId: string, eligibleLoanItemIds: string[], expiresAt: string }) => { binding.eligibleLoanItemIds = ['missing-item'] }],
+    ['foreign loan', (game: GameView, binding: { optionId: string, visitorId: string, eligibleLoanItemIds: string[], expiresAt: string }) => {
+      binding.eligibleLoanItemIds = ['i5']
+      Object.assign(game.items[1]!, { owner: { kind: 'visitor', visitorId: 'v2' }, custody: { kind: 'visitor', visitorId: 'v2' } })
+    }],
+    ['ambiguous loan', (game: GameView, binding: { optionId: string, visitorId: string, eligibleLoanItemIds: string[], expiresAt: string }) => {
+      binding.eligibleLoanItemIds = ['i5']
+      game.items.push(structuredClone(game.items[1]!))
+    }]
+  ])('rejects recovery corruption in an unselected binding: %s', (_name, mutate) => {
+    const game = fixture('integrated-recovery')
+    const recovery = game.recoveries[0]
+    const action = recovery?.actions.find(candidate => candidate.action === 'assign_recovery' && candidate.enabled)
+    if (recovery?.state !== 'open' || !action || action.action !== 'assign_recovery' || !action.enabled) throw new Error('Expected recovery action')
+    recovery.options.push({ ...structuredClone(recovery.options[0]!), optionId: 'ro2' })
+    game.visitors.push({ ...structuredClone(game.visitors[0]!), visitorId: 'v3' })
+    game.items.push({ ...structuredClone(game.items[0]!), itemId: 'i5', owner: { kind: 'caravan' }, custody: { kind: 'stash' } })
+    const binding = { optionId: 'ro2', visitorId: 'v3', eligibleLoanItemIds: [] as string[], expiresAt: '2026-09-15T10:30:00Z' }
+    action.execution.bindings.push(binding)
+    mutate(game, binding)
+
+    const selection: VisitorV2Selection = { kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: [] }
+    expectRejectedAndInvalidated(game, selection, () => assignRecoveryPayload(game, selection), 'recovery_selection_unavailable')
+  })
+
+  it.each([
+    ['missing eligible option', (game: GameView) => {
+      const settlement = game.settlements[0]
+      const action = settlement?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+      if (!action || action.action !== 'confirm_settlement' || !action.enabled) throw new Error('Expected settlement action')
+      action.execution.groups[1]!.eligibleOptionIds[1] = 'missing-option'
+    }],
+    ['duplicate eligible option', (game: GameView) => {
+      const settlement = game.settlements[0]
+      const action = settlement?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+      if (!action || action.action !== 'confirm_settlement' || !action.enabled) throw new Error('Expected settlement action')
+      action.execution.groups[1]!.eligibleOptionIds.push('unused-option')
+    }],
+    ['duplicate group key', (game: GameView) => {
+      const settlement = game.settlements[0]
+      if (!settlement || !('choiceGroups' in settlement)) throw new Error('Expected settlement preview')
+      settlement.choiceGroups[1]!.groupId = 'g1'
+    }]
+  ])('rejects settlement corruption in an unselected group: %s', (_name, mutate) => {
+    const game = fixture('integrated-settlement')
+    const settlement = game.settlements[0]
+    const action = settlement?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+    if (!settlement || !('choiceGroups' in settlement) || !action || action.action !== 'confirm_settlement' || !action.enabled) throw new Error('Expected settlement action')
+    const secondGroup = structuredClone(settlement.choiceGroups[0]!)
+    secondGroup.groupId = 'g2'
+    secondGroup.defaultOptionId = 'other-option'
+    secondGroup.options[0]!.optionId = 'other-option'
+    secondGroup.options.push({ ...structuredClone(secondGroup.options[0]!), optionId: 'unused-option' })
+    settlement.choiceGroups.push(secondGroup)
+    action.execution.groups.push({ groupId: 'g2', eligibleOptionIds: ['other-option', 'unused-option'] })
+    mutate(game)
+
+    const selection: VisitorV2Selection = { kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' } }
+    expectRejectedAndInvalidated(game, selection, () => confirmSettlementPayload(game, selection), 'settlement_selection_unavailable')
   })
 
   it('requires eligible recovery visitors, stash-owned caravan loans and unambiguous bindings', () => {
