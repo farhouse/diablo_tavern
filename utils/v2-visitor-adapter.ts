@@ -302,12 +302,14 @@ function validLoanBindings(game: GameView, bindings: readonly { eligibleLoanItem
 
 function validSettlementGroups(settlement: SettlementView, action: ConfirmSettlementAction): boolean {
   if (settlement.state !== 'preview_ready') return false
-  return settlement.choiceGroups.every(group => uniqueIds(group.options, ({ optionId }) => optionId))
+  const publishedOptionIds = settlement.choiceGroups.flatMap(group => group.options.map(({ optionId }) => optionId))
+  const eligibleOptionIds = action.execution.groups.flatMap(group => group.eligibleOptionIds)
+  return !hasDuplicates(publishedOptionIds)
+    && !hasDuplicates(eligibleOptionIds)
     && action.execution.groups.every((group) => {
       const choiceGroup = findChoiceGroup(settlement, group.groupId)
       return choiceGroup !== undefined
-        && uniqueIds(group.eligibleOptionIds, optionId => optionId)
-        && group.eligibleOptionIds.every(optionId => findUnique(choiceGroup.options, option => option.optionId === optionId) !== undefined)
+        && hasSameUniqueIds(group.eligibleOptionIds, choiceGroup.options.map(({ optionId }) => optionId))
     })
 }
 

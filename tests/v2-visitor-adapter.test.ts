@@ -444,6 +444,19 @@ describe('V2 visitor adapter', () => {
   })
 
   it.each([
+    ['omitted source option', (game: GameView) => {
+      const settlement = game.settlements[0]
+      const action = settlement?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+      if (!action || action.action !== 'confirm_settlement' || !action.enabled) throw new Error('Expected settlement action')
+      action.execution.groups[1]!.eligibleOptionIds.pop()
+    }],
+    ['option token reused across groups', (game: GameView) => {
+      const settlement = game.settlements[0]
+      const action = settlement?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+      if (!settlement || !('choiceGroups' in settlement) || !action || action.action !== 'confirm_settlement' || !action.enabled) throw new Error('Expected settlement action')
+      settlement.choiceGroups[1]!.options[1]!.optionId = 'renounce'
+      action.execution.groups[1]!.eligibleOptionIds[1] = 'renounce'
+    }],
     ['missing eligible option', (game: GameView) => {
       const settlement = game.settlements[0]
       const action = settlement?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
