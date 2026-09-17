@@ -84,7 +84,7 @@ export function acceptContractPayload(game: GameView, selection: Extract<Visitor
   if (!visitor || !action || action.targetId !== visitor.visitorId || action.execution.visitorId !== visitor.visitorId || !binding || !publishedOption) {
     throw new Error('contract_selection_unavailable')
   }
-  if (!isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !findItem(game, itemId))) {
+  if (hasDuplicates(selection.loanItemIds) || !isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !findItem(game, itemId))) {
     throw new Error('contract_loan_unavailable')
   }
   return {
@@ -112,7 +112,16 @@ export function reconcileGamePayload(game: GameView): Record<string, never> {
 export function confirmSettlementPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'settlement' }>): ConfirmSettlementPayload {
   const settlement = findSettlement(game, selection.settlementId)
   const action = findEnabledAction<ConfirmSettlementAction>(settlement?.actions, 'confirm_settlement')
-  if (!settlement || !action || action.targetId !== settlement.settlementId || action.execution.settlementId !== settlement.settlementId) {
+  if (
+    !settlement
+    || settlement.state !== 'preview_ready'
+    || !action
+    || action.targetId !== settlement.settlementId
+    || action.execution.settlementId !== settlement.settlementId
+    || action.execution.previewVersion !== settlement.previewVersion
+    || action.execution.expiresAt !== settlement.expiresAt
+    || !hasSameUniqueIds(action.execution.groups.map((group) => group.groupId), settlement.choiceGroups.map((group) => group.groupId))
+  ) {
     throw new Error('settlement_selection_unavailable')
   }
   if (Object.keys(selection.selectedOptionIds).some((groupId) => !action.execution.groups.some((group) => group.groupId === groupId))) {
@@ -143,7 +152,7 @@ export function assignRecoveryPayload(game: GameView, selection: Extract<Visitor
   if (!recovery || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId || !binding || !publishedOption || !findVisitor(game, selection.visitorId)) {
     throw new Error('recovery_selection_unavailable')
   }
-  if (!isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !findItem(game, itemId))) {
+  if (hasDuplicates(selection.loanItemIds) || !isSubset(selection.loanItemIds, binding.eligibleLoanItemIds) || selection.loanItemIds.some((itemId) => !findItem(game, itemId))) {
     throw new Error('recovery_loan_unavailable')
   }
   return {
@@ -240,6 +249,14 @@ function findEnabledAction<T extends ActionAvailability>(actions: readonly Actio
 
 function isSubset(values: readonly Id[], allowed: readonly Id[]): boolean {
   return values.every((value) => allowed.includes(value))
+}
+
+function hasDuplicates(values: readonly Id[]): boolean {
+  return new Set(values).size !== values.length
+}
+
+function hasSameUniqueIds(left: readonly Id[], right: readonly Id[]): boolean {
+  return !hasDuplicates(left) && !hasDuplicates(right) && left.length === right.length && isSubset(left, right)
 }
 
 function assertNever(value: never): never {

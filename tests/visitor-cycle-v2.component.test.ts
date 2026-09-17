@@ -138,13 +138,60 @@ describe('VisitorCycleV2', () => {
     if (!recoveryView) throw new Error('Expected recovery')
     const assignAction = recoveryView.actions.find((action) => action.action === 'assign_recovery' && action.enabled)
     if (!assignAction || assignAction.action !== 'assign_recovery' || !assignAction.enabled) throw new Error('Expected assign action')
+    recoveryGame.visitors.push({
+      ...structuredClone(recoveryGame.visitors[0]!),
+      visitorId: 'v3',
+      name: { key: 'visitor.v3', fallback: 'Cira' }
+    })
+    if (recoveryView.state !== 'open') throw new Error('Expected open recovery')
+    recoveryView.options.push({
+      ...structuredClone(recoveryView.options[0]!),
+      optionId: 'ro2',
+      label: { key: 'recovery.fast', fallback: 'Recuperación rápida' }
+    })
     assignAction.execution.bindings.push({ visitorId: 'v3', optionId: 'ro2', eligibleLoanItemIds: ['i4'], expiresAt: '2026-09-15T10:30:00Z' })
 
     const recovery = mount(VisitorCycleV2, { props: { game: recoveryGame, loadState: 'ready' } })
-    await recovery.get('[data-testid="recovery-open"] select').setValue('v3:ro2')
+    expect(recovery.get('[data-testid="recovery-open"] select').text()).toContain('Cira · Recuperación rápida')
+    await recovery.get('[data-testid="recovery-open"] select').setValue(JSON.stringify(['v3', 'ro2']))
     await recovery.get('[data-testid="recovery-open"] input[type="checkbox"]').setValue(true)
     await recovery.get('[data-testid="recovery-open"] button').trigger('click')
     expect(recovery.emitted('assignRecovery')?.[0]).toEqual([{ kind: 'recovery', recoveryId: 'r1', visitorId: 'v3', optionId: 'ro2', loanItemIds: ['i4'] }])
+  })
+
+  it('keeps recovery bindings distinct when opaque IDs contain separators and renders only published copy', async () => {
+    const game = fixture('integrated-recovery')
+    const recovery = game.recoveries[0]
+    if (!recovery || recovery.state !== 'open') throw new Error('Expected open recovery')
+    const action = recovery.actions.find((candidate) => candidate.action === 'assign_recovery' && candidate.enabled)
+    if (!action || action.action !== 'assign_recovery' || !action.enabled) throw new Error('Expected assign action')
+    game.visitors = [
+      { ...structuredClone(game.visitors[0]!), visitorId: 'a:b', name: { key: 'visitor.one', fallback: 'Alda' } },
+      { ...structuredClone(game.visitors[0]!), visitorId: 'a', name: { key: 'visitor.two', fallback: 'Brena' } }
+    ]
+    recovery.options = [
+      { ...structuredClone(recovery.options[0]!), optionId: 'c', label: { key: 'recovery.one', fallback: 'Ruta cauta' } },
+      { ...structuredClone(recovery.options[0]!), optionId: 'b:c', label: { key: 'recovery.two', fallback: 'Ruta veloz' } }
+    ]
+    action.execution.bindings = [
+      { visitorId: 'a:b', optionId: 'c', eligibleLoanItemIds: [], expiresAt: '2026-09-15T10:30:00Z' },
+      { visitorId: 'a', optionId: 'b:c', eligibleLoanItemIds: [], expiresAt: '2026-09-15T10:30:00Z' }
+    ]
+
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    const select = wrapper.get('[data-testid="recovery-open"] select')
+    expect(select.text()).toContain('Alda · Ruta cauta')
+    expect(select.text()).toContain('Brena · Ruta veloz')
+    expect(select.text()).not.toContain('a:b')
+    expect(select.text()).not.toContain('b:c')
+
+    await wrapper.get('[data-testid="recovery-open"] button').trigger('click')
+    await select.setValue(JSON.stringify(['a', 'b:c']))
+    await wrapper.get('[data-testid="recovery-open"] button').trigger('click')
+    expect(wrapper.emitted('assignRecovery')).toEqual([
+      [{ kind: 'recovery', recoveryId: 'r1', visitorId: 'a:b', optionId: 'c', loanItemIds: [] }],
+      [{ kind: 'recovery', recoveryId: 'r1', visitorId: 'a', optionId: 'b:c', loanItemIds: [] }]
+    ])
   })
 
   it('disables controls while pending and exposes conflict, unavailable, uncertain and terminal states', async () => {
@@ -273,7 +320,7 @@ describe('VisitorCycleV2', () => {
     if (!assignAction || assignAction.action !== 'assign_recovery' || !assignAction.enabled) throw new Error('Expected assign action')
     assignAction.execution.bindings.push({ visitorId: 'v3', optionId: 'ro2', eligibleLoanItemIds: [], expiresAt: '2026-09-15T10:30:00Z' })
     const recovery = mount(VisitorCycleV2, { props: { game: recoveryGame, loadState: 'ready' } })
-    await recovery.get('[data-testid="recovery-open"] select').setValue('v3:ro2')
+    await recovery.get('[data-testid="recovery-open"] select').setValue(JSON.stringify(['v3', 'ro2']))
 
     const recoveryReplacement = fixture('integrated-recovery')
     recoveryReplacement.revision = recoveryGame.revision + 1

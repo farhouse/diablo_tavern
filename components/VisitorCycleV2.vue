@@ -131,8 +131,8 @@ function selectedContractBinding(visitor: VisitorView) {
 function selectedRecoveryBinding(recovery: RecoveryView) {
   const action = assignAction(recovery)
   if (!action) return null
-  const key = recoveryBindings.value[recovery.recoveryId] ?? bindingKey(action.execution.bindings[0])
-  return action.execution.bindings.find((binding) => bindingKey(binding) === key) ?? action.execution.bindings[0] ?? null
+  const key = recoveryBindings.value[recovery.recoveryId] ?? recoveryBindingKey(action.execution.bindings[0])
+  return action.execution.bindings.find((binding) => recoveryBindingKey(binding) === key) ?? action.execution.bindings[0] ?? null
 }
 
 function selectedSettlementOption(settlement: SettlementView, groupId: Id): Id {
@@ -159,8 +159,14 @@ function abandonAction(recovery: RecoveryView): AbandonRecoveryAction | null {
   return enabledAction<AbandonRecoveryAction>(actionsOf(recovery), 'abandon_recovery')
 }
 
-function bindingKey(binding: { visitorId: Id, optionId: Id } | undefined): string {
-  return binding ? `${binding.visitorId}:${binding.optionId}` : ''
+function recoveryBindingLabel(recovery: RecoveryView, binding: { visitorId: Id, optionId: Id }): string {
+  const visitor = props.game?.visitors.find((candidate) => candidate.visitorId === binding.visitorId)
+  const option = recovery?.state === 'open' ? recovery.options.find((candidate) => candidate.optionId === binding.optionId) : undefined
+  return `${visitor ? label(visitor.name) : 'Visitante no disponible'} · ${option ? label(option.label) : 'Opción no disponible'}`
+}
+
+function recoveryBindingKey(binding: { visitorId: Id, optionId: Id } | undefined): string {
+  return binding ? JSON.stringify([binding.visitorId, binding.optionId]) : ''
 }
 
 function itemLabel(itemId: Id): string {
@@ -291,9 +297,9 @@ function syncLocalSelections() {
     const action = assignAction(recovery)
     if (action) {
       const current = recoveryBindings.value[recovery.recoveryId]
-      const binding = action.execution.bindings.find((candidate) => bindingKey(candidate) === current) ?? action.execution.bindings[0]
+      const binding = action.execution.bindings.find((candidate) => recoveryBindingKey(candidate) === current) ?? action.execution.bindings[0]
       if (binding) {
-        nextRecoveryBindings[recovery.recoveryId] = bindingKey(binding)
+        nextRecoveryBindings[recovery.recoveryId] = recoveryBindingKey(binding)
         nextRecoveryLoans[recovery.recoveryId] = (recoveryLoans.value[recovery.recoveryId] ?? []).filter((itemId) => binding.eligibleLoanItemIds.includes(itemId))
       }
     }
@@ -554,10 +560,10 @@ onBeforeUnmount(() => {
               >
                 <option
                   v-for="binding in assignAction(recovery)?.execution.bindings"
-                  :key="bindingKey(binding)"
-                  :value="bindingKey(binding)"
+                  :key="recoveryBindingKey(binding)"
+                  :value="recoveryBindingKey(binding)"
                 >
-                  {{ binding.visitorId }} · {{ binding.optionId }}
+                  {{ recoveryBindingLabel(recovery, binding) }}
                 </option>
               </select>
             </label>

@@ -127,9 +127,55 @@ describe('V2 visitor adapter', () => {
     const action = settlement.actions.find((candidate) => candidate.action === 'confirm_settlement' && candidate.enabled)
     if (!action || action.action !== 'confirm_settlement' || !action.enabled) throw new Error('Expected settlement action')
     action.execution.groups[0]?.eligibleOptionIds.push('other-group-option')
+    action.execution.groups.push({ groupId: 'g2', eligibleOptionIds: ['other-group-option'] })
     expect(() => confirmSettlementPayload(mixedGroup, {
       kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'other-group-option' }
     })).toThrow('settlement_option_unavailable')
+  })
+
+  it.each([
+    ['preview version', (game: GameView) => {
+      const action = game.settlements[0]?.actions.find((candidate) => candidate.action === 'confirm_settlement' && candidate.enabled)
+      if (action?.action === 'confirm_settlement' && action.enabled) action.execution.previewVersion += 1
+    }],
+    ['expiry', (game: GameView) => {
+      const action = game.settlements[0]?.actions.find((candidate) => candidate.action === 'confirm_settlement' && candidate.enabled)
+      if (action?.action === 'confirm_settlement' && action.enabled) action.execution.expiresAt = '2026-09-16T10:30:00Z'
+    }],
+    ['missing group', (game: GameView) => {
+      const settlement = game.settlements[0]
+      if (!settlement || !('choiceGroups' in settlement)) throw new Error('Expected settlement preview')
+      settlement.choiceGroups.push({
+        ...structuredClone(settlement.choiceGroups[0]!),
+        groupId: 'g2'
+      })
+    }],
+    ['expired preview state', (game: GameView) => {
+      const settlement = game.settlements[0]
+      if (!settlement || !('choiceGroups' in settlement)) throw new Error('Expected settlement preview')
+      settlement.state = 'preview_expired'
+    }]
+  ])('rejects settlement execution with mismatched %s', (_name, mutate) => {
+    const game = fixture('integrated-settlement')
+    mutate(game)
+    expect(() => confirmSettlementPayload(game, {
+      kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' }
+    })).toThrow('settlement_selection_unavailable')
+  })
+
+  it('rejects duplicate loan IDs for contract and recovery payloads', () => {
+    const contract = fixture('integrated-contract')
+    expect(() => acceptContractPayload(contract, {
+      kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1', 'i1']
+    })).toThrow('contract_loan_unavailable')
+
+    const recovery = fixture('integrated-recovery')
+    const action = recovery.recoveries[0]?.actions.find((candidate) => candidate.action === 'assign_recovery' && candidate.enabled)
+    if (!action || action.action !== 'assign_recovery' || !action.enabled) throw new Error('Expected recovery action')
+    action.execution.bindings[0]!.eligibleLoanItemIds = ['i4']
+    expect(() => assignRecoveryPayload(recovery, {
+      kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: ['i4', 'i4']
+    })).toThrow('recovery_loan_unavailable')
   })
 
   it.each([
