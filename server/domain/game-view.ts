@@ -1,129 +1,62 @@
 import type { Item } from '~/types/game'
+import type {
+  ExpeditionView,
+  CaravanOwner,
+  ExpeditionCustody,
+  GameView,
+  ItemBase,
+  ItemCustody,
+  ItemView,
+  RecoveryCustody,
+  RecoveryView,
+  ServiceCustody,
+  ServiceJobView,
+  SettlementCustody,
+  SettlementView,
+  StashCustody,
+  VisitorCustody,
+  VisitorOwner,
+  VisitorView
+} from '~/shared/types/v2-game-view'
+export type { GameView } from '~/shared/types/v2-game-view'
 import { validateGameView } from '~/server/utils/game-view-validator'
+import { projectVisitorCycle } from '~/server/domain/visitor-cycle'
 import {
-  getSaveGame,
   getPersistedGameV3,
   type PersistedGameV3,
   type PersistedItemPlacement
 } from '~/server/utils/savegame'
 
-export interface GameView {
-  contractVersion: 'v2-etapa0-3'
-  labelCatalogVersion: 'es-AR-v1'
-  revision: number
-  serverNow: string
-  nextTransitionAt: string | null
-  resources: { gold: number; materials: Record<string, number> }
-  capacity: { used: number; limit: number; reserved: number; blockers: unknown[] }
-  visitors: unknown[]
-  expeditions: unknown[]
-  settlements: unknown[]
-  recoveries: unknown[]
-  serviceJobs: unknown[]
-  items: unknown[]
-  actions: unknown[]
-}
-
 export async function getGameView(userId: string, now = new Date()): Promise<GameView> {
-  await getSaveGame(userId, { now: () => now, random: Math.random, uuid: crypto.randomUUID })
   const persisted = await getPersistedGameV3(userId)
   return mapPersistedGameToGameView(persisted, now)
 }
 
 export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date()): GameView {
-  const items = Object.entries(game.itemsById).flatMap(([itemId, item]) => {
+  const cycle = projectVisitorCycle(game, now)
+  const visitors: VisitorView[] = cycle.visitors
+  const projectedVisitorIds = new Set(visitors.map((visitor) => visitor.visitorId))
+  const transitions = [...collectTransitions(game), ...cycle.transitions]
+    .filter((timestamp) => Date.parse(timestamp) > now.getTime()).sort()
+  const expeditions: ExpeditionView[] = cycle.expeditions
+  const settlements: SettlementView[] = cycle.settlements
+  const recoveries: RecoveryView[] = cycle.recoveries
+  const serviceJobs: ServiceJobView[] = []
+  const items = Object.entries(game.itemsById).flatMap<ItemView>(([itemId, item]) => {
     const placement = game.itemPlacements[itemId]
-    // The legacy V1 appraiser is intentionally isolated: the normative V2
-    // contract only defines blacksmith/enchanter jobs.
     if (!placement || placement.custodyKind === 'tombstone') return []
-    if (placement.custodyKind === 'service') {
-      const target = game.serviceJobsById[placement.custodyId ?? '']
-      if (target?.projection?.kind === 'legacy_appraiser') {
-        return [mapItem(item, { ownerKind: 'caravan', custodyKind: 'stash' }, game)]
-      }
+    const custodyIsProjected = placement.custodyKind === 'stash'
+      || (placement.custodyKind === 'expedition' && Boolean(game.visitorCycle.expeditions[placement.custodyId ?? '']))
+      || (placement.custodyKind === 'settlement' && Boolean(game.visitorCycle.settlements[placement.custodyId ?? '']))
+      || (placement.custodyKind === 'recovery' && Boolean(game.visitorCycle.recoveries[placement.custodyId ?? '']))
+    if (placement.ownerKind === 'caravan' && custodyIsProjected) {
+      return [mapItem(item, placement, game)]
     }
-    return [mapItem(item, placement, game)]
-  })
-  const visitors: unknown[] = [game.visitRound, ...game.visitHistory].flatMap<unknown>((round) => round.slots.flatMap<unknown>((slot) => {
-    const visitor = slot.visitor
-    if (!visitor) return []
-    const base = {
-      visitorId: visitor.id,
-      name: { key: `visitor.${visitor.id}`, fallback: visitor.name },
-      actions: []
+    if (placement.custodyKind === 'visitor' && placement.ownerKind === 'visitor'
+      && placement.ownerId && projectedVisitorIds.has(placement.ownerId)) {
+      return [mapItem(item, placement, game)]
     }
-    if (visitor.state === 'departed') {
-      if (!visitor.departedAt) throw new Error(`Missing authoritative departure time for ${visitor.id}`)
-      return [{ ...base, state: 'departed', departedAt: visitor.departedAt, lastExpeditionId: visitor.commission?.id ?? `legacy-${visitor.id}` }]
-    }
-    if (visitor.state === 'commissioned' || visitor.state === 'returned') {
-      return [{ ...base, state: 'contracted', contractId: visitor.commission?.id ?? `legacy-${visitor.id}` }]
-    }
-    return [{
-      ...base,
-      state: 'available',
-      departureSignal: 'possible',
-      contractOptions: visitor.commissionOptions.map((option) => ({
-        optionId: option.optionId,
-        label: { key: `contract.${option.optionId}`, fallback: option.title },
-        description: { key: `contract.${option.optionId}.description`, fallback: option.failureConsequence },
-        durationSeconds: Math.max(1, Math.ceil(option.durationMs / 1000)),
-        caravanGoldShareBps: option.optionId === 'safe' ? 2500 : 4000,
-        lootPriority: 'caravan_first',
-        retreatThreshold: option.optionId === 'safe' ? 10 : null,
-        loanFeeGold: 0,
-        consequences: []
-      }))
-    }]
-  }))
-  const projectedVisitorIds = new Set((visitors as Array<{ visitorId: string }>).map((visitor) => visitor.visitorId))
-  for (const expedition of Object.values(game.expeditionsById)) {
-    const target = expedition.projection
-    if (target?.kind !== 'expedition' || projectedVisitorIds.has(target.visitorId)) continue
-    if (!target.retainedVisitor) throw new Error(`Missing retained visitor identity for ${expedition.id}`)
-    visitors.push({
-      visitorId: target.visitorId,
-      name: { key: `visitor.${target.visitorId}`, fallback: target.retainedVisitor.name },
-      state: 'departed',
-      departedAt: target.retainedVisitor.departedAt,
-      lastExpeditionId: expedition.id,
-      actions: []
-    })
-    projectedVisitorIds.add(target.visitorId)
-  }
-  const transitions = collectTransitions(game).filter((timestamp) => Date.parse(timestamp) > now.getTime()).sort()
-  const expeditions = Object.values(game.expeditionsById).flatMap((container) => {
-    const target = container.projection
-    if (target?.kind !== 'expedition') return []
-    return [{
-      expeditionId: container.id, visitorId: target.visitorId, contractId: target.contractId,
-      state: 'scheduled', actions: [], startsAt: target.startsAt
-    }]
-  })
-  const settlements = Object.values(game.settlementsById).flatMap((container) => {
-    const target = container.projection
-    if (target?.kind !== 'settlement') return []
-    return [{
-      settlementId: container.id, expeditionId: target.expeditionId, state: 'settled', outcome: target.outcome,
-      appliedAt: target.appliedAt, appliedBy: 'confirmation', appliedChoices: [], visitorResolution: 'stays', actions: []
-    }]
-  })
-  const recoveries = Object.values(game.recoveriesById).flatMap((container) => {
-    const target = container.projection
-    if (target?.kind !== 'recovery') return []
-    return [{
-      recoveryId: container.id, sourceExpeditionId: target.sourceExpeditionId, itemIds: [...container.itemIds],
-      state: 'recovered', actions: [], resolvedAt: target.resolvedAt, recoveredItemIds: [...container.itemIds]
-    }]
-  })
-  const serviceJobs = Object.values(game.serviceJobsById).flatMap((container) => {
-    const target = container.projection
-    if (target?.kind !== 'service') return []
-    return container.itemIds.slice(0, 1).map((itemId) => ({
-      jobId: container.id, itemId, service: target.service, state: 'queued',
-      label: { key: `service.${container.id}`, fallback: 'Servicio de artesano' }, actions: [],
-      queuedAt: target.queuedAt, startsAt: target.startsAt
-    }))
+    return []
   })
   const view: GameView = {
     contractVersion: 'v2-etapa0-3',
@@ -144,7 +77,7 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     recoveries,
     serviceJobs,
     items,
-    actions: []
+    actions: cycle.actions
   }
   validateGameView(view)
   validateSemanticGameView(view)
@@ -152,30 +85,30 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
 }
 
 export function validateSemanticGameView(view: GameView): void {
-  assertUnique(view.visitors as Array<Record<string, unknown>>, 'visitorId')
-  assertUnique(view.expeditions as Array<Record<string, unknown>>, 'expeditionId')
-  assertUnique(view.settlements as Array<Record<string, unknown>>, 'settlementId')
-  assertUnique(view.recoveries as Array<Record<string, unknown>>, 'recoveryId')
-  assertUnique(view.serviceJobs as Array<Record<string, unknown>>, 'jobId')
+  assertUnique(view.visitors, 'visitorId')
+  assertUnique(view.expeditions, 'expeditionId')
+  assertUnique(view.settlements, 'settlementId')
+  assertUnique(view.recoveries, 'recoveryId')
+  assertUnique(view.serviceJobs, 'jobId')
   const itemIds = new Set<string>()
-  const visitorIds = new Set((view.visitors as Array<{ visitorId: string }>).map((visitor) => visitor.visitorId))
-  const expeditionVisitors = new Map((view.expeditions as Array<{ expeditionId: string; visitorId: string }>).map((entry) => [entry.expeditionId, entry.visitorId]))
+  const visitorIds = new Set(view.visitors.map((visitor) => visitor.visitorId))
+  const expeditionVisitors = new Map(view.expeditions.map((entry) => [entry.expeditionId, entry.visitorId]))
   const targetIds = {
     expedition: new Set(expeditionVisitors.keys()),
-    settlement: new Set((view.settlements as Array<{ settlementId: string }>).map((entry) => entry.settlementId)),
-    recovery: new Set((view.recoveries as Array<{ recoveryId: string }>).map((entry) => entry.recoveryId)),
-    service: new Set((view.serviceJobs as Array<{ jobId: string }>).map((entry) => entry.jobId))
+    settlement: new Set(view.settlements.map((entry) => entry.settlementId)),
+    recovery: new Set(view.recoveries.map((entry) => entry.recoveryId)),
+    service: new Set(view.serviceJobs.map((entry) => entry.jobId))
   }
-  for (const expedition of view.expeditions as Array<{ expeditionId: string; visitorId: string }>) {
+  for (const expedition of view.expeditions) {
     if (!visitorIds.has(expedition.visitorId)) throw new Error(`Unknown expedition visitor for ${expedition.expeditionId}`)
   }
-  for (const settlement of view.settlements as Array<{ settlementId: string; expeditionId: string }>) {
+  for (const settlement of view.settlements) {
     if (!targetIds.expedition.has(settlement.expeditionId)) throw new Error(`Unknown settlement expedition for ${settlement.settlementId}`)
   }
-  for (const recovery of view.recoveries as Array<{ recoveryId: string; sourceExpeditionId: string }>) {
+  for (const recovery of view.recoveries) {
     if (!targetIds.expedition.has(recovery.sourceExpeditionId)) throw new Error(`Unknown recovery expedition for ${recovery.recoveryId}`)
   }
-  for (const item of view.items as Array<{ itemId: string; owner: { kind: string; visitorId?: string }; custody: { kind: string; visitorId?: string; expeditionId?: string; settlementId?: string; recoveryId?: string; jobId?: string } }>) {
+  for (const item of view.items) {
     if (itemIds.has(item.itemId)) throw new Error(`Duplicate public itemId ${item.itemId}`)
     if (item.owner.kind === 'caravan' && !['stash', 'service', 'expedition', 'settlement', 'recovery'].includes(item.custody.kind)) {
       throw new Error(`Invalid caravan custody for ${item.itemId}`)
@@ -185,7 +118,7 @@ export function validateSemanticGameView(view: GameView): void {
     }
     if (item.custody.kind === 'visitor') {
       const visitorId = item.custody.visitorId
-      if (!visitorId || visitorId !== item.owner.visitorId || !visitorIds.has(visitorId)) {
+      if (item.owner.kind !== 'visitor' || visitorId !== item.owner.visitorId || !visitorIds.has(visitorId)) {
         throw new Error(`Invalid visitor custody for ${item.itemId}`)
       }
     }
@@ -193,11 +126,7 @@ export function validateSemanticGameView(view: GameView): void {
       && expeditionVisitors.get(item.custody.expeditionId) !== item.custody.visitorId) {
       throw new Error(`Expedition visitor mismatch for ${item.itemId}`)
     }
-    const reference = item.custody.kind === 'expedition' ? item.custody.expeditionId
-      : item.custody.kind === 'settlement' ? item.custody.settlementId
-        : item.custody.kind === 'recovery' ? item.custody.recoveryId
-          : item.custody.kind === 'service' ? item.custody.jobId : undefined
-    if (item.custody.kind in targetIds && (!reference || !targetIds[item.custody.kind as keyof typeof targetIds].has(reference))) {
+    if (!hasPublicCustodyTarget(item.custody, targetIds)) {
       throw new Error(`Dangling ${item.custody.kind} custody for ${item.itemId}`)
     }
     itemIds.add(item.itemId)
@@ -205,22 +134,40 @@ export function validateSemanticGameView(view: GameView): void {
   if (view.capacity.used > view.capacity.limit) throw new Error('Owned item capacity exceeds its limit')
 }
 
-function assertUnique(values: Array<Record<string, unknown>>, key: string): void {
-  const ids = values.map((value) => value[key])
-  if (new Set(ids).size !== ids.length) throw new Error(`Duplicate public ${key}`)
+function hasPublicCustodyTarget(
+  custody: ItemCustody,
+  targets: { expedition: Set<string>; settlement: Set<string>; recovery: Set<string>; service: Set<string> }
+): boolean {
+  switch (custody.kind) {
+    case 'expedition': return targets.expedition.has(custody.expeditionId)
+    case 'settlement': return targets.settlement.has(custody.settlementId)
+    case 'recovery': return targets.recovery.has(custody.recoveryId)
+    case 'service': return targets.service.has(custody.jobId)
+    case 'stash':
+    case 'visitor': return true
+  }
 }
 
-function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3): Record<string, unknown> {
+function assertUnique<T, K extends keyof T>(values: T[], key: K): void {
+  const ids = values.map((value) => value[key])
+  if (new Set(ids).size !== ids.length) throw new Error(`Duplicate public ${String(key)}`)
+}
+
+function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedGameV3): ItemView {
+  const slot: ItemBase['slot'] = item.type === 'weapon'
+    ? 'weapon'
+    : ['ring', 'amulet', 'charm'].includes(item.type) ? 'accessory' : 'armor'
+  const rarity: ItemBase['rarity'] = item.rarity === 'normal'
+    ? 'common'
+    : item.rarity === 'unique' ? 'legendary' : item.rarity
+  const ownership = mapOwnershipAndCustody(placement, game)
   const base = {
     itemId: item.id,
     name: { key: `item.${item.baseName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, fallback: item.displayName },
-    slot: item.type === 'weapon' ? 'weapon' : ['ring', 'amulet', 'charm'].includes(item.type) ? 'accessory' : 'armor',
-    rarity: item.rarity === 'normal' ? 'common' : item.rarity === 'unique' ? 'legendary' : item.rarity,
+    slot,
+    rarity,
     level: Math.max(1, item.requiredLevel),
-    owner: placement.ownerKind === 'visitor'
-      ? { kind: 'visitor', visitorId: placement.ownerId }
-      : { kind: 'caravan' },
-    custody: mapCustody(placement, game),
+    ...ownership,
     actions: []
   }
   if (!item.identified) return { ...base, identification: 'unidentified' }
@@ -236,18 +183,50 @@ function mapItem(item: Item, placement: PersistedItemPlacement, game: PersistedG
   }
 }
 
-function mapCustody(placement: PersistedItemPlacement, game: PersistedGameV3): Record<string, unknown> {
-  switch (placement.custodyKind) {
-    case 'visitor': return { kind: 'visitor', visitorId: placement.custodyId }
-    case 'service': return { kind: 'service', jobId: placement.custodyId }
-    case 'expedition': {
-      const target = game.expeditionsById[placement.custodyId ?? '']?.projection
-      return { kind: 'expedition', expeditionId: placement.custodyId, visitorId: target?.kind === 'expedition' ? target.visitorId : '' }
+function mapOwnershipAndCustody(
+  placement: PersistedItemPlacement,
+  game: PersistedGameV3
+): ItemOwnershipAndCustody {
+  const custody = mapCustody(placement, game)
+  if (placement.ownerKind === 'visitor') {
+    const visitorId = requireId(placement.ownerId, 'visitor owner')
+    if (custody.kind !== 'visitor' || custody.visitorId !== visitorId) {
+      throw new Error(`Visitor owner ${visitorId} has incompatible ${custody.kind} custody`)
     }
-    case 'settlement': return { kind: 'settlement', settlementId: placement.custodyId }
-    case 'recovery': return { kind: 'recovery', recoveryId: placement.custodyId }
+    return { owner: { kind: 'visitor', visitorId }, custody }
+  }
+  if (placement.ownerKind !== 'caravan' || custody.kind === 'visitor') {
+    throw new Error(`Invalid public owner/custody projection: ${placement.ownerKind}/${custody.kind}`)
+  }
+  return { owner: { kind: 'caravan' }, custody }
+}
+
+type ItemOwnershipAndCustody =
+  | { owner: VisitorOwner; custody: VisitorCustody }
+  | {
+      owner: CaravanOwner
+      custody: StashCustody | ExpeditionCustody | RecoveryCustody | SettlementCustody | ServiceCustody
+    }
+
+function mapCustody(placement: PersistedItemPlacement, game: PersistedGameV3): ItemCustody {
+  switch (placement.custodyKind) {
+    case 'visitor': return { kind: 'visitor', visitorId: requireId(placement.custodyId, 'visitor custody') }
+    case 'service': return { kind: 'service', jobId: requireId(placement.custodyId, 'service custody') }
+    case 'expedition': {
+      const expeditionId = requireId(placement.custodyId, 'expedition custody')
+      const target = game.expeditionsById[expeditionId]?.projection
+      if (target?.kind !== 'expedition') throw new Error(`Missing expedition projection for ${expeditionId}`)
+      return { kind: 'expedition', expeditionId, visitorId: target.visitorId }
+    }
+    case 'settlement': return { kind: 'settlement', settlementId: requireId(placement.custodyId, 'settlement custody') }
+    case 'recovery': return { kind: 'recovery', recoveryId: requireId(placement.custodyId, 'recovery custody') }
     default: return { kind: 'stash' }
   }
+}
+
+function requireId(value: string | undefined, context: string): string {
+  if (!value) throw new Error(`Missing ${context} id`)
+  return value
 }
 
 function collectTransitions(game: PersistedGameV3): string[] {
@@ -255,7 +234,6 @@ function collectTransitions(game: PersistedGameV3): string[] {
   for (const round of [game.visitRound, ...game.visitHistory]) {
     for (const slot of round.slots) {
       if (slot.nextArrivalCheckAt) result.push(slot.nextArrivalCheckAt)
-      if (slot.visitor?.commission?.finishesAt) result.push(slot.visitor.commission.finishesAt)
     }
   }
   for (const job of game.caravan.services.appraiserQueue) result.push(job.finishesAt)

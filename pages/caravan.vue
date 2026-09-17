@@ -153,14 +153,29 @@ async function completeAppraisal() {
 .caravan-status strong { color: var(--accent-2); font-size: 1.4rem; }
 .caravan-status span { color: var(--muted); font-size: 0.85rem; }
 .service-list { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-.service-row { align-items: center; background: var(--panel); display: flex; gap: 1rem; justify-content: space-between; padding: 1rem; }
+.service-row { align-items: flex-start; background: var(--panel); display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; padding: 1rem; }
 .service-row + .service-row { border-top: 1px solid var(--line); }
 .service-row h2, .service-row p, .appraiser-panel h2, .appraiser-panel p { margin: 0; }
-.service-row > div:nth-child(2) { display: grid; flex: 1; gap: 0.3rem; }
-.service-action { align-items: end; display: grid; gap: 0.35rem; justify-items: end; }
+.service-row > div:nth-child(2) { display: grid; flex: 1 1 14rem; gap: 0.3rem; min-width: 0; }
+.service-action { align-items: end; display: grid; gap: 0.35rem; justify-items: end; min-width: 0; }
+.service-action .btn { min-width: 0; white-space: normal; }
+.service-row h2,
+.service-row p,
+.service-action span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .appraiser-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 0.85rem; padding: 1rem; }
 .queue-list { display: grid; gap: 0.5rem; }
-.queue-row { align-items: center; background: #14120f; border-radius: 6px; display: flex; justify-content: space-between; padding: 0.65rem; }
+.queue-row { align-items: center; background: #14120f; border-radius: 6px; display: flex; gap: 0.5rem; justify-content: space-between; min-width: 0; padding: 0.65rem; }
+.queue-row > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.queue-row .tag { flex: 0 0 auto; white-space: nowrap; }
 @media (max-width: 600px) {
   .caravan-status { display: grid; grid-template-columns: repeat(3, 1fr); }
   .caravan-status > div { min-width: 0; padding: 0.8rem; }

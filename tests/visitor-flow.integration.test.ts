@@ -184,80 +184,14 @@ describe('visitor HTTP/store/UI journey', () => {
     expect(visitors(persistedSave)[1]!.trades.map((trade) => trade.kind)).toEqual(['player_sold', 'player_bought'])
     expect(persistedSave.stash).toHaveLength(persistedSave.stashLimit)
 
-    const commissionRandom = vi.spyOn(Math, 'random')
-      .mockReturnValueOnce(0.01)
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0.02)
-      .mockReturnValueOnce(0)
     await wrapper.get('[data-testid="review-safe"]').trigger('click')
     await wrapper.get('[data-testid="confirm-safe"]').trigger('click')
     await flushPromises()
-
-    const secondReview = wrapper.findAll('[data-testid="review-safe"]')[0]
-    expect(secondReview).toBeDefined()
-    await secondReview!.trigger('click')
-    await wrapper.get('[data-testid="confirm-safe"]').trigger('click')
-    await flushPromises()
-    commissionRandom.mockRestore()
-    expect(visitors(persistedSave).filter((visitor) => visitor.state === 'commissioned')).toHaveLength(2)
-    expect(persistedSave.visitRound.slots.every((slot) => Boolean(slot.visitor))).toBe(true)
-    expect(wrapper.findAll('h3').filter((heading) => heading.text() === 'Away on commission')).toHaveLength(2)
-
-    await vi.advanceTimersByTimeAsync(3_000)
-    await flushPromises()
-    expect(wrapper.findAll('[data-testid^="claim-"]')).toHaveLength(2)
-
-    const goldBeforeClaim = persistedSave.gold
-    await wrapper.get(`[data-testid="claim-${visitorIds[0]}"]`).trigger('click')
-    await flushPromises()
-    expect(persistedSave.gold).toBe(goldBeforeClaim + 68)
-    expect(persistedSave.visitRound.slots[0]!.visitor).toBeUndefined()
-    expect(persistedSave.visitRound.slots[0]!.nextArrivalCheckAt).toBeTruthy()
-    expect(persistedSave.visitHistory).toHaveLength(1)
-    expect(wrapper.find(`[data-testid="claim-${visitorIds[0]}"]`).exists()).toBe(false)
-
-    const stashBeforeRoundRenewingClaim = persistedSave.stash.map((item) => item.id)
-    await wrapper.get(`[data-testid="claim-${visitorIds[1]}"]`).trigger('click')
-    await flushPromises()
-    expect(wrapper.text()).toContain('Network disconnected after commit')
-    expect(wrapper.text()).toContain('Visitor round 1')
-    expect(persistedSave.gold).toBe(goldBeforeClaim + 136)
-    expect(persistedSave.stash.map((item) => item.id)).toEqual(stashBeforeRoundRenewingClaim)
-    expect(persistedSave.visitHistory).toHaveLength(2)
-    expect(persistedSave.visitRound.slots.every((slot) => !slot.visitor && Boolean(slot.nextArrivalCheckAt))).toBe(true)
-    const archivedSecondVisitor = persistedSave.visitHistory
-      .flatMap((round) => round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : []))
-      .find((visitor) => visitor.id === visitorIds[1])!
-    expect(archivedSecondVisitor.commission?.rewardGold).toBe(68)
-    expect(archivedSecondVisitor.commission?.status).toBe('claimed')
-    expect(archivedSecondVisitor.commission?.claimedAt).toBeTruthy()
-    const committedRevision = persistedSave.revision
-    const committedClaimedAt = archivedSecondVisitor.commission!.claimedAt
+    expect(wrapper.text()).toContain('The requested action is unavailable')
+    expect(visitors(persistedSave).every((visitor) => visitor.state === 'traded')).toBe(true)
+    expect(visitors(persistedSave).every((visitor) => visitor.commission === undefined)).toBe(true)
+    expect(claimRequestIds).toEqual([])
     expect(persistedSave.visitRound.id).toBe(originalRoundId)
-    expect(persistedSave.visitRound.number).toBe(1)
-    expect(wrapper.find(`[data-testid="claim-${visitorIds[1]}"]`).exists()).toBe(true)
-
-    await wrapper.get(`[data-testid="claim-${visitorIds[1]}"]`).trigger('click')
-    await flushPromises()
-    expect(claimRequestIds).toHaveLength(3)
-    expect(claimRequestIds[2]).toBe(claimRequestIds[1])
-    expect(persistedDocument!.requestRecords.filter((entry) => entry.requestId === claimRequestIds[1])).toHaveLength(1)
-    expect(persistedDocument!.businessKeys[visitorOperationKey('claim', visitorIds[1]!)])
-      .toBe(claimRequestIds[1])
-    expect(persistedSave.gold).toBe(goldBeforeClaim + 136)
-    expect(persistedSave.stash.map((item) => item.id)).toEqual(stashBeforeRoundRenewingClaim)
-    expect(persistedSave.visitHistory).toHaveLength(2)
-    const retriedSecondVisitor = persistedSave.visitHistory
-      .flatMap((round) => round.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : []))
-      .find((visitor) => visitor.id === visitorIds[1])!
-    expect(retriedSecondVisitor.commission?.claimedAt).toBe(committedClaimedAt)
-    expect(persistedSave.revision).toBe(committedRevision)
-    expect(wrapper.text()).not.toContain('Network disconnected after commit')
-    expect(persistedSave.visitRound.id).toBe(originalRoundId)
-    expect(persistedSave.visitRound.number).toBe(1)
-    expect(wrapper.findAll('.visitor-post')).toHaveLength(0)
-    expect(wrapper.findAll('.visitor-slot--empty')).toHaveLength(2)
-    expect(wrapper.text()).toContain('Next arrival check')
   })
 
   it('removes a dismissed visitor immediately and keeps the other occupied post intact', async () => {
@@ -338,8 +272,8 @@ describe('visitor HTTP/store/UI journey', () => {
     await flushPromises()
     expect(visitors(persistedSave)[0]!.trades.map((trade) => trade.kind)).toEqual(['player_bought', 'player_sold'])
 
-    await expect(useGameStore().buyFromVisitor(currentVisitor.id, 'duplicate-buy')).rejects.toThrow('already completed a sale')
-    await expect(useGameStore().sellToVisitor(currentVisitor.id, 'duplicate-sale')).rejects.toThrow('already completed a purchase')
+    await expect(useGameStore().buyFromVisitor(currentVisitor.id, 'duplicate-buy')).rejects.toThrow('The requested action is unavailable')
+    await expect(useGameStore().sellToVisitor(currentVisitor.id, 'duplicate-sale')).rejects.toThrow('The requested action is unavailable')
     await wrapper.get(`[data-testid="dismiss-${currentVisitor.id}"]`).trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Network disconnected after dismiss commit')
