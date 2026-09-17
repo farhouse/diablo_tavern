@@ -94,6 +94,90 @@ describe('V2 visitor adapter', () => {
     expect(build).toThrow(error)
   })
 
+  it('rejects normative duplicate source entities, options and actions', () => {
+    expect(() => acceptContractPayload(negativeFixture('duplicate-source-entity-id'), {
+      kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: []
+    })).toThrow('contract_selection_unavailable')
+    expect(() => acceptContractPayload(negativeFixture('duplicate-source-option-id'), {
+      kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: []
+    })).toThrow('contract_selection_unavailable')
+    expect(() => reconcileGamePayload(negativeFixture('duplicate-action-in-container'))).toThrow('reconcile_unavailable')
+  })
+
+  it('rejects duplicate item, settlement, recovery and choice-group sources', () => {
+    const duplicateItem = fixture('integrated-contract')
+    duplicateItem.items.push(structuredClone(duplicateItem.items[0]!))
+    expect(() => acceptContractPayload(duplicateItem, {
+      kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['i1']
+    })).toThrow('contract_loan_unavailable')
+
+    const duplicateSettlement = fixture('integrated-settlement')
+    duplicateSettlement.settlements.push(structuredClone(duplicateSettlement.settlements[0]!))
+    expect(() => confirmSettlementPayload(duplicateSettlement, {
+      kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' }
+    })).toThrow('settlement_selection_unavailable')
+
+    const duplicateChoiceGroup = fixture('integrated-settlement')
+    const settlement = duplicateChoiceGroup.settlements[0]
+    if (!settlement || !('choiceGroups' in settlement)) throw new Error('Expected settlement preview')
+    settlement.choiceGroups.push(structuredClone(settlement.choiceGroups[0]!))
+    expect(() => confirmSettlementPayload(duplicateChoiceGroup, {
+      kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' }
+    })).toThrow('settlement_selection_unavailable')
+
+    const duplicateRecovery = fixture('integrated-recovery')
+    duplicateRecovery.recoveries.push(structuredClone(duplicateRecovery.recoveries[0]!))
+    expect(() => assignRecoveryPayload(duplicateRecovery, {
+      kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: []
+    })).toThrow('recovery_selection_unavailable')
+    expect(() => abandonRecoveryPayload(duplicateRecovery, {
+      kind: 'abandon_recovery', recoveryId: 'r1', acknowledgementId: 'ack-r1'
+    })).toThrow('abandon_recovery_unavailable')
+  })
+
+  it('requires exactly one published option and one action across enabled and disabled variants', () => {
+    const duplicateContractOption = fixture('integrated-contract')
+    const visitor = duplicateContractOption.visitors[0]
+    if (!visitor || visitor.state !== 'available') throw new Error('Expected available visitor')
+    visitor.contractOptions.push(structuredClone(visitor.contractOptions[0]!))
+    expect(() => acceptContractPayload(duplicateContractOption, {
+      kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: []
+    })).toThrow('contract_selection_unavailable')
+
+    const duplicateRecoveryOption = fixture('integrated-recovery')
+    const recovery = duplicateRecoveryOption.recoveries[0]
+    if (!recovery || recovery.state !== 'open') throw new Error('Expected open recovery')
+    recovery.options.push(structuredClone(recovery.options[0]!))
+    expect(() => assignRecoveryPayload(duplicateRecoveryOption, {
+      kind: 'recovery', recoveryId: 'r1', visitorId: 'v2', optionId: 'ro1', loanItemIds: []
+    })).toThrow('recovery_selection_unavailable')
+
+    const duplicateSettlementOption = fixture('integrated-settlement')
+    const settlement = duplicateSettlementOption.settlements[0]
+    if (!settlement || !('choiceGroups' in settlement)) throw new Error('Expected settlement preview')
+    settlement.choiceGroups[0]!.options.push(structuredClone(settlement.choiceGroups[0]!.options[0]!))
+    expect(() => confirmSettlementPayload(duplicateSettlementOption, {
+      kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' }
+    })).toThrow('settlement_option_unavailable')
+
+    const duplicateAction = fixture('integrated-contract')
+    const actionVisitor = duplicateAction.visitors[0]
+    if (!actionVisitor) throw new Error('Expected visitor')
+    actionVisitor.actions.push({
+      authorizationId: 'auth-disabled-duplicate',
+      action: 'accept_contract',
+      targetId: 'v1',
+      enabled: false,
+      label: { key: 'action.accept_contract', fallback: 'Aceptar contrato' },
+      reason: 'OPTION_STALE',
+      reasonText: { key: 'reason.option_stale', fallback: 'Opción vencida' },
+      consequences: []
+    })
+    expect(() => acceptContractPayload(duplicateAction, {
+      kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: []
+    })).toThrow('contract_selection_unavailable')
+  })
+
   it('starts expeditions only with the contract id from execution', () => {
     expect(startExpeditionPayload(fixture('integrated-expedition'), 'v1')).toEqual({ contractId: 'c1' })
     expect(() => startExpeditionPayload(fixture('integrated-expedition'), 'wrong-visitor')).toThrow('start_expedition_unavailable')

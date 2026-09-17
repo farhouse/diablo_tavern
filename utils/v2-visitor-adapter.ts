@@ -79,9 +79,8 @@ export function invalidateVisitorV2Selection(game: GameView, selection: VisitorV
 export function acceptContractPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'contract' }>): AcceptContractPayload {
   const visitor = findVisitor(game, selection.visitorId)
   const action = findEnabledAction<AcceptContractAction>(visitor?.actions, 'accept_contract')
-  const bindings = action?.execution.bindings.filter((candidate) => candidate.optionId === selection.optionId) ?? []
-  const binding = bindings.length === 1 ? bindings[0] : undefined
-  const publishedOption = visitor && contractOptions(visitor).some((option) => option.optionId === selection.optionId)
+  const binding = findUnique(action?.execution.bindings, (candidate) => candidate.optionId === selection.optionId)
+  const publishedOption = visitor && findUnique(contractOptions(visitor), (option) => option.optionId === selection.optionId)
   if (!visitor || !action || action.targetId !== visitor.visitorId || action.execution.visitorId !== visitor.visitorId || !binding || !publishedOption || !isFresh(binding.expiresAt, game.serverNow)) {
     throw new Error('contract_selection_unavailable')
   }
@@ -132,7 +131,9 @@ export function confirmSettlementPayload(game: GameView, selection: Extract<Visi
   const selectedOptionIds = action.execution.groups.map((group) => {
     const choiceGroup = findChoiceGroup(settlement, group.groupId)
     const selected = selection.selectedOptionIds[group.groupId] ?? choiceGroup?.defaultOptionId
-    if (!choiceGroup || !selected || !group.eligibleOptionIds.includes(selected) || !choiceGroup.options.some((option) => option.optionId === selected)) {
+    const eligibleOption = selected && findUnique(group.eligibleOptionIds, (optionId) => optionId === selected)
+    const publishedOption = selected && findUnique(choiceGroup?.options, (option) => option.optionId === selected)
+    if (!choiceGroup || !selected || !eligibleOption || !publishedOption) {
       throw new Error('settlement_option_unavailable')
     }
     return selected
@@ -147,11 +148,10 @@ export function confirmSettlementPayload(game: GameView, selection: Extract<Visi
 export function assignRecoveryPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'recovery' }>): AssignRecoveryPayload {
   const recovery = findRecovery(game, selection.recoveryId)
   const action = findEnabledAction<AssignRecoveryAction>(recovery?.actions, 'assign_recovery')
-  const bindings = action?.execution.bindings.filter((candidate) =>
+  const binding = findUnique(action?.execution.bindings, (candidate) =>
     candidate.optionId === selection.optionId && candidate.visitorId === selection.visitorId
-  ) ?? []
-  const binding = bindings.length === 1 ? bindings[0] : undefined
-  const publishedOption = recovery?.state === 'open' && recovery.options.some((option) => option.optionId === selection.optionId)
+  )
+  const publishedOption = recovery?.state === 'open' && findUnique(recovery.options, (option) => option.optionId === selection.optionId)
   const visitor = findVisitor(game, selection.visitorId)
   if (!recovery || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId || !binding || !publishedOption || !visitor || !['available', 'negotiating'].includes(visitor.state) || !isFresh(binding.expiresAt, game.serverNow)) {
     throw new Error('recovery_selection_unavailable')
@@ -221,11 +221,11 @@ function canAbandonRecovery(game: GameView, selection: Extract<VisitorV2Selectio
 }
 
 function findVisitor(game: GameView, visitorId: Id): VisitorView | undefined {
-  return game.visitors.find((visitor) => visitor.visitorId === visitorId)
+  return findUnique(game.visitors, (visitor) => visitor.visitorId === visitorId)
 }
 
 function findItem(game: GameView, itemId: Id) {
-  return game.items.find((item) => item.itemId === itemId)
+  return findUnique(game.items, (item) => item.itemId === itemId)
 }
 
 function isLoanableItem(game: GameView, itemId: Id): boolean {
@@ -244,20 +244,25 @@ function contractOptions(visitor: VisitorView) {
 }
 
 function findSettlement(game: GameView, settlementId: Id): SettlementView | undefined {
-  return game.settlements.find((settlement) => settlement.settlementId === settlementId)
+  return findUnique(game.settlements, (settlement) => settlement.settlementId === settlementId)
 }
 
 function findRecovery(game: GameView, recoveryId: Id): RecoveryView | undefined {
-  return game.recoveries.find((recovery) => recovery.recoveryId === recoveryId)
+  return findUnique(game.recoveries, (recovery) => recovery.recoveryId === recoveryId)
 }
 
 function findChoiceGroup(settlement: SettlementView, groupId: Id) {
-  return 'choiceGroups' in settlement ? settlement.choiceGroups.find((group) => group.groupId === groupId) : undefined
+  return 'choiceGroups' in settlement ? findUnique(settlement.choiceGroups, (group) => group.groupId === groupId) : undefined
 }
 
 function findEnabledAction<T extends ActionAvailability>(actions: readonly ActionAvailability[] | undefined, action: T['action']): T | null {
-  const match = actions?.find((candidate) => candidate.action === action && candidate.enabled)
-  return match ? match as T : null
+  const match = findUnique(actions, (candidate) => candidate.action === action)
+  return match?.enabled ? match as T : null
+}
+
+function findUnique<T>(values: readonly T[] | undefined, predicate: (value: T) => boolean): T | undefined {
+  const matches = values?.filter(predicate)
+  return matches?.length === 1 ? matches[0] : undefined
 }
 
 function isSubset(values: readonly Id[], allowed: readonly Id[]): boolean {
