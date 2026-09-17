@@ -33,6 +33,16 @@ function expectRejectedAndInvalidated(game: GameView, selection: VisitorV2Select
   expect(invalidateVisitorV2Selection(game, selection)).toBeNull()
 }
 
+function syncSettlementExecution(game: GameView) {
+  const settlementAction = game.settlements[0]?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+  const visitorAction = game.visitors[0]?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+  if (!settlementAction || settlementAction.action !== 'confirm_settlement' || !settlementAction.enabled
+    || !visitorAction || visitorAction.action !== 'confirm_settlement' || !visitorAction.enabled) {
+    throw new Error('Expected mirrored settlement actions')
+  }
+  visitorAction.execution = structuredClone(settlementAction.execution)
+}
+
 describe('V2 visitor adapter', () => {
   it('projects only published GameView slices without calculating economy or timers', () => {
     const game = fixture('integrated-contract')
@@ -202,6 +212,11 @@ describe('V2 visitor adapter', () => {
       selectedOptionIds: { g1: 'keep-foreign' }
     })).toThrow('settlement_option_unavailable')
 
+    for (const selectedOptionIds of [{}, { g1: 'renounce', extra: 'renounce' }] as Array<Record<string, string>>) {
+      const selection: Extract<VisitorV2Selection, { kind: 'settlement' }> = { kind: 'settlement', settlementId: 's1', selectedOptionIds }
+      expectRejectedAndInvalidated(game, selection, () => confirmSettlementPayload(game, selection), 'settlement_option_unavailable')
+    }
+
     const mixedGroup = fixture('integrated-settlement')
     const settlement = mixedGroup.settlements[0]
     if (!settlement || !('choiceGroups' in settlement)) throw new Error('Expected settlement preview')
@@ -217,9 +232,46 @@ describe('V2 visitor adapter', () => {
     if (!action || action.action !== 'confirm_settlement' || !action.enabled) throw new Error('Expected settlement action')
     action.execution.groups[0]?.eligibleOptionIds.push('other-group-option')
     action.execution.groups.push({ groupId: 'g2', eligibleOptionIds: ['other-group-option'] })
+    syncSettlementExecution(mixedGroup)
     expect(() => confirmSettlementPayload(mixedGroup, {
       kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'other-group-option' }
     })).toThrow('settlement_option_unavailable')
+  })
+
+  it('requires parity with the visitor settlement authorization', () => {
+    const mismatch = negativeFixture('enabled-disabled-projection-mismatch')
+    const selection: VisitorV2Selection = {
+      kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' }
+    }
+    expectRejectedAndInvalidated(mismatch, selection, () => confirmSettlementPayload(mismatch, selection), 'settlement_selection_unavailable')
+
+    const executionMismatch = fixture('integrated-settlement')
+    const visitorAction = executionMismatch.visitors[0]?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+    if (!visitorAction || visitorAction.action !== 'confirm_settlement' || !visitorAction.enabled) throw new Error('Expected visitor settlement action')
+    visitorAction.execution.previewVersion += 1
+    expectRejectedAndInvalidated(
+      executionMismatch,
+      selection,
+      () => confirmSettlementPayload(executionMismatch, selection),
+      'settlement_selection_unavailable'
+    )
+
+    for (const mutate of [
+      (game: GameView) => {
+        const action = game.visitors[0]?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+        if (!action) throw new Error('Expected visitor settlement action')
+        Object.assign(action, { reason: 'TERMINAL_ENTITY' })
+      },
+      (game: GameView) => {
+        const action = game.visitors[0]?.actions.find(candidate => candidate.action === 'confirm_settlement' && candidate.enabled)
+        if (action) action.targetId = 'foreign-visitor'
+      },
+      (game: GameView) => { game.visitors.push(structuredClone(game.visitors[0]!)) }
+    ]) {
+      const game = fixture('integrated-settlement')
+      mutate(game)
+      expectRejectedAndInvalidated(game, selection, () => confirmSettlementPayload(game, selection), 'settlement_selection_unavailable')
+    }
   })
 
   it.each([
@@ -247,6 +299,7 @@ describe('V2 visitor adapter', () => {
   ])('rejects settlement execution with mismatched %s', (_name, mutate) => {
     const game = fixture('integrated-settlement')
     mutate(game)
+    syncSettlementExecution(game)
     expect(() => confirmSettlementPayload(game, {
       kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' }
     })).toThrow('settlement_selection_unavailable')
@@ -279,6 +332,7 @@ describe('V2 visitor adapter', () => {
     if (!settlementView || !('expiresAt' in settlementView) || !settlementAction || settlementAction.action !== 'confirm_settlement' || !settlementAction.enabled) throw new Error('Expected settlement preview')
     settlementView.expiresAt = settlement.serverNow
     settlementAction.execution.expiresAt = settlement.serverNow
+    syncSettlementExecution(settlement)
     expect(() => confirmSettlementPayload(settlement, {
       kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' }
     })).toThrow('settlement_selection_unavailable')
@@ -420,8 +474,11 @@ describe('V2 visitor adapter', () => {
     settlement.choiceGroups.push(secondGroup)
     action.execution.groups.push({ groupId: 'g2', eligibleOptionIds: ['other-option', 'unused-option'] })
     mutate(game)
+    syncSettlementExecution(game)
 
-    const selection: VisitorV2Selection = { kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce' } }
+    const selection: VisitorV2Selection = {
+      kind: 'settlement', settlementId: 's1', selectedOptionIds: { g1: 'renounce', g2: 'other-option' }
+    }
     expectRejectedAndInvalidated(game, selection, () => confirmSettlementPayload(game, selection), 'settlement_selection_unavailable')
   })
 
@@ -564,6 +621,17 @@ describe('V2 visitor adapter', () => {
     })).toThrow('recovery_selection_unavailable')
   })
 
+  it.each(['assigned', 'recovered', 'failed', 'abandoned'] as const)('rejects abandonment retained on a %s recovery', (state) => {
+    const game = fixture('integrated-recovery')
+    const recovery = game.recoveries[0]
+    if (!recovery || recovery.state !== 'open') throw new Error('Expected open recovery')
+    Object.assign(recovery, { state })
+    const selection: VisitorV2Selection = {
+      kind: 'abandon_recovery', recoveryId: 'r1', acknowledgementId: 'ack-r1'
+    }
+    expectRejectedAndInvalidated(game, selection, () => abandonRecoveryPayload(game, selection), 'abandon_recovery_unavailable')
+  })
+
   it('invalidates local selections when a newer snapshot no longer publishes them', () => {
     const before = fixture('integrated-contract')
     const after = fixture('integrated-system')
@@ -574,7 +642,12 @@ describe('V2 visitor adapter', () => {
   })
 
   it('requires reconcile_game to be explicitly published', () => {
-    expect(reconcileGamePayload(fixture('integrated-system'))).toEqual({})
+    const game = fixture('integrated-system')
+    const action = game.actions.find(candidate => candidate.action === 'reconcile_game' && candidate.enabled)
+    if (!action || action.action !== 'reconcile_game' || !action.enabled) throw new Error('Expected reconcile action')
+    const payload = reconcileGamePayload(game)
+    expect(payload).toEqual({})
+    expect(payload).not.toBe(action.execution)
     expect(() => reconcileGamePayload(fixture('integrated-contract'))).toThrow('reconcile_unavailable')
   })
 })

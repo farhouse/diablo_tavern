@@ -106,7 +106,7 @@ export function startExpeditionPayload(game: GameView, visitorId: Id): StartExpe
 export function reconcileGamePayload(game: GameView): Record<string, never> {
   const action = findEnabledAction<ReconcileGameAction>(game.actions, 'reconcile_game')
   if (!action) throw new Error('reconcile_unavailable')
-  return action.execution
+  return {}
 }
 
 export function confirmSettlementPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'settlement' }>): ConfirmSettlementPayload {
@@ -115,12 +115,12 @@ export function confirmSettlementPayload(game: GameView, selection: Extract<Visi
   if (!settlement || !action || !validConfirmSettlementAction(game, settlement, action)) {
     throw new Error('settlement_selection_unavailable')
   }
-  if (Object.keys(selection.selectedOptionIds).some((groupId) => !action.execution.groups.some((group) => group.groupId === groupId))) {
+  if (!hasSameUniqueIds(Object.keys(selection.selectedOptionIds), action.execution.groups.map(({ groupId }) => groupId))) {
     throw new Error('settlement_option_unavailable')
   }
   const selectedOptionIds = action.execution.groups.map((group) => {
     const choiceGroup = findChoiceGroup(settlement, group.groupId)
-    const selected = selection.selectedOptionIds[group.groupId] ?? choiceGroup?.defaultOptionId
+    const selected = selection.selectedOptionIds[group.groupId]
     const eligibleOption = selected && findUnique(group.eligibleOptionIds, (optionId) => optionId === selected)
     const publishedOption = selected && findUnique(choiceGroup?.options, (option) => option.optionId === selected)
     if (!choiceGroup || !selected || !eligibleOption || !publishedOption) {
@@ -160,7 +160,7 @@ export function assignRecoveryPayload(game: GameView, selection: Extract<Visitor
 export function abandonRecoveryPayload(game: GameView, selection: Extract<VisitorV2Selection, { kind: 'abandon_recovery' }>): AbandonRecoveryPayload {
   const recovery = findRecovery(game, selection.recoveryId)
   const action = findEnabledAction<AbandonRecoveryAction>(recovery?.actions, 'abandon_recovery')
-  if (!recovery || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId) {
+  if (!recovery || recovery.state !== 'open' || !action || action.targetId !== recovery.recoveryId || action.execution.recoveryId !== recovery.recoveryId) {
     throw new Error('abandon_recovery_unavailable')
   }
   if (action.execution.acknowledgement.acknowledgementId !== selection.acknowledgementId || !isFresh(action.execution.acknowledgement.expiresAt, game.serverNow)) throw new Error('recovery_acknowledgement_unavailable')
@@ -224,8 +224,18 @@ function validAcceptContractAction(game: GameView, visitor: VisitorView, action:
 }
 
 function validConfirmSettlementAction(game: GameView, settlement: SettlementView, action: ConfirmSettlementAction): boolean {
+  const visitor = findUnique(game.visitors, candidate =>
+    candidate.state === 'awaiting_settlement' && candidate.settlementId === settlement.settlementId
+  )
+  const visitorAction = findUnique(visitor?.actions, candidate => candidate.action === 'confirm_settlement')
   if (
     settlement.state !== 'preview_ready'
+    || !visitor
+    || !visitorAction
+    || !uniqueIds(game.visitors, ({ visitorId }) => visitorId)
+    || !('targetId' in visitorAction)
+    || visitorAction.targetId !== visitor.visitorId
+    || !sameSettlementAuthorization(action, visitorAction)
     || !uniqueIds(game.settlements, ({ settlementId }) => settlementId)
     || action.targetId !== settlement.settlementId
     || action.execution.settlementId !== settlement.settlementId
@@ -235,6 +245,31 @@ function validConfirmSettlementAction(game: GameView, settlement: SettlementView
     || !hasSameUniqueIds(action.execution.groups.map(({ groupId }) => groupId), settlement.choiceGroups.map(({ groupId }) => groupId))
   ) return false
   return true
+}
+
+function sameSettlementAuthorization(settlementAction: ConfirmSettlementAction, visitorAction: ActionAvailability): boolean {
+  if (
+    visitorAction.action !== settlementAction.action
+    || visitorAction.authorizationId !== settlementAction.authorizationId
+    || visitorAction.enabled !== settlementAction.enabled
+    || actionReason(visitorAction) !== actionReason(settlementAction)
+    || !visitorAction.enabled
+  ) return false
+
+  return visitorAction.execution.settlementId === settlementAction.execution.settlementId
+    && visitorAction.execution.previewVersion === settlementAction.execution.previewVersion
+    && visitorAction.execution.expiresAt === settlementAction.execution.expiresAt
+    && visitorAction.execution.groups.length === settlementAction.execution.groups.length
+    && visitorAction.execution.groups.every((group, index) => {
+      const settlementGroup = settlementAction.execution.groups[index]
+      return settlementGroup !== undefined
+        && group.groupId === settlementGroup.groupId
+        && sameIdsInOrder(group.eligibleOptionIds, settlementGroup.eligibleOptionIds)
+    })
+}
+
+function actionReason(action: ActionAvailability) {
+  return 'reason' in action ? action.reason : undefined
 }
 
 function validAssignRecoveryAction(game: GameView, recovery: RecoveryView, action: AssignRecoveryAction): boolean {
@@ -341,6 +376,10 @@ function uniqueRecoveryBindings(bindings: readonly { optionId: Id; visitorId: Id
 
 function hasSameUniqueIds(left: readonly Id[], right: readonly Id[]): boolean {
   return !hasDuplicates(left) && !hasDuplicates(right) && left.length === right.length && isSubset(left, right)
+}
+
+function sameIdsInOrder(left: readonly Id[], right: readonly Id[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 function assertNever(value: never): never {
