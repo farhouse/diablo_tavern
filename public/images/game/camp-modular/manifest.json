@@ -27,7 +27,7 @@
       "y": 91,
       "anchor": "top-left",
       "zIndex": 10,
-      "alphaBBox": { "x": 5, "y": 14, "width": 330, "height": 243 },
+      "alphaBBox": { "x": 1, "y": 1, "width": 358, "height": 270 },
       "notes": "Purchasable expansion. Includes only its own amber light and contact shadow."
     },
     {
@@ -39,7 +39,7 @@
       "y": 215,
       "anchor": "top-left",
       "zIndex": 20,
-      "alphaBBox": { "x": 0, "y": 0, "width": 447, "height": 315 },
+      "alphaBBox": { "x": 1, "y": 1, "width": 445, "height": 319 },
       "notes": "Purchasable expansion. Includes only its own violet light and contact shadow; intentionally reaches the right canvas edge."
     },
     {

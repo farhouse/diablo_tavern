@@ -16,6 +16,35 @@ struct Layer {
   let y: Int
 }
 
+struct Manifest: Decodable {
+  let canvas: ManifestCanvas
+  let layers: [ManifestLayer]
+  let compositions: [String: [String]]
+}
+
+struct ManifestCanvas: Decodable {
+  let width: Int
+  let height: Int
+}
+
+struct ManifestLayer: Decodable {
+  let id: String
+  let file: String
+  let width: Int
+  let height: Int
+  let x: Int
+  let y: Int
+  let zIndex: Int
+  let alphaBBox: ManifestRect?
+}
+
+struct ManifestRect: Decodable {
+  let x: Int
+  let y: Int
+  let width: Int
+  let height: Int
+}
+
 func loadPNG(_ path: String) throws -> CGImage {
   let url = URL(fileURLWithPath: path) as CFURL
   guard let source = CGImageSourceCreateWithURL(url, nil),
@@ -107,6 +136,23 @@ func alphaRange(_ image: CGImage) throws -> ClosedRange<UInt8> {
   return minimum...maximum
 }
 
+func clearedAlphaFringe(_ image: CGImage, threshold: UInt8 = 3) throws -> CGImage {
+  let context = try makeContext(width: image.width, height: image.height)
+  context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+  guard let data = context.data else { throw RasterError(description: "Unable to normalize alpha fringe") }
+  let bytes = data.bindMemory(to: UInt8.self, capacity: image.width * image.height * 4)
+  for pixel in 0..<(image.width * image.height) where bytes[pixel * 4 + 3] <= threshold {
+    bytes[pixel * 4] = 0
+    bytes[pixel * 4 + 1] = 0
+    bytes[pixel * 4 + 2] = 0
+    bytes[pixel * 4 + 3] = 0
+  }
+  guard let result = context.makeImage() else {
+    throw RasterError(description: "Unable to render normalized alpha image")
+  }
+  return result
+}
+
 func trimmed(_ image: CGImage, padding: Int = 4) throws -> CGImage {
   let bounds = try alphaBounds(image)
   let x = max(0, Int(bounds.minX) - padding)
@@ -146,48 +192,117 @@ func contrastSheet(_ image: CGImage) throws -> CGImage {
   return result
 }
 
-guard CommandLine.arguments.count == 5 else {
-  fputs("usage: build-camp-modular.swift REFERENCE BASE STASH APPRAISER\n", stderr)
-  exit(2)
+func loadManifest(_ path: String) throws -> Manifest {
+  try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+}
+
+func manifestLayer(_ id: String, in manifest: Manifest) throws -> ManifestLayer {
+  guard let layer = manifest.layers.first(where: { $0.id == id }) else {
+    throw RasterError(description: "Manifest layer not found: \(id)")
+  }
+  return layer
+}
+
+func renderedPixels(_ image: CGImage) throws -> Data {
+  let context = try makeContext(width: image.width, height: image.height)
+  context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+  guard let data = context.data else { throw RasterError(description: "Unable to read rendered pixels") }
+  return Data(bytes: data, count: image.width * image.height * 4)
+}
+
+func compose(_ ids: [String], manifest: Manifest, output: String) throws -> CGImage {
+  let layers = try ids.map { id -> Layer in
+    let item = try manifestLayer(id, in: manifest)
+    let image = try loadPNG("\(output)/\(item.file)")
+    return Layer(name: id, image: image, x: item.x, y: item.y)
+  }
+  return try render(width: manifest.canvas.width, height: manifest.canvas.height, layers: layers)
+}
+
+func verify(manifest: Manifest, output: String) throws {
+  for item in manifest.layers {
+    let image = try loadPNG("\(output)/\(item.file)")
+    guard image.width == item.width, image.height == item.height else {
+      throw RasterError(description: "Dimension mismatch for \(item.file): \(image.width)x\(image.height)")
+    }
+    if let expected = item.alphaBBox {
+      let actual = try alphaBounds(image)
+      let matches = Int(actual.minX) == expected.x && Int(actual.minY) == expected.y
+        && Int(actual.width) == expected.width && Int(actual.height) == expected.height
+      guard matches else { throw RasterError(description: "Alpha bounds mismatch for \(item.file): \(actual)") }
+      guard try alphaRange(image) == UInt8.min...UInt8.max else {
+        throw RasterError(description: "Expected full transparent/opaque alpha range in \(item.file)")
+      }
+    }
+  }
+  for (file, ids) in manifest.compositions {
+    let rebuilt = try compose(ids, manifest: manifest, output: output)
+    let committed = try loadPNG("\(output)/\(file)")
+    guard try renderedPixels(rebuilt) == renderedPixels(committed) else {
+      throw RasterError(description: "Pixel mismatch in composition: \(file)")
+    }
+  }
 }
 
 let root = FileManager.default.currentDirectoryPath
 let output = "\(root)/public/images/game/camp-modular"
-let reference = try loadPNG(CommandLine.arguments[1])
-let generatedBase = try loadPNG(CommandLine.arguments[2])
-let generatedStash = try trimmed(loadPNG(CommandLine.arguments[3]))
-let generatedAppraiser = try trimmed(loadPNG(CommandLine.arguments[4]))
+let manifest = try loadManifest("\(output)/manifest.json")
 
-let canvasWidth = reference.width
-let canvasHeight = reference.height
-let base = try resized(generatedBase, width: canvasWidth, height: canvasHeight)
-let stashWidth = 360
-let stashHeight = Int((Double(generatedStash.height) / Double(generatedStash.width) * Double(stashWidth)).rounded())
-let appraiserWidth = 447
-let appraiserHeight = Int((Double(generatedAppraiser.height) / Double(generatedAppraiser.width) * Double(appraiserWidth)).rounded())
-let stash = try resized(generatedStash, width: stashWidth, height: stashHeight)
-let appraiser = try resized(generatedAppraiser, width: appraiserWidth, height: appraiserHeight)
-let heroesUI = try cropped(reference, x: 0, y: 780, width: canvasWidth, height: canvasHeight - 780)
+if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--verify" {
+  try verify(manifest: manifest, output: output)
+  print("verification=ok")
+  exit(0)
+}
 
-let stashLayer = Layer(name: "stashWagon", image: stash, x: 70, y: 91)
-let appraiserLayer = Layer(name: "appraiser", image: appraiser, x: 1225, y: 215)
-let uiLayer = Layer(name: "heroesUI", image: heroesUI, x: 0, y: 780)
-let baseLayer = Layer(name: "campBase", image: base, x: 0, y: 0)
+let defaultSources = [
+  "\(root)/references/alta-53/01-campamento-anochecer-v2.png",
+  "\(root)/references/alta-53/imagegen/camp-base-selected.png",
+  "\(root)/references/alta-53/imagegen/stash-wagon-selected.png",
+  "\(root)/references/alta-53/imagegen/appraiser-selected.png"
+]
+let sources: [String]
+if CommandLine.arguments.count == 1 {
+  sources = defaultSources
+} else if CommandLine.arguments.count == 5 {
+  sources = Array(CommandLine.arguments.dropFirst())
+} else {
+  fputs("usage: build-camp-modular.swift [--verify | REFERENCE BASE STASH APPRAISER]\n", stderr)
+  exit(2)
+}
 
-try savePNG(base, to: "\(output)/camp-base.png")
-try savePNG(stash, to: "\(output)/expansion-stash-wagon.png")
-try savePNG(appraiser, to: "\(output)/expansion-appraiser.png")
-try savePNG(heroesUI, to: "\(output)/heroes-ui-strip.png")
-try savePNG(try render(width: canvasWidth, height: canvasHeight, layers: [baseLayer, uiLayer]), to: "\(output)/comparison-base.png")
-try savePNG(try render(width: canvasWidth, height: canvasHeight, layers: [baseLayer, stashLayer, appraiserLayer, uiLayer]), to: "\(output)/comparison-expanded.png")
+let reference = try loadPNG(sources[0])
+let generatedBase = try loadPNG(sources[1])
+let generatedStash = try trimmed(clearedAlphaFringe(loadPNG(sources[2])))
+let generatedAppraiser = try trimmed(clearedAlphaFringe(loadPNG(sources[3])))
+guard reference.width == manifest.canvas.width, reference.height == manifest.canvas.height else {
+  throw RasterError(description: "Reference dimensions do not match manifest canvas")
+}
+
+let baseSpec = try manifestLayer("campBase", in: manifest)
+let stashSpec = try manifestLayer("stashWagon", in: manifest)
+let appraiserSpec = try manifestLayer("appraiser", in: manifest)
+let uiSpec = try manifestLayer("heroesUI", in: manifest)
+let base = try resized(generatedBase, width: baseSpec.width, height: baseSpec.height)
+let stash = try resized(generatedStash, width: stashSpec.width, height: stashSpec.height)
+let appraiser = try resized(generatedAppraiser, width: appraiserSpec.width, height: appraiserSpec.height)
+let heroesUI = try cropped(reference, x: 0, y: uiSpec.y, width: uiSpec.width, height: uiSpec.height)
+
+for (spec, image) in [(baseSpec, base), (stashSpec, stash), (appraiserSpec, appraiser), (uiSpec, heroesUI)] {
+  try savePNG(image, to: "\(output)/\(spec.file)")
+}
+for (file, ids) in manifest.compositions {
+  try savePNG(try compose(ids, manifest: manifest, output: output), to: "\(output)/\(file)")
+}
 try savePNG(try contrastSheet(stash), to: "\(root)/.multica/verify-stash-contrast.png")
 try savePNG(try contrastSheet(appraiser), to: "\(root)/.multica/verify-appraiser-contrast.png")
+try verify(manifest: manifest, output: output)
 
-print("canvas=\(canvasWidth)x\(canvasHeight)")
-print("stash=\(stash.width)x\(stash.height)@70,91")
-print("appraiser=\(appraiser.width)x\(appraiser.height)@1225,215")
-print("heroesUI=\(heroesUI.width)x\(heroesUI.height)@0,780")
+print("canvas=\(manifest.canvas.width)x\(manifest.canvas.height)")
+print("stash=\(stash.width)x\(stash.height)@\(stashSpec.x),\(stashSpec.y)")
+print("appraiser=\(appraiser.width)x\(appraiser.height)@\(appraiserSpec.x),\(appraiserSpec.y)")
+print("heroesUI=\(heroesUI.width)x\(heroesUI.height)@\(uiSpec.x),\(uiSpec.y)")
 print("stashAlphaBBox=\(try alphaBounds(stash))")
 print("appraiserAlphaBBox=\(try alphaBounds(appraiser))")
 print("stashAlphaRange=\(try alphaRange(stash))")
 print("appraiserAlphaRange=\(try alphaRange(appraiser))")
+print("verification=ok")
