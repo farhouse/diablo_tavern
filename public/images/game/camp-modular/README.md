@@ -22,6 +22,7 @@ This directory decomposes the approved ALTA-51 camp composition into a clean bas
 Coordinates use a top-left origin and a top-left anchor. The expanded scene below the UI is made exclusively from `camp-base.png` and the two expansion PNGs. Rebuild and verify from the tracked sources with:
 
 ```sh
+mkdir -p .multica
 swiftc scripts/build-camp-modular.swift -o .multica/build-camp-modular
 .multica/build-camp-modular
 .multica/build-camp-modular --verify
