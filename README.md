@@ -101,7 +101,7 @@ bundled browser is absent. To use a system Chromium build instead, set
 3. **Trade** — buy one offer or sell one quoted stash item; useful equipment can improve a visitor's commission odds.
 4. **Commission** — review region, duration, success chance, and all outcomes before sending the visitor.
 5. **Return** — wait in real time, then claim a complete, partial, or failed result exactly once.
-6. **Stash and Caravan** — identify stock, expand storage, or use emergency salvage for 25% of reference value.
+6. **Stash and Caravan** — identify stock, send unidentified items to the Appraiser, or expand storage.
 
 ## Features
 

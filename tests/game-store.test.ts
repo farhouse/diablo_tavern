@@ -15,6 +15,10 @@ describe('visitor store mutations', () => {
     vi.restoreAllMocks()
   })
 
+  it('does not expose the retired salvage mutation', () => {
+    expect(useGameStore()).not.toHaveProperty('salvage')
+  })
+
   it('does not update the save optimistically and blocks a duplicate in-flight mutation', async () => {
     const store = useGameStore()
     const initial = createSaveGame('store-test')

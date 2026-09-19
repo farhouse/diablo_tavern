@@ -55,14 +55,6 @@
             <p v-if="appraiseDisabledReason(item.id)" :id="`appraise-reason-${item.id}`" class="error">{{ appraiseDisabledReason(item.id) }}</p>
           </div>
         </div>
-        <details class="salvage-details">
-          <summary>Emergency salvage</summary>
-          <p class="muted">Destroys this item for {{ salvageValue(item) }}g — only 25% of reference value. A visitor may offer more.</p>
-          <button class="btn ghost" type="button" :disabled="Boolean(salvageDisabledReason(item.id))" :aria-describedby="salvageDisabledReason(item.id) ? `salvage-reason-${item.id}` : undefined" @click="salvage(item)">
-            {{ busyItem === item.id ? 'Salvaging…' : `Salvage for ${salvageValue(item)}g` }}
-          </button>
-          <p v-if="salvageDisabledReason(item.id)" :id="`salvage-reason-${item.id}`" class="error">{{ salvageDisabledReason(item.id) }}</p>
-        </details>
       </article>
     </section>
 
@@ -119,26 +111,12 @@ function appraiseDisabledReason(itemId: string): string {
   return ''
 }
 
-function salvageDisabledReason(itemId: string): string {
-  if (busyItem.value) return busyItem.value === itemId ? 'Salvage is being processed.' : 'Another stash action is being processed.'
-  if (isInQueue(itemId)) return 'The Appraiser is currently handling this item.'
-  return ''
-}
-
-function salvageValue(item: Item): number {
-  return Math.max(1, Math.floor(item.value * 0.25))
-}
-
 async function identify(itemId: string) {
   await perform(itemId, 'Item identified.', () => game.identify(itemId))
 }
 
 async function queueAppraise(itemId: string) {
   await perform(itemId, 'Item added to the Appraiser queue.', () => game.startAppraisal(itemId))
-}
-
-async function salvage(item: Item) {
-  await perform(item.id, `${itemName(item)} salvaged for ${salvageValue(item)}g.`, () => game.salvage(item.id))
 }
 
 async function perform(itemId: string, message: string, action: () => Promise<void>) {
@@ -172,9 +150,6 @@ function capitalize(value: string): string {
 .item-heading-copy .row, .item-heading-copy p { margin: 0; }
 .affix-list { color: var(--ok); }
 .item-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.salvage-details { border-top: 1px solid var(--line); padding-top: 0.75rem; }
-.salvage-details summary { color: var(--muted); cursor: pointer; }
-.salvage-details p { margin: 0.6rem 0; }
 .empty-stash { align-items: start; display: grid; gap: 0.65rem; justify-items: start; }
 .stash-skeleton { animation: pulse 1.5s ease-in-out infinite; min-height: 14rem; }
 @media (prefers-reduced-motion: reduce) { .stash-skeleton { animation: none; } }

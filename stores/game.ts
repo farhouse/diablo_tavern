@@ -34,9 +34,6 @@ export const useGameStore = defineStore('game', {
     async identify(itemId: string) {
       await this.runSaveMutation(`identify:${itemId}`, `/api/items/${itemId}/identify`)
     },
-    async salvage(itemId: string) {
-      await this.runSaveMutation(`salvage:${itemId}`, `/api/items/${itemId}/salvage`)
-    },
     async buyFromVisitor(visitorId: string, offerId: string) {
       await this.runVisitorMutation('buy', visitorId, offerId, { offerId })
     },
