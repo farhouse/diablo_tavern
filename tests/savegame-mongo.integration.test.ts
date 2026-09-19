@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -479,6 +479,53 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
       .toBeInstanceOf(RevisionConflictError)
     expect((await collection.findOne({ userId }))?.ledger).toHaveLength(4)
+  })
+
+  it('reconciles and reloads sequential configured-reward enchants against real MongoDB', async () => {
+    const { getPersistedGameV3, isPersistedCanonical, mutateEquipmentV2Atomic, PersistedGameCorruptError, reconcilePersistedGameV3 } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const userId = userIds[24]!
+    const claimed = await claimConfiguredMongoReward(userId)
+    const { rewardItemId } = claimed
+    const sealedAffixes = structuredClone(claimed.persisted.itemV2ById[rewardItemId]!.sealedAffixes!)
+    const provenance = structuredClone(claimed.persisted.itemV2ById[rewardItemId]!.provenance!)
+    const queuedAt = new Date('2026-09-15T12:00:00.000Z')
+    const option = executionOption(mapPersistedGameToGameView(claimed.persisted, queuedAt), rewardItemId, 'queue_enchanter_job')
+
+    const queued = await mutateEquipmentV2Atomic(userId, 'mongo-reward-enchanter-queue', claimed.persisted.revision, {
+      action: 'queue_enchanter_job', itemId: rewardItemId, optionId: option.optionId
+    }, { ...fixedDeps(queuedAt), uuid: () => 'mongo-reward-enchanter-one' })
+    const firstJobId = Object.keys(queued.serviceJobStateById).find((id) => id.startsWith('enchanter-'))!
+    const completedOnce = await reconcilePersistedGameV3(userId, fixedDeps(new Date('2026-09-15T12:02:00.000Z')))
+    const secondQueuedAt = new Date('2026-09-15T12:03:00.000Z')
+    const secondOption = executionOption(mapPersistedGameToGameView(completedOnce, secondQueuedAt), rewardItemId, 'queue_enchanter_job')
+    const queuedAgain = await mutateEquipmentV2Atomic(userId, 'mongo-reward-enchanter-queue-again', completedOnce.revision, {
+      action: 'queue_enchanter_job', itemId: rewardItemId, optionId: secondOption.optionId
+    }, { ...fixedDeps(secondQueuedAt), uuid: () => 'mongo-reward-enchanter-two' })
+    const secondJobId = Object.keys(queuedAgain.serviceJobStateById).find((id) => id !== firstJobId)!
+    await reconcilePersistedGameV3(userId, fixedDeps(new Date('2026-09-15T12:05:00.000Z')))
+    await reconcilePersistedGameV3(userId, fixedDeps(new Date('2026-09-15T12:06:00.000Z')))
+    const reloaded = await getPersistedGameV3(userId)
+    const enchantedAffixes = [firstJobId, secondJobId].map((jobId) => reloaded.serviceJobStateById[jobId]!.result.affix!)
+
+    expect(reloaded.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
+    expect(reloaded.serviceJobStateById[firstJobId]).toMatchObject({ status: 'completed', itemId: rewardItemId })
+    expect(reloaded.serviceJobStateById[secondJobId]).toMatchObject({ status: 'completed', itemId: rewardItemId })
+    expect(reloaded.itemV2ById[rewardItemId]).toMatchObject({
+      sealedAffixes,
+      provenance,
+      enchantCount: 2
+    })
+    expect(reloaded.itemsById[rewardItemId]!.affixes).toEqual([...sealedAffixes, ...enchantedAffixes])
+    expect(isPersistedCanonical(reloaded)).toBe(true)
+
+    const fabricated = structuredClone(reloaded)
+    fabricated.serviceJobStateById[secondJobId]!.result.affix = { stat: 'life', value: 999 }
+    fabricated.itemsById[rewardItemId]!.affixes.at(-1)!.stat = 'life'
+    fabricated.itemsById[rewardItemId]!.affixes.at(-1)!.value = 999
+    expect(isPersistedCanonical(fabricated)).toBe(false)
+    await collection.replaceOne({ userId }, fabricated)
+    await expect(getPersistedGameV3(userId)).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
 
   it('rejects a declared V3 document with legacy or incomplete nested fields', async () => {

@@ -4,7 +4,7 @@ import type { Item, SaveGame, VisitRound, Visitor, VisitorCommission, VisitorOff
 import { createSaveGame, LEGACY_SAVE_FIELDS, normalizeSaveGame, SAVE_SCHEMA_VERSION } from '~/utils/game-logic'
 import { refreshVisitRound } from '~/utils/visitor-logic'
 import { applyItemTransition, type ItemTransitionCommand } from '~/server/domain/item-transitions'
-import { applyEquipmentV2Command, authorizeEquipmentV2Command, type EquipmentV2Command } from '~/server/domain/equipment-v2'
+import { applyEquipmentV2Command, authorizeEquipmentV2Command, getEnchanterOption, type EquipmentV2Command } from '~/server/domain/equipment-v2'
 import { generateLootForZone, lootTableIdForZone, LOOT_CONFIG_VERSION } from '~/server/domain/loot-v2'
 import { type DbSaveGame, saveGamesCollection } from '~/server/utils/db'
 
@@ -1112,7 +1112,7 @@ export function isPersistedCanonical(
       if (placement?.ownerKind !== 'caravan' || placement.custodyKind !== 'service' || placement.custodyId !== jobId) return false
     } else {
       if (container.itemIds.length !== 0) return false
-      if (placement?.ownerKind !== 'caravan' || placement.custodyKind !== 'stash') return false
+      if (placement?.custodyKind === 'service' && placement.custodyId === jobId) return false
     }
     if (Date.parse(serviceState.startedAt) < Date.parse(serviceState.queuedAt)) return false
     if (Date.parse(serviceState.completesAt) < Date.parse(serviceState.startedAt)) return false
@@ -1121,7 +1121,29 @@ export function isPersistedCanonical(
     if (serviceState.status === 'cancelled' ? !serviceState.cancelledAt : serviceState.cancelledAt) return false
     if (serviceState.service === 'blacksmith') {
       if (!Number.isInteger(serviceState.result.blacksmithLevel) || serviceState.result.affix !== undefined || serviceState.result.enchantCount !== undefined) return false
-    } else if (!serviceState.result.affix || !Number.isInteger(serviceState.result.enchantCount) || serviceState.result.blacksmithLevel !== undefined) return false
+    } else {
+      if (!serviceState.result.affix || !Number.isInteger(serviceState.result.enchantCount)
+        || Number(serviceState.result.enchantCount) < 1 || serviceState.result.blacksmithLevel !== undefined) return false
+      const expected = getEnchanterOption(itemsById[serviceState.itemId]!, {
+        enchantCount: Number(serviceState.result.enchantCount) - 1
+      }).affix
+      if (expected.stat !== serviceState.result.affix.stat || expected.value !== serviceState.result.affix.value) return false
+    }
+  }
+  const enchanterItemIds = new Set(Object.values(serviceJobStateById)
+    .filter((job) => job.service === 'enchanter')
+    .map((job) => job.itemId))
+  for (const itemId of enchanterItemIds) {
+    const jobs = Object.values(serviceJobStateById).filter((job) => job.service === 'enchanter' && job.itemId === itemId)
+    const completed = jobs
+      .filter((job) => job.status === 'completed')
+      .sort((left, right) => Number(left.result.enchantCount) - Number(right.result.enchantCount))
+    if (((itemV2ById as Record<string, PersistedItemV2State>)[itemId]?.enchantCount ?? 0) !== completed.length
+      || completed.some((job, index) => job.result.enchantCount !== index + 1)) return false
+    const inFlight = jobs.filter((job) => job.status === 'queued' || job.status === 'active')
+    if (inFlight.length > 1 || inFlight.some((job) => job.result.enchantCount !== completed.length + 1)) return false
+    const aborted = jobs.filter((job) => job.status === 'failed' || job.status === 'cancelled')
+    if (aborted.some((job) => Number(job.result.enchantCount) > completed.length + 1)) return false
   }
   if (Object.values(itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length > Number(candidate.stashLimit)) return false
 
@@ -1427,13 +1449,22 @@ function isCommissionRewardLoot(game: PersistedGameV3, commission: PersistedVisi
   }
   const sealedAffixes = state.sealedAffixes ?? []
   const itemAffixes = item.affixes ?? []
+  const completedEnchantments = Object.entries(game.serviceJobStateById)
+    .filter(([, job]) => job.service === 'enchanter' && job.itemId === commission.rewardItemId && job.status === 'completed')
+    .sort(([, left], [, right]) => Number(left.result.enchantCount) - Number(right.result.enchantCount))
+  if ((state.enchantCount ?? 0) !== completedEnchantments.length
+    || completedEnchantments.some(([, job], index) => job.result.enchantCount !== index + 1 || !job.result.affix)) return false
+  const canonicalAffixes = [
+    ...sealedAffixes,
+    ...completedEnchantments.map(([, job]) => job.result.affix!)
+  ]
   return provenance.businessKey === `loot:${commission.id}:reward`
     && provenance.zoneId === commission.regionId
     && provenance.configVersion === LOOT_CONFIG_VERSION
     && provenance.lootTableId === lootTableId
     && provenance.droppedAt === commission.finishesAt
-    && sealedAffixes.length === itemAffixes.length
-    && sealedAffixes.every((affix, index) => affix.stat === itemAffixes[index]?.stat
+    && canonicalAffixes.length === itemAffixes.length
+    && canonicalAffixes.every((affix, index) => affix.stat === itemAffixes[index]?.stat
       && affix.value === itemAffixes[index]?.value)
 }
 

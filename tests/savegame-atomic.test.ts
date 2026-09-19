@@ -334,6 +334,94 @@ describe('atomic persisted-game mutation', () => {
     expect(isPersistedCanonical(document)).toBe(true)
   })
 
+  it('reconciles sequential enchanter jobs for a claimed configured reward and reloads them canonically', async () => {
+    const { getEnchanterOption } = await import('../server/domain/equipment-v2')
+    const { getPersistedGameV3, isPersistedCanonical, mutateEquipmentV2Atomic, reconcilePersistedGameV3, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const claimed = await claimConfiguredReward()
+    const { rewardItemId } = claimed
+    const sealedAffixes = structuredClone(claimed.persisted.itemV2ById[rewardItemId]!.sealedAffixes!)
+    const provenance = structuredClone(claimed.persisted.itemV2ById[rewardItemId]!.provenance!)
+    const queuedAt = new Date('2026-09-15T12:00:00.000Z')
+    const firstDependencies = { ...fixedDeps(queuedAt), uuid: () => 'reward-enchanter-one' }
+    document = claimed.persisted
+
+    const option = executionOption(mapPersistedGameToGameView(claimed.persisted, queuedAt), rewardItemId, 'queue_enchanter_job')
+    const queued = await mutateEquipmentV2Atomic('atomic-user', 'reward-enchanter-queue', claimed.persisted.revision, {
+      action: 'queue_enchanter_job', itemId: rewardItemId, optionId: option.optionId
+    }, firstDependencies)
+    const firstJobId = Object.keys(queued.serviceJobStateById).find((id) => id.startsWith('enchanter-'))!
+    const completedOnce = await reconcilePersistedGameV3('atomic-user', fixedDeps(new Date('2026-09-15T12:02:00.000Z')))
+    const secondQueuedAt = new Date('2026-09-15T12:03:00.000Z')
+    const secondOption = executionOption(mapPersistedGameToGameView(completedOnce, secondQueuedAt), rewardItemId, 'queue_enchanter_job')
+    const queuedAgain = await mutateEquipmentV2Atomic('atomic-user', 'reward-enchanter-queue-again', completedOnce.revision, {
+      action: 'queue_enchanter_job', itemId: rewardItemId, optionId: secondOption.optionId
+    }, { ...fixedDeps(secondQueuedAt), uuid: () => 'reward-enchanter-two' })
+    const secondJobId = Object.keys(queuedAgain.serviceJobStateById).find((id) => id !== firstJobId)!
+    expect(queuedAgain.serviceJobStateById[firstJobId]?.status).toBe('completed')
+
+    const completed = await reconcilePersistedGameV3('atomic-user', fixedDeps(new Date('2026-09-15T12:05:00.000Z')))
+    const reloaded = await getPersistedGameV3('atomic-user')
+    const enchantedAffixes = [firstJobId, secondJobId].map((jobId) => completed.serviceJobStateById[jobId]!.result.affix!)
+
+    expect(reloaded.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
+    expect(reloaded.serviceJobStateById[firstJobId]).toMatchObject({ status: 'completed', itemId: rewardItemId })
+    expect(reloaded.serviceJobStateById[secondJobId]).toMatchObject({ status: 'completed', itemId: rewardItemId })
+    expect(reloaded.itemV2ById[rewardItemId]).toMatchObject({
+      sealedAffixes,
+      provenance,
+      enchantCount: 2
+    })
+    expect(reloaded.itemsById[rewardItemId]!.affixes).toEqual([...sealedAffixes, ...enchantedAffixes])
+    expect(isPersistedCanonical(reloaded)).toBe(true)
+
+    const retried = await mutateEquipmentV2Atomic('atomic-user', 'reward-enchanter-complete-retry', reloaded.revision, {
+      action: 'complete_service_job', jobId: secondJobId
+    }, fixedDeps(new Date('2026-09-15T12:06:00.000Z')))
+    expect(retried.revision).toBe(reloaded.revision)
+    expect(retried.itemsById[rewardItemId]!.affixes).toEqual([...sealedAffixes, ...enchantedAffixes])
+
+    const fabricatedAffix = structuredClone(reloaded)
+    fabricatedAffix.itemsById[rewardItemId]!.affixes.push({ stat: 'life', value: 999 })
+    expect(isPersistedCanonical(fabricatedAffix)).toBe(false)
+
+    const fabricatedResult = structuredClone(reloaded)
+    fabricatedResult.serviceJobStateById[secondJobId]!.result.affix = { stat: 'life', value: 999 }
+    fabricatedResult.itemsById[rewardItemId]!.affixes.at(-1)!.stat = 'life'
+    fabricatedResult.itemsById[rewardItemId]!.affixes.at(-1)!.value = 999
+    expect(isPersistedCanonical(fabricatedResult)).toBe(false)
+
+    const fabricatedCancelled = structuredClone(reloaded)
+    const fabricatedJobId = 'enchanter-fabricated-cancelled'
+    fabricatedCancelled.serviceJobsById[fabricatedJobId] = {
+      id: fabricatedJobId,
+      itemIds: [],
+      projection: {
+        kind: 'service', service: 'enchanter',
+        queuedAt: '2026-09-15T12:07:00.000Z', startsAt: '2026-09-15T12:07:00.000Z'
+      }
+    }
+    fabricatedCancelled.serviceJobStateById[fabricatedJobId] = {
+      status: 'cancelled', service: 'enchanter', itemId: rewardItemId,
+      queuedAt: '2026-09-15T12:07:00.000Z', startedAt: '2026-09-15T12:07:00.000Z',
+      completesAt: '2026-09-15T12:08:00.000Z', cancelledAt: '2026-09-15T12:07:30.000Z',
+      result: {
+        enchantCount: 999,
+        affix: getEnchanterOption(reloaded.itemsById[rewardItemId]!, { enchantCount: 998 }).affix
+      }
+    }
+    expect(isPersistedCanonical(fabricatedCancelled)).toBe(false)
+
+    await transitionItemAtomic('atomic-user', 'reward-enchanter-loan', reloaded.revision, {
+      operation: 'loan', itemId: rewardItemId, targetId: claimed.commissionId
+    })
+    const loaned = await getPersistedGameV3('atomic-user')
+    expect(loaned.itemPlacements[rewardItemId]).toEqual({
+      ownerKind: 'caravan', custodyKind: 'expedition', custodyId: claimed.commissionId
+    })
+    expect(isPersistedCanonical(loaned)).toBe(true)
+  })
+
   it('keeps claimed configured reward sold through the real legacy visitor sale out of stash', async () => {
     const { mutateSaveGameAtomic, isPersistedCanonical } = await import('../server/utils/savegame')
     const { sellToVisitor } = await import('../utils/visitor-logic')
