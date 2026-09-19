@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "canvas": {
+    "width": 1672,
+    "height": 941,
+    "colorSpace": "sRGB",
+    "origin": "top-left"
+  },
+  "layers": [
+    {
+      "id": "campBase",
+      "file": "camp-base.png",
+      "width": 1672,
+      "height": 941,
+      "x": 0,
+      "y": 0,
+      "anchor": "top-left",
+      "zIndex": 0,
+      "notes": "Clean base scene with no HUD, heroes, stash wagon, or appraiser."
+    },
+    {
+      "id": "stashWagon",
+      "file": "expansion-stash-wagon.png",
+      "width": 360,
+      "height": 272,
+      "x": 70,
+      "y": 91,
+      "anchor": "top-left",
+      "zIndex": 10,
+      "alphaBBox": { "x": 5, "y": 14, "width": 330, "height": 243 },
+      "notes": "Purchasable expansion. Includes only its own amber light and contact shadow."
+    },
+    {
+      "id": "appraiser",
+      "file": "expansion-appraiser.png",
+      "width": 447,
+      "height": 321,
+      "x": 1225,
+      "y": 215,
+      "anchor": "top-left",
+      "zIndex": 20,
+      "alphaBBox": { "x": 0, "y": 0, "width": 447, "height": 315 },
+      "notes": "Purchasable expansion. Includes only its own violet light and contact shadow; intentionally reaches the right canvas edge."
+    },
+    {
+      "id": "heroesUI",
+      "file": "heroes-ui-strip.png",
+      "width": 1672,
+      "height": 161,
+      "x": 0,
+      "y": 780,
+      "anchor": "top-left",
+      "zIndex": 100,
+      "notes": "Presentation-only UI layer extracted from the approved composition. It is not part of the camp scene or either expansion."
+    }
+  ],
+  "compositions": {
+    "comparison-base.png": ["campBase", "heroesUI"],
+    "comparison-expanded.png": ["campBase", "stashWagon", "appraiser", "heroesUI"]
+  }
+}
