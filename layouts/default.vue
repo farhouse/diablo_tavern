@@ -4,6 +4,7 @@
       <NuxtLink class="brand" to="/tavern">Diablo Tavern</NuxtLink>
       <nav class="nav">
         <NuxtLink to="/tavern">Tavern</NuxtLink>
+        <NuxtLink to="/visitors-v2">Visitantes V2</NuxtLink>
         <NuxtLink to="/stash">Stash</NuxtLink>
         <NuxtLink to="/caravan">Caravan</NuxtLink>
       </nav>
