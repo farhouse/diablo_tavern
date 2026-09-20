@@ -10,11 +10,15 @@ let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
 const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`]
+const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
+const ORIGINAL_NUXT_JWT_SECRET = process.env.NUXT_JWT_SECRET
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
 suite('PersistedGameV3 against isolated real MongoDB', () => {
   beforeAll(async () => {
+    process.env.JWT_SECRET = 'mongo-integration-test-secret'
+    process.env.NUXT_JWT_SECRET = 'mongo-integration-test-secret'
     client = new MongoClient(mongoUri!)
     await client.connect()
     collection = client.db('diablo_tavern_alta43_integration').collection('savegames')
@@ -24,9 +28,14 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
   })
 
   afterAll(async () => {
-    if (!client) return
-    await collection.deleteMany({ userId: { $in: userIds } })
-    await client.close()
+    if (client) {
+      await collection.deleteMany({ userId: { $in: userIds } })
+      await client.close()
+    }
+    if (ORIGINAL_JWT_SECRET === undefined) delete process.env.JWT_SECRET
+    else process.env.JWT_SECRET = ORIGINAL_JWT_SECRET
+    if (ORIGINAL_NUXT_JWT_SECRET === undefined) delete process.env.NUXT_JWT_SECRET
+    else process.env.NUXT_JWT_SECRET = ORIGINAL_NUXT_JWT_SECRET
   })
 
   it('commits concurrent retries once and reloads the exact public response', async () => {
@@ -50,7 +59,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
   it('commits one V2 contract under concurrent identical retries and reloads its exact GameView', async () => {
     const { getPersistedGameV3, mutateVisitorCycleAtomic } = await import('../server/utils/savegame')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
-    const initial = await getPersistedGameV3(userIds[17]!)
+    const initial = await getPersistedGameV3(userIds[25]!)
     const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
     const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
     const command = { action: 'accept_contract' as const, visitorId, optionId, loanItemIds: [initial.stash[0]!] }
@@ -60,12 +69,12 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
       uuid: () => `mongo-v2-${++id}`
     }
     const execute = () => mutateVisitorCycleAtomic(
-      userIds[17]!, 'mongo-v2-request', 0, command, `v2:contract:${visitorId}`,
+      userIds[25]!, 'mongo-v2-request', 0, command, `v2:contract:${visitorId}`,
       mapPersistedGameToGameView, dependencies
     )
 
     const [first, retry] = await Promise.all([execute(), execute()])
-    const stored = await getPersistedGameV3(userIds[17]!)
+    const stored = await getPersistedGameV3(userIds[25]!)
     expect(retry).toEqual(first)
     expect(first.game.visitors.find((visitor) => visitor.visitorId === visitorId)?.state).toBe('contracted')
     expect(stored.ledger).toHaveLength(1)
@@ -77,7 +86,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { getPersistedGameV3, mutateVisitorCycleAtomic, RevisionConflictError } = await import('../server/utils/savegame')
     const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
-    const initial = await getPersistedGameV3(userIds[18]!)
+    const initial = await getPersistedGameV3(userIds[26]!)
     const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
     const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
     const startedAt = new Date(initial.createdAt)
@@ -92,22 +101,22 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
       eventId: 'settlement-race-event', occursAt: startedAt.toISOString(), damage: 0, gold: 100
     }]
     const preview = applyVisitorCycleCommand(active, { action: 'reconcile_game' }, prepareDependencies)
-    await collection.replaceOne({ userId: userIds[18] }, preview)
+    await collection.replaceOne({ userId: userIds[26] }, preview)
     const settlement = Object.values(preview.visitorCycle.settlements)[0]!
     const beforeGold = preview.gold
     const confirmDependencies = { ...prepareDependencies, now: () => new Date(Date.parse(settlement.expiresAt) - 1) }
     const defaultDependencies = { ...prepareDependencies, now: () => new Date(settlement.expiresAt) }
 
     const results = await Promise.allSettled([
-      mutateVisitorCycleAtomic(userIds[18]!, 'settlement-confirm', 0, {
+      mutateVisitorCycleAtomic(userIds[26]!, 'settlement-confirm', 0, {
         action: 'confirm_settlement', settlementId: settlement.settlementId,
         previewVersion: settlement.previewVersion, selectedOptionIds: []
       }, `settlement:${settlement.settlementId}`, mapPersistedGameToGameView, confirmDependencies),
-      mutateVisitorCycleAtomic(userIds[18]!, 'settlement-default', 0, {
+      mutateVisitorCycleAtomic(userIds[26]!, 'settlement-default', 0, {
         action: 'reconcile_game'
       }, 'reconcile:0', mapPersistedGameToGameView, defaultDependencies)
     ])
-    const stored = await getPersistedGameV3(userIds[18]!)
+    const stored = await getPersistedGameV3(userIds[26]!)
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
     expect(results.filter((result) => result.status === 'rejected')[0]).toMatchObject({
@@ -123,7 +132,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic, RevisionConflictError } = await import('../server/utils/savegame')
     const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
-    const initial = await getPersistedGameV3(userIds[19]!)
+    const initial = await getPersistedGameV3(userIds[27]!)
     const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
     const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
     const now = new Date(initial.createdAt)
@@ -136,14 +145,14 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     active.visitorCycle.expeditions[contract.expeditionId]!.events = [{
       eventId: 'double-advance-event', occursAt: now.toISOString(), damage: 0, gold: 75
     }]
-    await collection.replaceOne({ userId: userIds[19] }, active)
+    await collection.replaceOne({ userId: userIds[27] }, active)
     const execute = (requestId: string) => mutateVisitorCycleAtomic(
-      userIds[19]!, requestId, 0, { action: 'reconcile_game' }, `reconcile:${requestId}`,
+      userIds[27]!, requestId, 0, { action: 'reconcile_game' }, `reconcile:${requestId}`,
       mapPersistedGameToGameView, dependencies
     )
 
     const results = await Promise.allSettled([execute('advance-a'), execute('advance-b')])
-    const stored = await getPersistedGameV3(userIds[19]!)
+    const stored = await getPersistedGameV3(userIds[27]!)
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
     expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
@@ -159,7 +168,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic, RevisionConflictError, transitionItemAtomic } = await import('../server/utils/savegame')
     const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
-    const initial = await getPersistedGameV3(userIds[20]!)
+    const initial = await getPersistedGameV3(userIds[28]!)
     const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
     const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
     const loanItemId = initial.stash[0]!
@@ -177,18 +186,18 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const preview = applyVisitorCycleCommand(active, { action: 'reconcile_game' }, dependencies)
     const settlement = Object.values(preview.visitorCycle.settlements)[0]!
     settlement.departureResolution = 'departs'
-    await collection.replaceOne({ userId: userIds[20] }, preview)
+    await collection.replaceOne({ userId: userIds[28] }, preview)
 
     const results = await Promise.allSettled([
-      transitionItemAtomic(userIds[20]!, 'concurrent-return', 0, {
+      transitionItemAtomic(userIds[28]!, 'concurrent-return', 0, {
         operation: 'return', itemId: loanItemId, targetId: contract.expeditionId
       }),
-      mutateVisitorCycleAtomic(userIds[20]!, 'concurrent-departure', 0, {
+      mutateVisitorCycleAtomic(userIds[28]!, 'concurrent-departure', 0, {
         action: 'confirm_settlement', settlementId: settlement.settlementId,
         previewVersion: settlement.previewVersion, selectedOptionIds: []
       }, `settlement:${settlement.settlementId}`, mapPersistedGameToGameView, dependencies)
     ])
-    const stored = await getPersistedGameV3(userIds[20]!)
+    const stored = await getPersistedGameV3(userIds[28]!)
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
     expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
@@ -204,7 +213,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic, RevisionConflictError } = await import('../server/utils/savegame')
     const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
-    const initial = await getPersistedGameV3(userIds[21]!)
+    const initial = await getPersistedGameV3(userIds[29]!)
     const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
     const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
     const loanItemId = initial.stash[0]!
@@ -228,19 +237,19 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const recovery = Object.values(dead.visitorCycle.recoveries)[0]!
     const rescuer = Object.values(dead.visitorCycle.visitors).find((visitor) => visitor.state === 'available')!
     const supportLoanId = dead.stash[0]!
-    await collection.replaceOne({ userId: userIds[21] }, dead)
+    await collection.replaceOne({ userId: userIds[29] }, dead)
 
     const results = await Promise.allSettled([
-      mutateVisitorCycleAtomic(userIds[21]!, 'concurrent-recovery', 0, {
+      mutateVisitorCycleAtomic(userIds[29]!, 'concurrent-recovery', 0, {
         action: 'assign_recovery', recoveryId: recovery.recoveryId, visitorId: rescuer.visitorId,
         optionId: recovery.options[0]!.optionId, loanItemIds: [supportLoanId]
       }, `recovery:${recovery.recoveryId}:assign`, mapPersistedGameToGameView, dependencies),
-      mutateVisitorCycleAtomic(userIds[21]!, 'concurrent-abandon', 0, {
+      mutateVisitorCycleAtomic(userIds[29]!, 'concurrent-abandon', 0, {
         action: 'abandon_recovery', recoveryId: recovery.recoveryId,
         acknowledgementId: `${recovery.recoveryId}:abandon`
       }, `recovery:${recovery.recoveryId}:abandon`, mapPersistedGameToGameView, dependencies)
     ])
-    const stored = await getPersistedGameV3(userIds[21]!)
+    const stored = await getPersistedGameV3(userIds[29]!)
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
     expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
@@ -951,8 +960,8 @@ function attachHistoricalClaimedCommission(
 }
 
 async function claimConfiguredMongoReward(userId: string): Promise<{ persisted: PersistedGameV3; rewardItemId: string; visitorId: string }> {
-  const { getPersistedGameV3, getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
-  const { assignVisitorCommission, claimVisitorCommission } = await import('../utils/visitor-logic')
+  const { getPersistedGameV3, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+  const { assignVisitorCommission, claimVisitorCommission, refreshVisitRound } = await import('../utils/visitor-logic')
   const initial = await getPersistedGameV3(userId)
   const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
   const start = new Date('2026-09-13T00:00:00.000Z')
@@ -964,7 +973,11 @@ async function claimConfiguredMongoReward(userId: string): Promise<{ persisted: 
   }, deps)
   const assigned = await getPersistedGameV3(userId)
   const commission = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
-  await getSaveGame(userId, fixedDeps(new Date(commission.finishesAt)))
+  await mutateSaveGameAtomic(
+    userId, 'mongo-reward-reconcile', `mongo:reward-reconcile:${userId}`, assigned.revision, {},
+    (save, dependencies) => refreshVisitRound(save, dependencies.now(), dependencies.random),
+    fixedDeps(new Date(commission.finishesAt))
+  )
   const ready = await getPersistedGameV3(userId)
   await mutateSaveGameAtomic(userId, 'mongo-reward-claim', `mongo:reward-claim:${userId}`, ready.revision, {}, (save) => {
     claimVisitorCommission(save, visitorId, new Date(commission.finishesAt))
