@@ -21,8 +21,14 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted } from 'vue'
+import { useAuthStore } from '~/stores/auth'
+import { useGameStore } from '~/stores/game'
+import { useGameV2Store } from '~/stores/game-v2'
+
 const auth = useAuthStore()
 const game = useGameStore()
+const gameV2 = useGameV2Store()
 
 const visitorCount = computed(() => game.save?.visitRound.slots.filter((slot) => Boolean(slot.visitor)).length ?? 0)
 const stashCount = computed(() => game.save?.stash.length ?? 0)
@@ -36,6 +42,7 @@ onMounted(() => {
 function logout() {
   auth.logout()
   game.$reset()
+  gameV2.$reset()
   navigateTo('/login')
 }
 </script>

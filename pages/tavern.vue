@@ -46,8 +46,6 @@
           :trade-impact="tradeImpacts[slot.visitor.id]"
           @buy="buy"
           @sell="sell"
-          @commission="commission"
-          @claim="claim"
           @dismiss="dismiss"
         />
         <article v-else class="visitor-slot visitor-slot--empty" :aria-labelledby="`empty-slot-${slot.id}`">
@@ -151,14 +149,6 @@ async function sell(visitorId: string, itemId: string) {
     }))
   }
   notice.value = `Sale confirmed. ${after.name}'s useful equipment raised their power and commission odds.`
-}
-
-async function commission(visitorId: string, optionId: 'safe' | 'risky') {
-  await perform('Commission confirmed. The return time is now persisted.', () => game.commissionVisitor(visitorId, optionId))
-}
-
-async function claim(visitorId: string) {
-  await perform('Return claimed exactly once.', () => game.claimVisitor(visitorId))
 }
 
 async function dismiss(visitorId: string) {

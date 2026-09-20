@@ -150,7 +150,8 @@ describe('VisitorPost', () => {
       }
     })
     expect(returned.text()).toContain('Returned: partial result')
-    expect(returned.get('[data-testid="claim-visitor-1"]').text()).toContain('Claim 23g')
+    expect(returned.find('[data-testid="claim-visitor-1"]').exists()).toBe(false)
+    expect(returned.text()).toContain('Complete its settlement in Visitantes V2')
   })
 
   it('shows route and risk milestones as discrete progress is reached', () => {
@@ -197,7 +198,7 @@ describe('VisitorPost', () => {
       }
     })
     expect(failed.text()).toContain('The expedition failed. There is no reward to collect')
-    expect(failed.get('[data-testid="claim-visitor-1"]').text()).toContain('Acknowledge return')
+    expect(failed.find('[data-testid="claim-visitor-1"]').exists()).toBe(false)
   })
 
   it('labels pending trade and departure controls with their disabled reason', () => {

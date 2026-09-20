@@ -149,16 +149,8 @@
       <div>
         <h3>Returned: {{ outcomeLabel }} result</h3>
         <p>{{ resultDescription }}</p>
+        <p class="muted">This historical return is read-only here. Complete its settlement in Visitantes V2.</p>
       </div>
-      <button
-        :data-testid="`claim-${visitor.id}`"
-        class="btn primary"
-        type="button"
-        :disabled="pending"
-        @click="$emit('claim', visitor.id)"
-      >
-        {{ pending ? 'Claiming…' : claimLabel }}
-      </button>
     </section>
 
     <section v-else class="departed-state">
@@ -204,7 +196,6 @@ defineEmits<{
   buy: [visitorId: string, offerId: string]
   sell: [visitorId: string, itemId: string]
   commission: [visitorId: string, optionId: 'safe' | 'risky']
-  claim: [visitorId: string]
   dismiss: [visitorId: string]
 }>()
 
@@ -242,11 +233,6 @@ const resultDescription = computed(() => {
   if (commission.outcome === 'partial') return `Partial reward: ${commission.rewardGold ?? commission.partialRewardGold}g.`
   return 'The expedition failed. There is no reward to collect.'
 })
-const claimLabel = computed(() => {
-  const reward = props.visitor.commission?.rewardGold ?? 0
-  return reward ? `Claim ${reward}g` : 'Acknowledge return'
-})
-
 function buyDisabledReason(offer: VisitorOffer): string {
   if (props.pending) return 'Another action is being processed.'
   if (props.stash.length >= props.stashLimit) return 'Stash is full.'
