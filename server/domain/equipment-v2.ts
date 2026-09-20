@@ -303,7 +303,7 @@ function sameToken(expected: string, actual: string): boolean {
 function equipmentTokenSecret(): string {
   const runtimeConfig = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : {}
   const secret = resolveServerRuntimeConfig(runtimeConfig).jwtSecret
-  if (!secret || secret === 'dev-secret-change-me') throw domainError('equipment token secret is not configured')
+  if (!secret) throw domainError('equipment token secret is not configured')
   return secret
 }
 

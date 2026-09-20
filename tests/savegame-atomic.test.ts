@@ -1044,6 +1044,16 @@ describe('atomic persisted-game mutation', () => {
     }, fixedDeps())).resolves.toMatchObject({ revision: 1 })
   })
 
+  it('uses the configured development secret when runtime validation permits it', async () => {
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const { getPersistedGameV3 } = await import('../server/utils/savegame')
+    process.env.JWT_SECRET = 'dev-secret-change-me'
+
+    const initial = await getPersistedGameV3('atomic-user')
+
+    expect(() => mapPersistedGameToGameView(initial, new Date('2026-09-15T12:00:00.000Z'))).not.toThrow()
+  })
+
   it('rejects absent foreign fabricated expired and mixed equipment capabilities', async () => {
     const { EquipmentV2Error } = await import('../server/domain/equipment-v2')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
