@@ -256,12 +256,11 @@ const scenarios: Scenario[] = [
       '.item-heading-copy p',
       '.item-actions',
       '.item-actions .btn',
-      '.item .btn',
-      '.salvage-details',
-      '.salvage-details p'
+      '.item .btn'
     ],
     readySelector: '.grid.three',
     disabledCheck: async (page) => {
+      await expect(page.locator('.salvage-details')).toHaveCount(0)
       const queued = page.locator('.item').filter({ hasText: stashLongItem })
       await expect(queued.getByRole('button', { name: /^Identify/ })).toBeDisabled()
     },
@@ -293,7 +292,7 @@ const scenarios: Scenario[] = [
       '.appraiser-panel',
       '.caravan-page .btn'
     ],
-    readySelector: '.caravan-status',
+    readySelector: '.queue-row',
     disabledCheck: async (page) => {
       const appraiserRow = page.locator('.service-row').filter({ hasText: 'Appraiser' })
       const upgradeButton = appraiserRow.getByRole('button', { name: 'Upgrade' })

@@ -623,8 +623,8 @@ describe('atomic persisted-game mutation', () => {
     expect((document as PersistedGameV3).requestRecords.map((entry) => entry.requestId)).toEqual(['historic-request-1', 'fresh'])
   })
 
-  it('caps shared replay records across legacy, item transition, and equipment writers', async () => {
-    const { mutateEquipmentV2Atomic, mutateSaveGameAtomic, sanitizeGameResponse, transitionItemAtomic } = await import('../server/utils/savegame')
+  it('caps shared replay records across legacy, item transition, equipment, and visitor-cycle writers', async () => {
+    const { mutateEquipmentV2Atomic, mutateSaveGameAtomic, mutateVisitorCycleAtomic, sanitizeGameResponse, transitionItemAtomic } = await import('../server/utils/savegame')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const persisted = document as PersistedGameV3
     const baseResponse = sanitizeGameResponse(createSaveGame('atomic-user'))
@@ -684,11 +684,18 @@ describe('atomic persisted-game mutation', () => {
       action: 'identify_item', itemId, optionId: identify.optionId
     }, deps)
 
+    const afterEquipment = document as PersistedGameV3
+    const contractVisitorId = Object.keys(afterEquipment.visitorCycle.visitors)[0]!
+    const contractOptionId = afterEquipment.visitorCycle.visitors[contractVisitorId]!.contractOptions[0]!.optionId
+    await mutateVisitorCycleAtomic('atomic-user', 'visitor-fresh', 123, {
+      action: 'accept_contract', visitorId: contractVisitorId, optionId: contractOptionId, loanItemIds: []
+    }, `v2:contract:${contractVisitorId}:${contractOptionId}`, mapPersistedGameToGameView, deps)
+
     const final = document as PersistedGameV3
     expect(final.requestRecords).toHaveLength(100)
-    expect(final.ledger).toHaveLength(123)
-    expect(Object.keys(final.businessKeys)).toHaveLength(123)
-    expect(final.requestRecords.map((entry) => entry.requestId)).toEqual(expect.arrayContaining(['legacy-fresh', 'transition-fresh', 'equipment-fresh']))
+    expect(final.ledger).toHaveLength(124)
+    expect(Object.keys(final.businessKeys)).toHaveLength(124)
+    expect(final.requestRecords.map((entry) => entry.requestId)).toEqual(expect.arrayContaining(['legacy-fresh', 'transition-fresh', 'equipment-fresh', 'visitor-fresh']))
     expect(final.requestRecords.some((entry) => entry.requestId === 'historic-request-0')).toBe(false)
   })
 

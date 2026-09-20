@@ -49,7 +49,6 @@ const abandonConfirmations = ref<Record<Id, boolean>>({})
 const currentNowMs = ref(0)
 const clockClientStartedAt = ref(0)
 const clockServerStartedAt = ref(0)
-const emittedTransitionKeys = new Set<string>()
 let clockTimer: ReturnType<typeof setInterval> | null = null
 
 const statusText = computed(() => {
@@ -115,10 +114,7 @@ function onVisibilityChange() {
 function emitDueReconcile() {
   if (!props.game?.nextTransitionAt || !reconcileAction.value || !visible() || locked.value) return
   if (Date.parse(props.game.nextTransitionAt) > currentNowMs.value) return
-  const key = `${props.game.revision}:${props.game.nextTransitionAt}`
-  if (emittedTransitionKeys.has(key)) return
   emit('reconcileGame')
-  emittedTransitionKeys.add(key)
 }
 
 function selectedContractBinding(visitor: VisitorView) {

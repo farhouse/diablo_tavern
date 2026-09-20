@@ -263,4 +263,21 @@ describe('game V2 store', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  it('retries a due transition after a failed reconciliation', async () => {
+    const store = useGameV2Store()
+    const game = fixture('integrated-system')
+    game.nextTransitionAt = '2026-09-14T10:31:00Z'
+    store.applySnapshot(game)
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValueOnce({ requestId: 'r', revision: 10, game })
+    vi.stubGlobal('$fetch', fetchMock)
+
+    await store.reconcileDueTransition(Date.parse('2026-09-14T10:31:01Z'), true)
+    await store.reconcileDueTransition(Date.parse('2026-09-14T10:31:02Z'), true)
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(store.reconciledTransitions).toHaveProperty(`${game.revision}:${game.nextTransitionAt}`)
+  })
 })

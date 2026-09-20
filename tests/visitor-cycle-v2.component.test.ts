@@ -238,7 +238,7 @@ describe('VisitorCycleV2', () => {
     expect(conflict.emitted('reload')).toHaveLength(1)
   })
 
-  it('derives reconcile availability from game actions and emits once when visible transition is due', async () => {
+  it('derives reconcile availability from game actions and keeps signalling while a visible transition is due', async () => {
     const unavailable = mount(VisitorCycleV2, { props: { game: fixture('integrated-contract'), loadState: 'ready' } })
     expect(unavailable.get('header button').attributes('disabled')).toBeDefined()
     expect(unavailable.get('header button').attributes('aria-describedby')).toBe('reconcile-reason')
@@ -254,7 +254,7 @@ describe('VisitorCycleV2', () => {
     await vi.advanceTimersByTimeAsync(1000)
     expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(2000)
-    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+    expect(wrapper.emitted('reconcileGame')).toHaveLength(3)
   })
 
   it('pauses transition checks while hidden and reconciles once after returning visible', async () => {
@@ -273,7 +273,7 @@ describe('VisitorCycleV2', () => {
     document.dispatchEvent(new Event('visibilitychange'))
     expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
     document.dispatchEvent(new Event('visibilitychange'))
-    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+    expect(wrapper.emitted('reconcileGame')).toHaveLength(2)
   })
 
   it('does not consume a due transition while pending or uncertain', async () => {

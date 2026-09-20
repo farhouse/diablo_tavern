@@ -523,13 +523,10 @@ export async function mutateVisitorCycleAtomic(
       revision: next.revision,
       game: project(next, now)
     }
-    next.requestRecords = [
-      ...current.requestRecords.filter((entry) => Date.parse(entry.createdAt) + REQUEST_RECORD_RETENTION_MS >= now.getTime()),
-      {
-        requestId, operationKey, businessKey, commandHash, response, revision: next.revision,
-        createdAt: next.updatedAt, updatedAt: next.updatedAt
-      }
-    ]
+    next.requestRecords = appendRequestRecord(current.requestRecords, next.updatedAt, {
+      requestId, operationKey, businessKey, commandHash, response, revision: next.revision,
+      createdAt: next.updatedAt, updatedAt: next.updatedAt
+    })
     next.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
     next.ledger = [...current.ledger, {
       at: next.updatedAt, requestId, operationKey, commandHash, businessKey, revision: next.revision,

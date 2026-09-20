@@ -130,8 +130,7 @@ export const useGameV2Store = defineStore('game-v2', {
         expectedRevision: this.game.revision,
         payload
       }
-      await this.postPending(operation)
-      return true
+      return await this.postPending(operation)
     },
     async postPending(operation: PendingOperation) {
       this.pendingOperation = operation
@@ -150,12 +149,13 @@ export const useGameV2Store = defineStore('game-v2', {
         this.applySnapshot(response.game)
         this.operationState = 'idle'
         this.pendingOperation = null
+        return true
       } catch (error) {
         const parsed = publicApiError(error)
         if (parsed?.error.code === 'uncertain') {
           this.operationState = 'uncertain'
           this.errorMessage = 'No se pudo confirmar el resultado. Reintentá la misma orden.'
-          return
+          return false
         }
         if (parsed?.error.code === 'revision_conflict') {
           this.operationState = 'conflict'
@@ -169,18 +169,19 @@ export const useGameV2Store = defineStore('game-v2', {
             this.loadState = this.game ? 'ready' : 'empty'
             this.errorMessage = `La partida cambió, pero no se pudo actualizar el snapshot. ${publicErrorMessage(reloadError)}`
           }
-          return
+          return false
         }
         if (parsed?.error.code === 'action_unavailable') {
           this.operationState = 'unavailable'
           this.pendingOperation = null
           this.unavailableReason = parsed.error.reason
           this.errorMessage = publicErrorCopy(parsed.error.code)
-          return
+          return false
         }
         this.operationState = 'terminal'
         this.pendingOperation = null
         this.errorMessage = publicErrorMessage(error)
+        return false
       }
     },
     markTerminal() {
