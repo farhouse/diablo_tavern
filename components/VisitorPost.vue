@@ -113,48 +113,6 @@
         </span>
       </div>
 
-      <section v-if="visitor.state === 'traded'" :id="`commissions-${visitor.id}`" class="visitor-section mission-board" :aria-labelledby="`missions-${visitor.id}`">
-        <div>
-          <h3 :id="`missions-${visitor.id}`">Choose a commission</h3>
-          <p class="muted">The server has fixed the duration, odds and rewards shown here.</p>
-        </div>
-        <article v-for="option in visitor.commissionOptions" :key="option.optionId" :data-testid="`mission-${option.optionId}`" class="mission-option">
-          <div class="mission-heading">
-            <div>
-              <strong>{{ option.title }}</strong>
-              <p>{{ questName(option.regionId) }}</p>
-            </div>
-            <span class="risk-chip" :class="`risk-chip--${option.riskLevel}`">{{ capitalize(option.riskLevel) }} risk</span>
-          </div>
-          <dl class="mission-facts">
-            <div><dt>Success</dt><dd>{{ percent(option.successChance) }}</dd></div>
-            <div><dt>Duration</dt><dd>{{ duration(option.durationMs) }}</dd></div>
-            <div><dt>Full reward</dt><dd>{{ option.fullRewardGold }}g + item</dd></div>
-          </dl>
-          <ul class="mission-consequences">
-            <li>Complete: {{ option.fullRewardGold }}g and one item if stash has room.</li>
-            <li>Partial: {{ option.partialRewardGold }}g.</li>
-            <li>Failure: {{ option.failureConsequence }}</li>
-          </ul>
-          <button :data-testid="`review-${option.optionId}`" class="btn" type="button" :aria-expanded="reviewingOptionId === option.optionId" :aria-controls="reviewingOptionId === option.optionId ? `review-${visitor.id}-${option.optionId}` : undefined" @click="toggleReview(option.optionId)">
-            {{ reviewingOptionId === option.optionId ? 'Cancel selection' : `Select ${option.optionId}` }}
-          </button>
-          <div v-if="reviewingOptionId === option.optionId" :id="`review-${visitor.id}-${option.optionId}`" class="mission-review">
-            <p>Confirm this persisted option. The visitor will occupy this post until the return is claimed.</p>
-            <button
-              :data-testid="`confirm-${option.optionId}`"
-              class="btn primary"
-              type="button"
-              :disabled="pending"
-              :aria-describedby="pending ? `commission-reason-${visitor.id}` : undefined"
-              @click="$emit('commission', visitor.id, option.optionId)"
-            >
-              {{ pending ? 'Sending…' : `Send ${visitor.name}` }}
-            </button>
-            <p v-if="pending" :id="`commission-reason-${visitor.id}`" class="action-reason">Another action is being processed.</p>
-          </div>
-        </article>
-      </section>
     </template>
 
     <section v-else-if="visitor.state === 'commissioned' && visitor.commission" class="away-state">
@@ -209,7 +167,7 @@
     </section>
 
     <footer v-if="visitor.state === 'open' || visitor.state === 'traded'" class="visitor-footer">
-      <p class="muted">{{ visitor.state === 'open' ? 'No deal is required.' : 'At least one trade is complete. Use the remaining direction, send a commission or finish the visit.' }}</p>
+      <p class="muted">{{ visitor.state === 'open' ? 'No deal is required.' : 'At least one trade is complete. Use the remaining direction or finish the visit. New contracts are available in Visitantes V2.' }}</p>
       <button :data-testid="`dismiss-${visitor.id}`" class="btn ghost" type="button" :disabled="pending" :aria-describedby="pending ? `dismiss-reason-${visitor.id}` : undefined" @click="$emit('dismiss', visitor.id)">
         {{ pending ? 'Processing…' : visitor.state === 'open' ? 'Let depart' : 'Finish visit' }}
       </button>
@@ -219,7 +177,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import HeroSprite from '~/components/HeroSprite.vue'
 import ItemSprite from '~/components/ItemSprite.vue'
 import type { Item, Quest, Visitor, VisitorOffer } from '~/types/game'
@@ -250,7 +208,6 @@ defineEmits<{
   dismiss: [visitorId: string]
 }>()
 
-const reviewingOptionId = ref('')
 const availableOffers = computed(() => props.visitor.offers.filter((offer) => !offer.purchasedAt))
 const quotedItems = computed(() => props.stash.flatMap((item) => {
   const quote = props.visitor.buyQuotes[item.id]
@@ -289,10 +246,6 @@ const claimLabel = computed(() => {
   const reward = props.visitor.commission?.rewardGold ?? 0
   return reward ? `Claim ${reward}g` : 'Acknowledge return'
 })
-
-function toggleReview(optionId: string) {
-  reviewingOptionId.value = reviewingOptionId.value === optionId ? '' : optionId
-}
 
 function buyDisabledReason(offer: VisitorOffer): string {
   if (props.pending) return 'Another action is being processed.'

@@ -219,7 +219,6 @@ const scenarios: Scenario[] = [
       '.trade-item',
       '.trade-item strong',
       '.trade-item p',
-      '.mission-option',
       '.visitor-post .btn'
     ],
     readySelector: '.visitor-grid',
@@ -229,15 +228,12 @@ const scenarios: Scenario[] = [
       await expect(disabledBuy).toBeDisabled()
     },
     loadingSetup: async (page) => {
-      const revealReview = page.getByTestId('review-safe')
-      const confirm = page.getByTestId('confirm-safe')
-      await revealReview.click()
-      await expect(confirm).toBeVisible()
-      await confirm.click()
-      return confirm
+      const dismiss = page.getByTestId('dismiss-traveler-one')
+      await dismiss.click()
+      return dismiss
     },
-    loadingName: 'Sending…',
-    mutateRouteUrl: '**/api/visitors/*/commission',
+    loadingName: 'Processing…',
+    mutateRouteUrl: '**/api/visitors/*/dismiss',
     mutateSaveResponse: tavernSave
   },
   {

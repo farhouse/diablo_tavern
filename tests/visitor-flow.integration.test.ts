@@ -73,10 +73,9 @@ describe('visitor HTTP/store/UI journey', () => {
     vi.unstubAllGlobals()
   })
 
-  it('retries idempotently, handles both trade directions and two returns, then frees both slots', async () => {
+  it('handles both legacy trade directions without exposing the retired commission action', async () => {
     persistedSave = createSaveGame('journey')
     const originalRoundId = persistedSave.visitRound.id
-    const visitorIds = visitors(persistedSave).map((visitor) => visitor.id)
     const soldItem = persistedSave.stash[0]!
     const filler = soldItem
     while (persistedSave.stash.length < persistedSave.stashLimit) {
@@ -115,40 +114,21 @@ describe('visitor HTTP/store/UI journey', () => {
       price: 1
     }]
 
-    const claimRequestIds: string[] = []
-    let loseSecondClaimResponse = true
-
-    const [{ default: saveHandler }, { default: buyHandler }, { default: sellHandler }, { default: commissionHandler }, { default: claimHandler }] = await Promise.all([
+    const [{ default: saveHandler }, { default: buyHandler }, { default: sellHandler }] = await Promise.all([
       import('../server/api/savegame/index.get'),
       import('../server/api/visitors/[visitorId]/buy.post'),
-      import('../server/api/visitors/[visitorId]/sell.post'),
-      import('../server/api/visitors/[visitorId]/commission.post'),
-      import('../server/api/visitors/[visitorId]/claim.post')
+      import('../server/api/visitors/[visitorId]/sell.post')
     ])
 
     const fetchMock = vi.fn(async (url: string, options?: Record<string, any>) => {
       if (url === '/api/quests') return quests
       if (url === '/api/savegame') return saveHandler({} as never)
 
-      const match = url.match(/^\/api\/visitors\/([^/]+)\/(buy|sell|commission|claim)$/)
+      const match = url.match(/^\/api\/visitors\/([^/]+)\/(buy|sell)$/)
       if (!match) throw new Error(`Unexpected request: ${url}`)
       const [, visitorId, operation] = match
-      const requestId = options?.body?.requestId as string
-      if (operation === 'claim') claimRequestIds.push(requestId)
       const event = { context: { params: { visitorId: visitorId! } }, body: options?.body }
-      const response = operation === 'commission'
-        ? await commissionHandler(event as never)
-        : operation === 'sell'
-          ? await sellHandler(event as never)
-          : operation === 'buy'
-            ? await buyHandler(event as never)
-            : await claimHandler(event as never)
-
-      if (operation === 'claim' && visitorId === visitorIds[1] && loseSecondClaimResponse) {
-        loseSecondClaimResponse = false
-        throw new Error('Network disconnected after commit')
-      }
-      return response
+      return operation === 'sell' ? sellHandler(event as never) : buyHandler(event as never)
     })
     vi.stubGlobal('$fetch', fetchMock)
 
@@ -184,13 +164,11 @@ describe('visitor HTTP/store/UI journey', () => {
     expect(visitors(persistedSave)[1]!.trades.map((trade) => trade.kind)).toEqual(['player_sold', 'player_bought'])
     expect(persistedSave.stash).toHaveLength(persistedSave.stashLimit)
 
-    await wrapper.get('[data-testid="review-safe"]').trigger('click')
-    await wrapper.get('[data-testid="confirm-safe"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.text()).toContain('The requested action is unavailable')
+    expect(wrapper.find('[data-testid="review-safe"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="confirm-safe"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('New contracts are available in Visitantes V2')
     expect(visitors(persistedSave).every((visitor) => visitor.state === 'traded')).toBe(true)
     expect(visitors(persistedSave).every((visitor) => visitor.commission === undefined)).toBe(true)
-    expect(claimRequestIds).toEqual([])
     expect(persistedSave.visitRound.id).toBe(originalRoundId)
   })
 

@@ -4,7 +4,7 @@
       <div>
         <p class="round-mark">Visitor round {{ game.save?.visitRound.number ?? '—' }}</p>
         <h1>Tavern floor</h1>
-        <p class="muted">Read each traveler, buy and sell once each if useful, then send a commission or let them continue down the road.</p>
+        <p class="muted">Read each traveler, buy and sell once each if useful, then finish the visit. New contracts are managed in Visitantes V2.</p>
       </div>
       <div class="tavern-summary" aria-label="Current resources">
         <span><strong>{{ game.save?.gold ?? 0 }}g</strong> in coffer</span>

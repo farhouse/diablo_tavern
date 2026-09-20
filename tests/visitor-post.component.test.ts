@@ -91,29 +91,14 @@ describe('VisitorPost', () => {
     expect(wrapper.text()).toContain('Stash is full')
   })
 
-  it('requires an inline mission review and shows every consequence before confirmation', async () => {
+  it('does not expose retired legacy commissions and directs traded visitors to V2 contracts', () => {
     const wrapper = mount(VisitorPost, {
       props: { visitor: visitor({ state: 'traded' }), stash: [], gold: 450, stashLimit: 20, quests: [quest], now: Date.now() }
     })
 
-    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('Careful patrol')
-    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('Low risk')
-    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('Success')
-    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('82%')
-    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('46s')
-    expect(wrapper.get('[data-testid="mission-safe"]').text()).toContain('54g')
-    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('Perilous delve')
-    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('High risk')
-    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('Success')
-    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('52%')
-    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('1m 48s')
-    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('122g')
-
-    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain(riskyOption.failureConsequence)
-    expect(wrapper.get('[data-testid="mission-risky"]').text()).toContain('Partial: 32g')
-    await wrapper.get('[data-testid="review-risky"]').trigger('click')
-    await wrapper.get('[data-testid="confirm-risky"]').trigger('click')
-    expect(wrapper.emitted('commission')).toEqual([['visitor-1', 'risky']])
+    expect(wrapper.find('[data-testid="mission-safe"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="confirm-safe"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('New contracts are available in Visitantes V2')
   })
 
   it('keeps the remaining trade direction available after the first trade', () => {
@@ -125,7 +110,7 @@ describe('VisitorPost', () => {
     })
     expect(bought.find('[data-testid="buy-offer-1"]').exists()).toBe(false)
     expect(bought.get('[data-testid="sell-sword"]').text()).toContain('Sell for 31g')
-    expect(bought.find('[data-testid="mission-safe"]').exists()).toBe(true)
+    expect(bought.find('[data-testid="mission-safe"]').exists()).toBe(false)
 
     const sold = mount(VisitorPost, {
       props: {
