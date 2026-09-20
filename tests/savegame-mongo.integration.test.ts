@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`]
 
 vi.mock('../server/utils/db', () => ({ saveGamesCollection: async () => repositoryCollection }))
 
@@ -47,6 +47,210 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(persisted?.ledger).toHaveLength(1)
   })
 
+  it('commits one V2 contract under concurrent identical retries and reloads its exact GameView', async () => {
+    const { getPersistedGameV3, mutateVisitorCycleAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[17]!)
+    const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
+    const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    const command = { action: 'accept_contract' as const, visitorId, optionId, loanItemIds: [initial.stash[0]!] }
+    let id = 0
+    const dependencies = {
+      now: () => new Date(initial.createdAt), random: () => 0.9,
+      uuid: () => `mongo-v2-${++id}`
+    }
+    const execute = () => mutateVisitorCycleAtomic(
+      userIds[17]!, 'mongo-v2-request', 0, command, `v2:contract:${visitorId}`,
+      mapPersistedGameToGameView, dependencies
+    )
+
+    const [first, retry] = await Promise.all([execute(), execute()])
+    const stored = await getPersistedGameV3(userIds[17]!)
+    expect(retry).toEqual(first)
+    expect(first.game.visitors.find((visitor) => visitor.visitorId === visitorId)?.state).toBe('contracted')
+    expect(stored.ledger).toHaveLength(1)
+    expect(stored.requestRecords).toHaveLength(1)
+    expect(stored.itemPlacements[command.loanItemIds[0]!]).toMatchObject({ custodyKind: 'expedition' })
+  })
+
+  it('allows one Mongo winner for settlement confirmation versus expiry default', async () => {
+    const { getPersistedGameV3, mutateVisitorCycleAtomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[18]!)
+    const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
+    const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    const startedAt = new Date(initial.createdAt)
+    let id = 0
+    const prepareDependencies = { now: () => startedAt, random: () => 0.9, uuid: () => `settlement-race-${++id}` }
+    const contracted = applyVisitorCycleCommand(initial, {
+      action: 'accept_contract', visitorId, optionId, loanItemIds: [initial.stash[0]!]
+    }, prepareDependencies)
+    const contract = Object.values(contracted.visitorCycle.contracts)[0]!
+    const active = applyVisitorCycleCommand(contracted, { action: 'start_expedition', contractId: contract.contractId }, prepareDependencies)
+    active.visitorCycle.expeditions[contract.expeditionId]!.events = [{
+      eventId: 'settlement-race-event', occursAt: startedAt.toISOString(), damage: 0, gold: 100
+    }]
+    const preview = applyVisitorCycleCommand(active, { action: 'reconcile_game' }, prepareDependencies)
+    await collection.replaceOne({ userId: userIds[18] }, preview)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const beforeGold = preview.gold
+    const confirmDependencies = { ...prepareDependencies, now: () => new Date(Date.parse(settlement.expiresAt) - 1) }
+    const defaultDependencies = { ...prepareDependencies, now: () => new Date(settlement.expiresAt) }
+
+    const results = await Promise.allSettled([
+      mutateVisitorCycleAtomic(userIds[18]!, 'settlement-confirm', 0, {
+        action: 'confirm_settlement', settlementId: settlement.settlementId,
+        previewVersion: settlement.previewVersion, selectedOptionIds: []
+      }, `settlement:${settlement.settlementId}`, mapPersistedGameToGameView, confirmDependencies),
+      mutateVisitorCycleAtomic(userIds[18]!, 'settlement-default', 0, {
+        action: 'reconcile_game'
+      }, 'reconcile:0', mapPersistedGameToGameView, defaultDependencies)
+    ])
+    const stored = await getPersistedGameV3(userIds[18]!)
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')[0]).toMatchObject({
+      reason: expect.any(RevisionConflictError)
+    })
+    expect(stored.revision).toBe(1)
+    expect(stored.ledger).toHaveLength(1)
+    expect(stored.gold).toBe(beforeGold + settlement.caravanGold)
+    expect(stored.visitorCycle.settlements[settlement.settlementId]?.state).toBe('settled')
+  })
+
+  it('allows one Mongo CAS winner for a double expedition advance', async () => {
+    const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[19]!)
+    const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
+    const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    const now = new Date(initial.createdAt)
+    const dependencies = { now: () => now, random: () => 0.9, uuid: () => 'double-advance' }
+    const contracted = applyVisitorCycleCommand(initial, {
+      action: 'accept_contract', visitorId, optionId, loanItemIds: [initial.stash[0]!]
+    }, dependencies)
+    const contract = Object.values(contracted.visitorCycle.contracts)[0]!
+    const active = applyVisitorCycleCommand(contracted, { action: 'start_expedition', contractId: contract.contractId }, dependencies)
+    active.visitorCycle.expeditions[contract.expeditionId]!.events = [{
+      eventId: 'double-advance-event', occursAt: now.toISOString(), damage: 0, gold: 75
+    }]
+    await collection.replaceOne({ userId: userIds[19] }, active)
+    const execute = (requestId: string) => mutateVisitorCycleAtomic(
+      userIds[19]!, requestId, 0, { action: 'reconcile_game' }, `reconcile:${requestId}`,
+      mapPersistedGameToGameView, dependencies
+    )
+
+    const results = await Promise.allSettled([execute('advance-a'), execute('advance-b')])
+    const stored = await getPersistedGameV3(userIds[19]!)
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect(stored.revision).toBe(1)
+    expect(stored.ledger).toHaveLength(1)
+    expect(Object.values(stored.visitorCycle.settlements)).toHaveLength(1)
+    expect(Object.values(stored.visitorCycle.settlements)[0]).toMatchObject({ state: 'preview_ready', grossGold: 75 })
+    expect(isPersistedCanonical(stored)).toBe(true)
+  })
+
+  it('allows one Mongo CAS winner for loan return versus visitor departure', async () => {
+    const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic, RevisionConflictError, transitionItemAtomic } = await import('../server/utils/savegame')
+    const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[20]!)
+    const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
+    const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    const loanItemId = initial.stash[0]!
+    const now = new Date(initial.createdAt)
+    let id = 0
+    const dependencies = { now: () => now, random: () => 0.9, uuid: () => `return-departure-${++id}` }
+    const contracted = applyVisitorCycleCommand(initial, {
+      action: 'accept_contract', visitorId, optionId, loanItemIds: [loanItemId]
+    }, dependencies)
+    const contract = Object.values(contracted.visitorCycle.contracts)[0]!
+    const active = applyVisitorCycleCommand(contracted, { action: 'start_expedition', contractId: contract.contractId }, dependencies)
+    active.visitorCycle.expeditions[contract.expeditionId]!.events = [{
+      eventId: 'return-departure-event', occursAt: now.toISOString(), damage: 0, gold: 50
+    }]
+    const preview = applyVisitorCycleCommand(active, { action: 'reconcile_game' }, dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    settlement.departureResolution = 'departs'
+    await collection.replaceOne({ userId: userIds[20] }, preview)
+
+    const results = await Promise.allSettled([
+      transitionItemAtomic(userIds[20]!, 'concurrent-return', 0, {
+        operation: 'return', itemId: loanItemId, targetId: contract.expeditionId
+      }),
+      mutateVisitorCycleAtomic(userIds[20]!, 'concurrent-departure', 0, {
+        action: 'confirm_settlement', settlementId: settlement.settlementId,
+        previewVersion: settlement.previewVersion, selectedOptionIds: []
+      }, `settlement:${settlement.settlementId}`, mapPersistedGameToGameView, dependencies)
+    ])
+    const stored = await getPersistedGameV3(userIds[20]!)
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect(stored.revision).toBe(1)
+    expect(stored.ledger).toHaveLength(1)
+    expect(stored.itemPlacements[loanItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
+    expect(['awaiting_settlement', 'departed']).toContain(stored.visitorCycle.visitors[visitorId]?.state)
+    expect(isPersistedCanonical(stored)).toBe(true)
+  })
+
+  it('allows one Mongo CAS winner for recovery assignment versus abandonment', async () => {
+    const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic, RevisionConflictError } = await import('../server/utils/savegame')
+    const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[21]!)
+    const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
+    const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    const loanItemId = initial.stash[0]!
+    const now = new Date(initial.createdAt)
+    let id = 0
+    const dependencies = { now: () => now, random: () => 0.9, uuid: () => `recovery-abandon-${++id}` }
+    const contracted = applyVisitorCycleCommand(initial, {
+      action: 'accept_contract', visitorId, optionId, loanItemIds: [loanItemId]
+    }, dependencies)
+    const contract = Object.values(contracted.visitorCycle.contracts)[0]!
+    const active = applyVisitorCycleCommand(contracted, { action: 'start_expedition', contractId: contract.contractId }, dependencies)
+    active.visitorCycle.expeditions[contract.expeditionId]!.events = [{
+      eventId: 'recovery-abandon-event', occursAt: now.toISOString(), damage: 18, gold: 0
+    }]
+    const preview = applyVisitorCycleCommand(active, { action: 'reconcile_game' }, dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const dead = applyVisitorCycleCommand(preview, {
+      action: 'confirm_settlement', settlementId: settlement.settlementId,
+      previewVersion: settlement.previewVersion, selectedOptionIds: []
+    }, dependencies)
+    const recovery = Object.values(dead.visitorCycle.recoveries)[0]!
+    const rescuer = Object.values(dead.visitorCycle.visitors).find((visitor) => visitor.state === 'available')!
+    const supportLoanId = dead.stash[0]!
+    await collection.replaceOne({ userId: userIds[21] }, dead)
+
+    const results = await Promise.allSettled([
+      mutateVisitorCycleAtomic(userIds[21]!, 'concurrent-recovery', 0, {
+        action: 'assign_recovery', recoveryId: recovery.recoveryId, visitorId: rescuer.visitorId,
+        optionId: recovery.options[0]!.optionId, loanItemIds: [supportLoanId]
+      }, `recovery:${recovery.recoveryId}:assign`, mapPersistedGameToGameView, dependencies),
+      mutateVisitorCycleAtomic(userIds[21]!, 'concurrent-abandon', 0, {
+        action: 'abandon_recovery', recoveryId: recovery.recoveryId,
+        acknowledgementId: `${recovery.recoveryId}:abandon`
+      }, `recovery:${recovery.recoveryId}:abandon`, mapPersistedGameToGameView, dependencies)
+    ])
+    const stored = await getPersistedGameV3(userIds[21]!)
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect((results.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RevisionConflictError)
+    expect(stored.revision).toBe(1)
+    expect(stored.ledger).toHaveLength(1)
+    expect(['assigned', 'abandoned']).toContain(stored.visitorCycle.recoveries[recovery.recoveryId]?.state)
+    expect(isPersistedCanonical(stored)).toBe(true)
+  })
+
   it('rejects stale CAS and a second requestId for one permanent business key', async () => {
     const { BusinessKeyConflictError, mutateSaveGameAtomic, RevisionConflictError } = await import('../server/utils/savegame')
     await mutateSaveGameAtomic(userIds[2]!, 'business-a', 'business:one', 0, {}, () => {})
@@ -79,8 +283,9 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     await collection.replaceOne({ userId: userIds[7] }, custody)
     await transitionItemAtomic(userIds[7]!, 'mongo-loan-a', 0, { operation: 'loan', itemId, targetId: 'expedition-a' })
     const projected = mapPersistedGameToGameView(await getPersistedGameV3(userIds[7]!), new Date('2026-09-13T12:00:00.000Z'))
-    expect(projected.expeditions).toContainEqual(expect.objectContaining({ expeditionId: 'expedition-a' }))
-    expect(projected.items).toContainEqual(expect.objectContaining({ itemId, custody: expect.objectContaining({ expeditionId: 'expedition-a' }) }))
+    expect(projected.expeditions).toEqual([])
+    expect(projected.items).not.toContainEqual(expect.objectContaining({ itemId }))
+    expect(projected.capacity.used).toBe(custody.stash.length)
     await transitionItemAtomic(userIds[7]!, 'mongo-return-a', 1, { operation: 'return', itemId, targetId: 'expedition-a' })
     expect((await getPersistedGameV3(userIds[7]!)).expeditionsById['expedition-a']).toBeDefined()
     await transitionItemAtomic(userIds[7]!, 'mongo-loan-b', 2, { operation: 'loan', itemId, targetId: 'expedition-b' })
@@ -92,10 +297,9 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(persisted?.ledger[0].materialDeltas.scrap).toBe(persisted?.materials.scrap)
   })
 
-  it('persists the real commission pending reward before claiming it', async () => {
+  it('does not let a real-Mongo compatibility read advance a legacy commission', async () => {
     const { getPersistedGameV3, getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
-    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
-    const { assignVisitorCommission, claimVisitorCommission } = await import('../utils/visitor-logic')
+    const { assignVisitorCommission } = await import('../utils/visitor-logic')
     const initial = await getPersistedGameV3(userIds[11]!)
     const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
     const start = new Date('2026-09-13T00:00:00.000Z')
@@ -109,18 +313,12 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const finish = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!.finishesAt
     const reconcileDependencies = { ...dependencies, now: () => new Date(finish) }
     await getSaveGame(userIds[11]!, reconcileDependencies)
-    const ready = await getPersistedGameV3(userIds[11]!)
-    const commission = ready.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
-    const rewardItemId = commission.rewardItemId!
-    const view = mapPersistedGameToGameView(ready, new Date(finish))
-    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: commission.id }))
-    expect(ready.itemPlacements[rewardItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'settlement' })
-    await mutateSaveGameAtomic(userIds[11]!, 'mongo-claim-flow', 'commission:claim:mongo-flow', ready.revision, {}, (save) => {
-      claimVisitorCommission(save, visitorId, new Date(finish))
-    }, reconcileDependencies)
-    const claimed = await getPersistedGameV3(userIds[11]!)
-    expect(claimed.stash.filter((itemId) => itemId === rewardItemId)).toHaveLength(1)
-    expect(claimed.itemPlacements[rewardItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'stash' })
+    const unchanged = await getPersistedGameV3(userIds[11]!)
+    const unchangedVisitor = unchanged.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
+    expect(unchanged.revision).toBe(assigned.revision)
+    expect(unchangedVisitor.state).toBe('commissioned')
+    expect(unchangedVisitor.commission).toMatchObject({ status: 'active', finishesAt: finish })
+    expect(unchangedVisitor.commission?.rewardItemId).toBeUndefined()
   })
 
   it('preserves normative service custody through a generic Mongo mutation', async () => {
@@ -170,9 +368,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
       departedAt,
       lastExpeditionId: 'retained-expedition'
     }))
-    expect(retainedView.expeditions).toContainEqual(expect.objectContaining({
-      expeditionId: 'retained-expedition', visitorId
-    }))
+    expect(retainedView.expeditions).toEqual([])
+    expect(retainedView.items).not.toContainEqual(expect.objectContaining({ itemId }))
 
     const revisionBeforeReturn = (await getPersistedGameV3(userIds[13]!)).revision
     await transitionItemAtomic(userIds[13]!, 'return-retained', revisionBeforeReturn, { operation: 'return', itemId, targetId: 'retained-expedition' })
@@ -181,7 +378,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(returned.expeditionsById['retained-expedition']).toBeUndefined()
     const returnedView = await getGameHandler({} as never)
     expect(returnedView.expeditions).not.toContainEqual(expect.objectContaining({ expeditionId: 'retained-expedition' }))
-    expect(returnedView.visitors).not.toContainEqual(expect.objectContaining({ visitorId }))
+    expect(returnedView.visitors).toContainEqual(expect.objectContaining({ visitorId, state: 'departed' }))
   })
 
   it.each([

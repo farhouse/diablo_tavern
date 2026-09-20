@@ -6,6 +6,7 @@ import { generateLootForZone, LOOT_CONFIG_VERSION, validateLootConfig } from '..
 
 let document: PersistedGameV3 | Record<string, unknown> | undefined
 let uncertainCommit = false
+let forceCasMiss = false
 const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
 const ORIGINAL_NUXT_JWT_SECRET = process.env.NUXT_JWT_SECRET
 
@@ -17,6 +18,7 @@ const collection = {
     return { upsertedCount: 1, modifiedCount: 0 }
   }),
   replaceOne: vi.fn(async (rawFilter: unknown, replacement: PersistedGameV3) => {
+    if (forceCasMiss) return { modifiedCount: 0 }
     const filter = rawFilter as { revision?: number; $or?: Array<{ revision: number | { $exists: boolean } }> }
     if (!document) return { modifiedCount: 0 }
     const revision = typeof document.revision === 'number' ? document.revision : undefined
@@ -47,6 +49,7 @@ describe('atomic persisted-game mutation', () => {
     delete process.env.NUXT_JWT_SECRET
     document = buildPersistedFromPublic(createSaveGame('atomic-user'))
     uncertainCommit = false
+    forceCasMiss = false
     vi.clearAllMocks()
   })
 
@@ -119,11 +122,55 @@ describe('atomic persisted-game mutation', () => {
     expect(collection.replaceOne).toHaveBeenCalledOnce()
   })
 
+  it('maps exhausted deterministic CAS misses to a revision conflict', async () => {
+    const { mutateSaveGameAtomic, RevisionConflictError } = await import('../server/utils/savegame')
+    forceCasMiss = true
+
+    await expect(mutateSaveGameAtomic(
+      'atomic-user', 'cas-exhausted', 'credit:cas-exhausted', 0, { amount: 1 },
+      (save) => { save.gold += 1 }
+    )).rejects.toBeInstanceOf(RevisionConflictError)
+    expect(collection.replaceOne).toHaveBeenCalledTimes(5)
+  })
+
   it('keeps business keys permanent across request IDs', async () => {
     const { BusinessKeyConflictError, mutateSaveGameAtomic } = await import('../server/utils/savegame')
     await mutateSaveGameAtomic('atomic-user', 'business-a', 'transfer:item-1', 0, {}, () => {})
     await expect(mutateSaveGameAtomic('atomic-user', 'business-b', 'transfer:item-1', 1, {}, () => {}))
       .rejects.toBeInstanceOf(BusinessKeyConflictError)
+  })
+
+  it('replays an exact V2 command envelope and rejects another request for its consumed business key', async () => {
+    const { BusinessKeyConflictError, isPersistedCanonical, mutateSaveGameAtomic, mutateVisitorCycleAtomic } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const persisted = document as PersistedGameV3
+    const visitorId = Object.keys(persisted.visitorCycle.visitors)[0]!
+    const optionId = persisted.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
+    let id = 0
+    const dependencies = {
+      now: () => new Date(persisted.createdAt), random: () => 0.9,
+      uuid: () => `atomic-v2-${++id}`
+    }
+    const command = { action: 'accept_contract' as const, visitorId, optionId, loanItemIds: [persisted.stash[0]!] }
+    const first = await mutateVisitorCycleAtomic(
+      'atomic-user', 'v2-request', 0, command, `v2:contract:${visitorId}:${optionId}`, mapPersistedGameToGameView, dependencies
+    )
+    await mutateSaveGameAtomic('atomic-user', 'later-v2-command', 'later:v2-credit', 1, { amount: 1 }, (save) => { save.gold += 1 })
+    const replay = await mutateVisitorCycleAtomic(
+      'atomic-user', 'v2-request', 999, command, `v2:contract:${visitorId}:${optionId}`, mapPersistedGameToGameView, dependencies
+    )
+
+    expect(replay).toEqual(first)
+    expect(first).toMatchObject({ requestId: 'v2-request', revision: 1, game: { revision: 1 } })
+    expect((document as PersistedGameV3).ledger).toHaveLength(2)
+    await expect(mutateVisitorCycleAtomic(
+      'atomic-user', 'v2-other-request', 2, command, `v2:contract:${visitorId}:${optionId}`, mapPersistedGameToGameView, dependencies
+    )).rejects.toBeInstanceOf(BusinessKeyConflictError)
+
+    const stored = (document as PersistedGameV3).requestRecords.find((record) => record.requestId === 'v2-request')!
+    if (!('game' in stored.response)) throw new Error('Expected stored V2 response')
+    ;(stored.response.game as unknown as Record<string, unknown>).internalSecret = true
+    expect(isPersistedCanonical(document)).toBe(false)
   })
 
   it('rejects reuse of an expired requestId before executing another mutation', async () => {
@@ -237,10 +284,9 @@ describe('atomic persisted-game mutation', () => {
     expect(Object.keys((document as PersistedGameV3).itemsById)).toHaveLength(Object.keys(initial.itemsById).length)
   })
 
-  it('persists assignment, pending settlement projection, and exact reward claim', async () => {
+  it('does not let compatibility reads advance a legacy commission', async () => {
     const { getPersistedGameV3, getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
-    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
-    const { assignVisitorCommission, claimVisitorCommission } = await import('../utils/visitor-logic')
+    const { assignVisitorCommission } = await import('../utils/visitor-logic')
     const initial = await getPersistedGameV3('atomic-user')
     const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
     const start = new Date('2026-09-13T00:00:00.000Z')
@@ -257,37 +303,13 @@ describe('atomic persisted-game mutation', () => {
     expect(assigned.settlementsById[assignedCommission.id]).toBeUndefined()
     const finish = assignedCommission.finishesAt
     const reconcileDependencies = { ...dependencies, now: () => new Date(finish) }
-    const reconciledPublic = await getSaveGame('atomic-user', reconcileDependencies)
-
-    const ready = await getPersistedGameV3('atomic-user')
-    const readyVisitor = ready.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
-    const rewardItemId = readyVisitor.commission!.rewardItemId!
-    const rewardState = ready.itemV2ById[rewardItemId]!
-    const publicRewardId = reconciledPublic.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)?.visitor?.commission?.rewardItem?.id
-    const view = mapPersistedGameToGameView(ready, new Date(finish))
-    expect(publicRewardId).toBe(rewardItemId)
-    expect(ready.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'settlement', custodyId: readyVisitor.commission!.id })
-    expect(rewardState).toMatchObject({
-      sealedAffixes: ready.itemsById[rewardItemId]!.affixes,
-      provenance: {
-        zoneId: readyVisitor.commission!.regionId,
-        configVersion: LOOT_CONFIG_VERSION,
-        businessKey: `loot:${readyVisitor.commission!.id}:reward`,
-        droppedAt: finish
-      }
-    })
-    expect(view.settlements).toContainEqual(expect.objectContaining({ settlementId: readyVisitor.commission!.id }))
-    expect(view.items).toContainEqual(expect.objectContaining({ itemId: rewardItemId, custody: expect.objectContaining({ kind: 'settlement' }) }))
-
-    await mutateSaveGameAtomic('atomic-user', 'claim-flow', 'commission:claim:flow', ready.revision, {}, (save) => {
-      claimVisitorCommission(save, visitorId, new Date(finish))
-    }, reconcileDependencies)
-    const claimed = await getPersistedGameV3('atomic-user')
-    expect(claimed.stash.filter((itemId) => itemId === rewardItemId)).toHaveLength(1)
-    expect(claimed.itemPlacements[rewardItemId]).toEqual({ ownerKind: 'caravan', custodyKind: 'stash' })
-    expect(Object.entries(claimed.itemV2ById).filter(([, state]) => state.provenance?.businessKey === `loot:${readyVisitor.commission!.id}:reward`))
-      .toHaveLength(1)
-    expect(claimed.expeditionsById[readyVisitor.commission!.id]).toBeDefined()
+    await getSaveGame('atomic-user', reconcileDependencies)
+    const unchanged = await getPersistedGameV3('atomic-user')
+    const unchangedVisitor = unchanged.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!
+    expect(unchanged.revision).toBe(assigned.revision)
+    expect(unchangedVisitor.state).toBe('commissioned')
+    expect(unchangedVisitor.commission).toMatchObject({ status: 'active', finishesAt: finish })
+    expect(unchangedVisitor.commission?.rewardItemId).toBeUndefined()
   })
 
   it.each(['queue_blacksmith_job', 'queue_enchanter_job', 'dismantle_item', 'sell', 'loan'] as const)('keeps claimed configured reward placement after %s and a legacy round-trip', async (action) => {
@@ -497,6 +519,54 @@ describe('atomic persisted-game mutation', () => {
     const result = await mutateSaveGameAtomic('atomic-user', 'thrown-uncertain', 'credit:thrown', 0, { amount: 11 }, mutate)
     expect(result.gold).toBe(461)
     expect(mutate).toHaveBeenCalledOnce()
+  })
+
+  it('surfaces a retryable uncertain result when a write error cannot be reconciled', async () => {
+    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { UncertainOperationError } = await import('../server/domain/v2-errors')
+    collection.replaceOne.mockRejectedValueOnce(new Error('network timeout with unknown commit state'))
+
+    await expect(mutateSaveGameAtomic(
+      'atomic-user', 'uncertain-unconfirmed', 'credit:unknown', 0, { amount: 3 },
+      (save) => { save.gold += 3 }
+    )).rejects.toMatchObject({
+      name: 'UncertainOperationError',
+      requestId: 'uncertain-unconfirmed'
+    })
+  })
+
+  it('preserves uncertain request identity when both mutation write and verification read fail', async () => {
+    const { mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    collection.findOne
+      .mockResolvedValueOnce(structuredClone(document!))
+      .mockRejectedValueOnce(new Error('verification read failed'))
+    collection.replaceOne.mockRejectedValueOnce(new Error('write result unknown'))
+
+    await expect(mutateSaveGameAtomic(
+      'atomic-user', 'double-failure-mutation', 'credit:double-failure', 0, { amount: 3 },
+      (save) => { save.gold += 3 }
+    )).rejects.toMatchObject({
+      name: 'UncertainOperationError',
+      requestId: 'double-failure-mutation'
+    })
+  })
+
+  it('preserves uncertain request identity when item write and verification read both fail', async () => {
+    const { transitionItemAtomic } = await import('../server/utils/savegame')
+    const persisted = structuredClone(document) as PersistedGameV3
+    const itemId = persisted.stash[0]!
+    const visitorId = persisted.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
+    collection.findOne
+      .mockResolvedValueOnce(persisted)
+      .mockRejectedValueOnce(new Error('verification read failed'))
+    collection.replaceOne.mockRejectedValueOnce(new Error('write result unknown'))
+
+    await expect(transitionItemAtomic(
+      'atomic-user', 'double-failure-item', 0, { operation: 'sell', itemId, targetId: visitorId }
+    )).rejects.toMatchObject({
+      name: 'UncertainOperationError',
+      requestId: 'double-failure-item'
+    })
   })
 
   it('removes completed appraiser custody before persisting', async () => {
@@ -1525,8 +1595,8 @@ async function claimConfiguredReward(
   regionId = 'blood-moor',
   randoms: number[] = [0, 0.25, 0.5, 0.75]
 ): Promise<{ persisted: PersistedGameV3; rewardItemId: string; visitorId: string; commissionId: string }> {
-  const { getPersistedGameV3, getSaveGame, mutateSaveGameAtomic } = await import('../server/utils/savegame')
-  const { assignVisitorCommission, claimVisitorCommission } = await import('../utils/visitor-logic')
+  const { getPersistedGameV3, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+  const { assignVisitorCommission, claimVisitorCommission, refreshVisitRound } = await import('../utils/visitor-logic')
   const initial = await getPersistedGameV3('atomic-user')
   const visitorId = initial.visitRound.slots.find((slot) => slot.visitor)?.visitor?.id!
   const start = new Date('2026-09-13T00:00:00.000Z')
@@ -1540,7 +1610,11 @@ async function claimConfiguredReward(
   }, { ...dependencies, now: () => start })
   const assigned = await getPersistedGameV3('atomic-user')
   const commission = assigned.visitRound.slots.find((slot) => slot.visitor?.id === visitorId)!.visitor!.commission!
-  await getSaveGame('atomic-user', { ...dependencies, now: () => new Date(commission.finishesAt) })
+  await mutateSaveGameAtomic(
+    'atomic-user', `reconcile-${regionId}`, `commission:reconcile:${regionId}`, assigned.revision, {},
+    (save, deps) => refreshVisitRound(save, deps.now(), deps.random),
+    { ...dependencies, now: () => new Date(commission.finishesAt) }
+  )
   const ready = await getPersistedGameV3('atomic-user')
   await mutateSaveGameAtomic('atomic-user', `claim-${regionId}`, `commission:claim:${regionId}`, ready.revision, {}, (save) => {
     claimVisitorCommission(save, visitorId, new Date(commission.finishesAt))

@@ -145,11 +145,22 @@ function capitalize(value: string): string {
 .item.magic { --rarity-color: #5b8dee; }
 .item.rare { --rarity-color: #d8a849; }
 .item.unique { --rarity-color: #b87333; }
-.item-heading { align-items: center; display: flex; gap: 0.8rem; }
+.item-heading { align-items: flex-start; display: flex; gap: 0.8rem; flex-wrap: wrap; }
 .item-heading-copy { flex: 1; min-width: 0; }
 .item-heading-copy .row, .item-heading-copy p { margin: 0; }
+.item-heading-copy .row,
+.item-heading-copy p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.item-heading-copy h2 { overflow-wrap: anywhere; }
 .affix-list { color: var(--ok); }
-.item-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.item-actions { align-items: stretch; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.item-actions .btn {
+  min-width: 0;
+  white-space: normal;
+}
 .empty-stash { align-items: start; display: grid; gap: 0.65rem; justify-items: start; }
 .stash-skeleton { animation: pulse 1.5s ease-in-out infinite; min-height: 14rem; }
 @media (prefers-reduced-motion: reduce) { .stash-skeleton { animation: none; } }
