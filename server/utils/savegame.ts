@@ -152,7 +152,7 @@ export interface PersistedGameV3 {
 }
 
 export function createPersistedGameV3(userId: string, dependencies = defaultDependencies): PersistedGameV3 {
-  return buildPersistedFromPublic(createSaveGame(userId, dependencies.now(), dependencies.random), undefined, dependencies)
+  return buildPersistedFromPublic(createSaveGame(userId, dependencies.now(), dependencies.random), undefined, dependencies, true)
 }
 
 type PersistedDbDocument = DbSaveGame & Partial<Omit<PersistedGameV3, 'userId'>>
@@ -519,6 +519,12 @@ export async function mutateVisitorCycleAtomic(
 
     const now = dependencies.now()
     const scopedDependencies = { ...dependencies, now: () => now }
+    if (current.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) {
+      await projectChronicleOutboxBestEffort(userId)
+      const drained = await getPersistedGameV3(userId, dependencies)
+      if (drained.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) throw new V2DomainRuleError('Chronicle outbox is full', 'SERVICE_LOCKED')
+      continue
+    }
     const next = applyVisitorCycleCommand(current, command, scopedDependencies)
     if (command.action === 'reconcile_game') reconcileCaravanMaintenance(next, now)
     next.revision = expectedRevision + 1
@@ -579,8 +585,8 @@ function appendCycleChronicleEvents(previous: PersistedGameV3, next: PersistedGa
   }
   for (const [expeditionId, expedition] of Object.entries(next.visitorCycle.expeditions)) {
     const old = previous.visitorCycle.expeditions[expeditionId]
-    if (!old && expedition.state === 'active') appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:started`, type: 'expedition_started', occurredAt: expedition.startedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: {} })
-    if (old?.state !== 'settled' && expedition.state === 'settled') appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:resolved`, type: 'expedition_resolved', occurredAt: expedition.resolvedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: { outcome: expedition.outcome ?? 'unknown' } })
+    if (old?.state !== 'active' && expedition.state === 'active') appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:started:${next.revision}`, type: 'expedition_started', occurredAt: expedition.startedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: {} })
+    if (old?.state !== 'awaiting_settlement' && (expedition.state === 'awaiting_settlement' || expedition.state === 'settled')) appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:resolved:${next.revision}`, type: 'expedition_resolved', occurredAt: expedition.resolvedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: { outcome: expedition.outcome ?? 'unknown' } })
   }
   for (const [itemId, placement] of Object.entries(next.itemPlacements)) {
     const previousPlacement = previous.itemPlacements[itemId]
@@ -588,7 +594,7 @@ function appendCycleChronicleEvents(previous: PersistedGameV3, next: PersistedGa
       const provenance = next.itemV2ById[itemId]?.provenance
       appendChronicleEvent(next, { eventKey: `item:${itemId}:found:${provenance?.businessKey ?? 'initial'}`, type: 'item_found', occurredAt: now.toISOString(), subject: { kind: 'item', id: itemId }, data: provenance ? { zoneId: provenance.zoneId, ...(provenance.lootTableId ? { lootTableId: provenance.lootTableId } : {}) } : {} })
     }
-    else if (JSON.stringify(previousPlacement) !== JSON.stringify(placement)) appendChronicleEvent(next, { eventKey: `item:${itemId}:custody:${next.revision + 1}`, type: 'item_custody_changed', occurredAt: now.toISOString(), subject: { kind: 'item', id: itemId }, data: { custodyKind: placement.custodyKind } })
+    else if (JSON.stringify(previousPlacement) !== JSON.stringify(placement)) appendChronicleEvent(next, { eventKey: `item:${itemId}:custody:${next.revision}`, type: 'item_custody_changed', occurredAt: now.toISOString(), subject: { kind: 'item', id: itemId }, data: { custodyKind: placement.custodyKind } })
   }
 }
 
@@ -638,9 +644,15 @@ export async function mutateEquipmentV2Atomic(
     }
     if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 
+    if (current.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) {
+      await projectChronicleOutboxBestEffort(userId)
+      const drained = await getPersistedGameV3(userId, dependencies)
+      if (drained.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) throw new V2DomainRuleError('Chronicle outbox is full', 'SERVICE_LOCKED')
+      continue
+    }
+
     authorizeEquipmentV2Command(current, command, dependencies)
     const transitioned = applyEquipmentV2Command(current, command, dependencies)
-    appendCycleChronicleEvents(current, transitioned, dependencies.now())
     pruneEmptyOrphanedLifecycle(
       transitioned.expeditionsById,
       transitioned.settlementsById,
@@ -651,6 +663,7 @@ export async function mutateEquipmentV2Atomic(
     const now = dependencies.now().toISOString()
     transitioned.revision = expectedRevision + 1
     transitioned.updatedAt = now
+    appendCycleChronicleEvents(current, transitioned, dependencies.now())
     const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
     const persistedResponse = createReplaySnapshot(transitioned)
     transitioned.requestRecords = appendRequestRecord(current.requestRecords, now, {
@@ -698,12 +711,16 @@ export async function reconcilePersistedGameV3(
   userId: string,
   dependencies = defaultDependencies
 ): Promise<PersistedGameV3> {
+  await projectChronicleOutboxBestEffort(userId)
   let conflicts = 0
   while (conflicts < MAX_MUTATE_ATTEMPTS) {
     const current = await getPersistedGameV3(userId, dependencies)
     const due = Object.entries(current.serviceJobStateById)
       .find(([, state]) => state.status === 'active' && Date.parse(state.completesAt) <= dependencies.now().getTime())
-    if (!due) return current
+    if (!due) {
+      await projectChronicleOutboxBestEffort(userId)
+      return await getPersistedGameV3(userId, dependencies)
+    }
     const [jobId, state] = due
     try {
       await mutateEquipmentV2Atomic(
@@ -749,11 +766,16 @@ export async function mutateCaravanUpgradeAtomic(
     if (current.businessKeys[resolvedBusinessKey]) throw new BusinessKeyConflictError('business operation was already committed')
     if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
     if (current.caravanV2.maintenance.debts.length) throw new V2DomainRuleError('Maintenance debt blocks caravan upgrades', 'MAINTENANCE_DEBT')
+    if (current.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) {
+      await projectChronicleOutboxBestEffort(userId)
+      const drained = await getPersistedGameV3(userId, dependencies)
+      if (drained.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) throw new V2DomainRuleError('Chronicle outbox is full', 'SERVICE_LOCKED')
+      continue
+    }
     const level = current.caravanV2.upgrades[upgradeId]
     const cost = CARAVAN_V2_UPGRADES[upgradeId].costs[level]
     if (!cost) throw new V2DomainRuleError('Caravan upgrade option is stale', 'OPTION_STALE')
     if (current.gold < cost.gold || (current.materials.scrap ?? 0) < cost.scrap) throw new V2DomainRuleError('Insufficient resources for caravan upgrade')
-    if (current.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) throw new V2DomainRuleError('Chronicle outbox is full', 'SERVICE_LOCKED')
     const next = structuredClone(current)
     const now = dependencies.now().toISOString()
     next.gold -= cost.gold
@@ -769,7 +791,10 @@ export async function mutateCaravanUpgradeAtomic(
     if (!isPersistedCanonical(next)) throw new PersistedGameCorruptError('Caravan upgrade produced an invalid aggregate')
     try {
       const result = await saves.replaceOne({ userId, revision: expectedRevision } as Filter<DbSaveGame>, next as unknown as DbSaveGame)
-      if (result.modifiedCount === 1) return response
+      if (result.modifiedCount === 1) {
+        await projectChronicleOutboxBestEffort(userId)
+        return response
+      }
     } catch (error) {
       const winner = await getPersistedGameV3(userId, dependencies).catch(() => undefined)
       const exact = winner?.requestRecords.find((record) => record.requestId === requestId)
@@ -1013,7 +1038,8 @@ export function hydratePersistedGame(document: PersistedGameV3): SaveGame {
 export function buildPersistedFromPublic(
   save: SaveGame,
   previous?: PersistedGameV3,
-  dependencies = defaultDependencies
+  dependencies = defaultDependencies,
+  newGame = false
 ): PersistedGameV3 {
   const normalized = normalizeSaveGame(structuredClone(save), { refreshVisitors: false })
   const itemsById: Record<string, Item> = {}
@@ -1182,7 +1208,7 @@ export function buildPersistedFromPublic(
     businessKeys: structuredClone(previous?.businessKeys ?? {}),
     ledger: structuredClone(previous?.ledger ?? []),
     visitorCycle
-    ,caravanV2: structuredClone(previous?.caravanV2 ?? createCaravanV2(new Date(normalized.createdAt), true))
+    ,caravanV2: structuredClone(previous?.caravanV2 ?? createCaravanV2(new Date(normalized.createdAt), !newGame))
     ,chronicleOutbox: structuredClone(previous?.chronicleOutbox ?? [])
   }
   const canonical = stripUndefinedDeep(persisted) as PersistedGameV3

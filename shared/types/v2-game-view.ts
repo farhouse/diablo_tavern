@@ -2,8 +2,7 @@ export * from './v2-game-view.generated'
 
 import type { ActionAvailability, ActionId, GameView as GeneratedGameView } from './v2-game-view.generated'
 
-// TODO: migrate the checked-in legacy fixtures to v2-etapa0-4; runtime output is always closed.
-export type GameView = Omit<GeneratedGameView, 'caravan'> & { caravan?: GeneratedGameView['caravan'] }
+export type GameView = GeneratedGameView
 
 export const ACTION_IDS = [
   'accept_contract',

@@ -109,6 +109,11 @@ export function reservedCapacity(caravan: PersistedCaravanV2): number {
 
 export function reconcileCaravanMaintenance(game: Pick<PersistedGameV3, 'gold' | 'caravanV2' | 'businessKeys'>, now: Date): string[] {
   const currentKey = maintenancePeriodKey(now)
+  while (game.caravanV2.maintenance.debts.length && game.gold >= game.caravanV2.maintenance.debts[0]!.gold) {
+    const debt = game.caravanV2.maintenance.debts.shift()!
+    game.gold -= debt.gold
+    game.businessKeys[`maintenance:paid:${debt.periodKey}`] = 'reconcile_game'
+  }
   const start = nextMaintenancePeriodStart(game.caravanV2.maintenance.accountedThroughPeriodKey)
   const end = nextMaintenancePeriodStart(currentKey)
   const assessed: string[] = []
