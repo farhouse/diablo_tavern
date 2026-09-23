@@ -30,7 +30,7 @@ export async function listChronicle(userId: string, cursor: string | undefined, 
   const collection = await chronicleEventsCollection()
   const filter: Record<string, unknown> = { userId }
   if (cursor) {
-    const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { occurredAt: string; eventId: string }
+    const decoded = decodeCursor(cursor)
     filter.$or = [{ occurredAt: { $lt: decoded.occurredAt } }, { occurredAt: decoded.occurredAt, eventId: { $lt: decoded.eventId } }]
   }
   const rows = await collection.find(filter).sort({ occurredAt: -1, eventId: -1 }).limit(limit + 1).toArray()
@@ -38,6 +38,18 @@ export async function listChronicle(userId: string, cursor: string | undefined, 
   const entries = page.map((event) => publicEntry(event as unknown as PersistedChronicleOutboxEvent))
   const last = page.at(-1)
   return { entries, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ occurredAt: last.occurredAt, eventId: last.eventId })).toString('base64url') : null }
+}
+
+function decodeCursor(cursor: string): { occurredAt: string; eventId: string } {
+  if (cursor.length > 512 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw createError({ statusCode: 400, statusMessage: 'Invalid chronicle cursor' })
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Record<string, unknown>
+    if (Object.keys(decoded).length !== 2 || typeof decoded.occurredAt !== 'string' || !Number.isFinite(Date.parse(decoded.occurredAt))
+      || typeof decoded.eventId !== 'string' || !/^[a-f0-9]{64}$/.test(decoded.eventId)) throw new Error('invalid')
+    return { occurredAt: decoded.occurredAt, eventId: decoded.eventId }
+  } catch {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid chronicle cursor' })
+  }
 }
 
 function publicEntry(event: PersistedChronicleOutboxEvent): ChronicleEntry {

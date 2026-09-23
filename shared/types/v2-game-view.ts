@@ -2,8 +2,7 @@ export * from './v2-game-view.generated'
 
 import type { ActionAvailability, ActionId, GameView as GeneratedGameView } from './v2-game-view.generated'
 
-// Existing contract fixtures remain v2-etapa0-3-shaped while the runtime validator
-// enforces v2-etapa0-4. Keep fixture consumers source-compatible during the migration.
+// TODO: migrate the checked-in legacy fixtures to v2-etapa0-4; runtime output is always closed.
 export type GameView = Omit<GeneratedGameView, 'caravan'> & { caravan?: GeneratedGameView['caravan'] }
 
 export const ACTION_IDS = [

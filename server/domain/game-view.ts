@@ -145,6 +145,7 @@ function projectCaravanUpgradeAction(game: PersistedGameV3, now: Date): ActionAv
   if (game.caravanV2.maintenance.debts.length) {
     return { action: 'upgrade_caravan', enabled: false, authorizationId: `auth-upgrade-caravan-${game.revision}`, label: text('action.upgrade_caravan', 'upgrade caravan'), reason: 'MAINTENANCE_DEBT', reasonText: text('maintenance.debt', 'La manutención pendiente bloquea las mejoras'), consequences: [] } as ActionAvailability
   }
+  if (!options.length) return { action: 'upgrade_caravan', enabled: false, authorizationId: `auth-upgrade-caravan-${game.revision}`, label: text('action.upgrade_caravan', 'upgrade caravan'), reason: 'SERVICE_LOCKED', reasonText: text('caravan.maxed', 'La caravana alcanzó su máximo'), consequences: [] } as ActionAvailability
   return { action: 'upgrade_caravan', enabled: true, authorizationId: `auth-upgrade-caravan-${game.revision}`, label: text('action.upgrade_caravan', 'upgrade caravan'), consequences: [], execution: { options } } as unknown as ActionAvailability
 }
 
@@ -264,7 +265,9 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
   }
 
   const blacksmith = getBlacksmithOption(item, state)
-  actions.push(sealedAction(game, 'queue_blacksmith_job', item.id, 'Herrero', [{
+  actions.push(game.caravanV2.upgrades.blacksmith < 1 || game.caravanV2.maintenance.debts.length
+    ? disabledEquipmentAction('queue_blacksmith_job', item.id, 'Herrero', game.caravanV2.maintenance.debts.length ? 'MAINTENANCE_DEBT' : 'SERVICE_LOCKED')
+    : sealedAction(game, 'queue_blacksmith_job', item.id, 'Herrero', [{
     optionId: sealEquipmentActionToken(game, item.id, 'queue_blacksmith_job', blacksmith.optionId, 'option', expiresAt), expiresAt,
     label: text('blacksmith.label', 'Mejorar en herrero'),
     description: text('blacksmith.description', `Cuesta ${blacksmith.gold} oro`),
@@ -272,7 +275,9 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
   }]))
 
   const enchanter = getEnchanterOption(item, state)
-  actions.push(sealedAction(game, 'queue_enchanter_job', item.id, 'Encantador', [{
+  actions.push(game.caravanV2.upgrades.enchanter < 1 || game.caravanV2.maintenance.debts.length
+    ? disabledEquipmentAction('queue_enchanter_job', item.id, 'Encantador', game.caravanV2.maintenance.debts.length ? 'MAINTENANCE_DEBT' : 'SERVICE_LOCKED')
+    : sealedAction(game, 'queue_enchanter_job', item.id, 'Encantador', [{
     optionId: sealEquipmentActionToken(game, item.id, 'queue_enchanter_job', enchanter.optionId, 'option', expiresAt), expiresAt,
     label: text('enchanter.label', 'Encantar'),
     description: text('enchanter.description', `Cuesta ${enchanter.gold} oro`),
@@ -312,6 +317,19 @@ function sealedAction(game: PersistedGameV3, action: EquipmentV2Action, itemId: 
     targetId: itemId,
     execution: { itemId, options }
   } as ActionAvailability
+}
+
+function disabledEquipmentAction(action: 'queue_blacksmith_job' | 'queue_enchanter_job', itemId: string, label: string, reason: 'MAINTENANCE_DEBT' | 'SERVICE_LOCKED'): ActionAvailability {
+  return {
+    action,
+    targetId: itemId,
+    enabled: false,
+    authorizationId: `auth-${action}-${itemId}`,
+    label: text(`${action}.label`, label),
+    reason,
+    reasonText: text(reason === 'MAINTENANCE_DEBT' ? 'maintenance.debt' : 'service.locked', reason === 'MAINTENANCE_DEBT' ? 'La manutención pendiente bloquea el servicio' : 'El servicio aún no está desbloqueado'),
+    consequences: []
+  }
 }
 
 function getActionExpiresAt(options: unknown[]): string {

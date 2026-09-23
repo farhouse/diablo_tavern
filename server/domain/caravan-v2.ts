@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import type { PersistedGameV3 } from '~/server/utils/savegame'
+import { resolveServerRuntimeConfig } from '~/server/utils/runtime-config'
 
 export type CaravanV2UpgradeId = 'visitor_quarters' | 'blacksmith' | 'enchanter'
 export type ServiceV2Id = 'blacksmith' | 'enchanter'
@@ -73,7 +74,9 @@ export function nextMaintenancePeriodStart(periodKey: string): string {
 
 export function caravanUpgradeToken(game: PersistedGameV3, upgradeId: CaravanV2UpgradeId, targetLevel: number, expiresAt: string): string {
   const payload = `${game.userId}|${game.createdAt}|${game.revision}|${upgradeId}|${targetLevel}|${expiresAt}`
-  const secret = process.env.CARAVAN_V2_TOKEN_SECRET || 'diablo-tavern-caravan-v2-dev-secret'
+  const runtimeConfig = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : {}
+  const secret = process.env.CARAVAN_V2_TOKEN_SECRET || resolveServerRuntimeConfig(runtimeConfig).jwtSecret
+  if (!secret) throw new Error('caravan token secret is not configured')
   const signature = createHmac('sha256', secret).update(payload).digest('base64url')
   return `cv2.${Buffer.from(expiresAt).toString('base64url')}.${signature}`
 }
@@ -122,7 +125,7 @@ export function reconcileCaravanMaintenance(game: Pick<PersistedGameV3, 'gold' |
       game.businessKeys[`maintenance:paid:${debt.periodKey}`] = 'reconcile_game'
       game.caravanV2.maintenance.debts.shift()
     }
-    if (due > 0 && game.gold >= due) {
+    if (due > 0 && game.caravanV2.maintenance.debts.length === 0 && game.gold >= due) {
       game.gold -= due
       game.businessKeys[`maintenance:paid:${periodKey}`] = 'reconcile_game'
     } else if (due > 0 && game.caravanV2.maintenance.debts.length < 2) {
