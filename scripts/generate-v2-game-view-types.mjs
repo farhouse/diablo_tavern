@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const schemaPath = resolve(root, 'contracts/v2-etapa0-3/schema.json')
+const schemaPath = resolve(root, 'contracts/v2-etapa0-4/schema.json')
 const outputPath = resolve(root, 'shared/types/v2-game-view.generated.ts')
 const schema = JSON.parse(readFileSync(schemaPath, 'utf8'))
 
@@ -73,7 +73,7 @@ const definitions = Object.entries(schema.$defs).map(([name, definition]) =>
   `export type ${name} = ${renderDefinition(name, definition)}\n`
 )
 
-const banner = `// Generated from contracts/v2-etapa0-3/schema.json. Do not edit by hand.\n` +
+const banner = `// Generated from contracts/v2-etapa0-4/schema.json. Do not edit by hand.\n` +
   `// Run \`pnpm generate:v2-types\` after changing the normative schema.\n\n`
 const output = `${banner}${definitions.join('\n')}`
 

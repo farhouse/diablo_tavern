@@ -1,0 +1,3526 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://diablo-tavern.local/contracts/v2-etapa0-4.schema.json",
+  "title": "Diablo Tavern V2 public view contract — executable actions sealed",
+  "$ref": "#/$defs/GameView",
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "UtcDateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "LocalizedText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "fallback"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fallback": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      }
+    },
+    "ActionId": {
+      "enum": [
+        "accept_contract",
+        "start_expedition",
+        "reconcile_game",
+        "confirm_settlement",
+        "assign_recovery",
+        "abandon_recovery",
+        "sell_item_to_visitor",
+        "identify_item",
+        "queue_blacksmith_job",
+        "queue_enchanter_job",
+        "dismantle_item",
+        "replace_boss_imprint",
+        "upgrade_caravan"
+      ]
+    },
+    "UnavailableReason": {
+      "enum": [
+        "VISITOR_NOT_AVAILABLE",
+        "EXPEDITION_NOT_READY",
+        "MAINTENANCE_DEBT",
+        "SERVICE_LOCKED",
+        "RECOVERY_LIMIT_REACHED",
+        "CAPACITY_FULL",
+        "ITEM_IN_USE",
+        "ITEM_NOT_OWNED",
+        "OPTION_STALE",
+        "SETTLEMENT_PENDING",
+        "TERMINAL_ENTITY"
+      ]
+    },
+    "EnabledAction": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AcceptContractAction"
+        },
+        {
+          "$ref": "#/$defs/StartExpeditionAction"
+        },
+        {
+          "$ref": "#/$defs/ReconcileGameAction"
+        },
+        {
+          "$ref": "#/$defs/ConfirmSettlementAction"
+        },
+        {
+          "$ref": "#/$defs/AssignRecoveryAction"
+        },
+        {
+          "$ref": "#/$defs/AbandonRecoveryAction"
+        },
+        {
+          "$ref": "#/$defs/SellItemAction"
+        },
+        {
+          "$ref": "#/$defs/IdentifyItemAction"
+        },
+        {
+          "$ref": "#/$defs/BlacksmithAction"
+        },
+        {
+          "$ref": "#/$defs/EnchanterAction"
+        },
+        {
+          "$ref": "#/$defs/DismantleAction"
+        },
+        {
+          "$ref": "#/$defs/ReplaceImprintAction"
+        },
+        {
+          "$ref": "#/$defs/UpgradeCaravanAction"
+        }
+      ]
+    },
+    "DisabledAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "enabled",
+        "label",
+        "reason",
+        "reasonText",
+        "consequences",
+        "authorizationId"
+      ],
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "enabled": {
+          "const": false
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "reason": {
+          "$ref": "#/$defs/UnavailableReason"
+        },
+        "reasonText": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    },
+    "ActionAvailability": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/EnabledAction"
+        },
+        {
+          "$ref": "#/$defs/DisabledAction"
+        }
+      ]
+    },
+    "CaravanOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "const": "caravan"
+        }
+      }
+    },
+    "VisitorOwner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "visitorId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "visitor"
+        },
+        "visitorId": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    },
+    "ItemOwner": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CaravanOwner"
+        },
+        {
+          "$ref": "#/$defs/VisitorOwner"
+        }
+      ]
+    },
+    "StashCustody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "const": "stash"
+        }
+      }
+    },
+    "VisitorCustody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "visitorId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "visitor"
+        },
+        "visitorId": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    },
+    "ExpeditionCustody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "expeditionId",
+        "visitorId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "expedition"
+        },
+        "expeditionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "visitorId": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    },
+    "RecoveryCustody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "recoveryId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "recovery"
+        },
+        "recoveryId": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    },
+    "SettlementCustody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "settlementId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "settlement"
+        },
+        "settlementId": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    },
+    "ServiceCustody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "jobId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "service"
+        },
+        "jobId": {
+          "$ref": "#/$defs/Id"
+        }
+      }
+    },
+    "ItemCustody": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/StashCustody"
+        },
+        {
+          "$ref": "#/$defs/VisitorCustody"
+        },
+        {
+          "$ref": "#/$defs/ExpeditionCustody"
+        },
+        {
+          "$ref": "#/$defs/RecoveryCustody"
+        },
+        {
+          "$ref": "#/$defs/SettlementCustody"
+        },
+        {
+          "$ref": "#/$defs/ServiceCustody"
+        }
+      ]
+    },
+    "AffixView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "affixId",
+        "name",
+        "valueText"
+      ],
+      "properties": {
+        "affixId": {
+          "$ref": "#/$defs/Id"
+        },
+        "name": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "valueText": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "ImprintView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "imprintId",
+        "bossId",
+        "name",
+        "effectText"
+      ],
+      "properties": {
+        "imprintId": {
+          "$ref": "#/$defs/Id"
+        },
+        "bossId": {
+          "$ref": "#/$defs/Id"
+        },
+        "name": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "effectText": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "ItemBase": {
+      "type": "object",
+      "required": [
+        "itemId",
+        "name",
+        "slot",
+        "rarity",
+        "level",
+        "owner",
+        "custody",
+        "actions"
+      ],
+      "properties": {
+        "itemId": {
+          "$ref": "#/$defs/Id"
+        },
+        "name": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "slot": {
+          "enum": [
+            "weapon",
+            "armor",
+            "accessory"
+          ]
+        },
+        "rarity": {
+          "enum": [
+            "common",
+            "magic",
+            "rare",
+            "legendary"
+          ]
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "owner": {
+          "$ref": "#/$defs/ItemOwner"
+        },
+        "custody": {
+          "$ref": "#/$defs/ItemCustody"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAvailability"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "owner": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "visitor"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "custody": {
+                "$ref": "#/$defs/VisitorCustody"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "owner": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "caravan"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "custody": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/StashCustody"
+                  },
+                  {
+                    "$ref": "#/$defs/ExpeditionCustody"
+                  },
+                  {
+                    "$ref": "#/$defs/RecoveryCustody"
+                  },
+                  {
+                    "$ref": "#/$defs/SettlementCustody"
+                  },
+                  {
+                    "$ref": "#/$defs/ServiceCustody"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "UnidentifiedItemView": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ItemBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "itemId",
+            "name",
+            "slot",
+            "rarity",
+            "level",
+            "owner",
+            "custody",
+            "actions",
+            "identification"
+          ],
+          "properties": {
+            "itemId": true,
+            "name": true,
+            "slot": true,
+            "rarity": true,
+            "level": true,
+            "owner": true,
+            "custody": true,
+            "actions": true,
+            "identification": {
+              "const": "unidentified"
+            }
+          }
+        }
+      ]
+    },
+    "IdentifiedItemView": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ItemBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "itemId",
+            "name",
+            "slot",
+            "rarity",
+            "level",
+            "owner",
+            "custody",
+            "actions",
+            "identification",
+            "affixes",
+            "activeImprint"
+          ],
+          "properties": {
+            "itemId": true,
+            "name": true,
+            "slot": true,
+            "rarity": true,
+            "level": true,
+            "owner": true,
+            "custody": true,
+            "actions": true,
+            "identification": {
+              "const": "identified"
+            },
+            "affixes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AffixView"
+              }
+            },
+            "activeImprint": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/ImprintView"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ItemView": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UnidentifiedItemView"
+        },
+        {
+          "$ref": "#/$defs/IdentifiedItemView"
+        }
+      ]
+    },
+    "LoseItemConsequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "irreversible",
+        "itemIds",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "lose_items"
+        },
+        "irreversible": {
+          "const": true
+        },
+        "itemIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "text": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "DestroyItemConsequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "irreversible",
+        "itemIds",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "destroy_items"
+        },
+        "irreversible": {
+          "const": true
+        },
+        "itemIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "text": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "TransferItemConsequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "irreversible",
+        "itemIds",
+        "newOwner",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "transfer_items"
+        },
+        "irreversible": {
+          "const": true
+        },
+        "itemIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "newOwner": {
+          "$ref": "#/$defs/ItemOwner"
+        },
+        "text": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "SpendResourceConsequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "irreversible",
+        "resourceId",
+        "amount",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "spend_resource"
+        },
+        "irreversible": {
+          "const": true
+        },
+        "resourceId": {
+          "$ref": "#/$defs/Id"
+        },
+        "amount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "text": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "RenounceRewardConsequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "irreversible",
+        "rewardItemIds",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "renounce_reward"
+        },
+        "irreversible": {
+          "const": true
+        },
+        "rewardItemIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "text": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "ReplaceImprintConsequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "irreversible",
+        "itemId",
+        "replacedImprint",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "replace_imprint"
+        },
+        "irreversible": {
+          "const": true
+        },
+        "itemId": {
+          "$ref": "#/$defs/Id"
+        },
+        "replacedImprint": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "text": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "DepartVisitorConsequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "irreversible",
+        "visitorId",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "depart_visitor"
+        },
+        "irreversible": {
+          "const": true
+        },
+        "visitorId": {
+          "$ref": "#/$defs/Id"
+        },
+        "text": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "FailRecoveryConsequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "irreversible",
+        "recoveryId",
+        "destroyedItemIds",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "fail_recovery"
+        },
+        "irreversible": {
+          "const": true
+        },
+        "recoveryId": {
+          "$ref": "#/$defs/Id"
+        },
+        "destroyedItemIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "text": {
+          "$ref": "#/$defs/LocalizedText"
+        }
+      }
+    },
+    "ConsequenceView": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/LoseItemConsequence"
+        },
+        {
+          "$ref": "#/$defs/DestroyItemConsequence"
+        },
+        {
+          "$ref": "#/$defs/TransferItemConsequence"
+        },
+        {
+          "$ref": "#/$defs/SpendResourceConsequence"
+        },
+        {
+          "$ref": "#/$defs/RenounceRewardConsequence"
+        },
+        {
+          "$ref": "#/$defs/ReplaceImprintConsequence"
+        },
+        {
+          "$ref": "#/$defs/DepartVisitorConsequence"
+        },
+        {
+          "$ref": "#/$defs/FailRecoveryConsequence"
+        }
+      ]
+    },
+    "ChoiceOption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "optionId",
+        "label",
+        "itemIds",
+        "capacityDelta",
+        "consequences"
+      ],
+      "properties": {
+        "optionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "itemIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "capacityDelta": {
+          "type": "integer"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        }
+      }
+    },
+    "ChoiceGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupId",
+        "required",
+        "defaultOptionId",
+        "label",
+        "options"
+      ],
+      "properties": {
+        "groupId": {
+          "$ref": "#/$defs/Id"
+        },
+        "required": {
+          "const": true
+        },
+        "defaultOptionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ChoiceOption"
+          }
+        }
+      }
+    },
+    "ContractOptionView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "optionId",
+        "label",
+        "description",
+        "durationSeconds",
+        "caravanGoldShareBps",
+        "lootPriority",
+        "retreatThreshold",
+        "loanFeeGold",
+        "consequences"
+      ],
+      "properties": {
+        "optionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "description": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "caravanGoldShareBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "lootPriority": {
+          "enum": [
+            "caravan_first",
+            "visitor_first"
+          ]
+        },
+        "retreatThreshold": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
+        "loanFeeGold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        }
+      }
+    },
+    "RecoveryOptionView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "optionId",
+        "label",
+        "description",
+        "durationSeconds",
+        "consequences"
+      ],
+      "properties": {
+        "optionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "description": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        }
+      }
+    },
+    "VisitorBase": {
+      "type": "object",
+      "required": [
+        "visitorId",
+        "name",
+        "state",
+        "actions"
+      ],
+      "properties": {
+        "visitorId": {
+          "$ref": "#/$defs/Id"
+        },
+        "name": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "state": {
+          "type": "string"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAvailability"
+          }
+        }
+      }
+    },
+    "VisitorAvailable": {
+      "$ref": "#/$defs/VisitorStateAvailable"
+    },
+    "VisitorStateAvailable": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisitorBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "visitorId",
+            "name",
+            "state",
+            "actions",
+            "departureSignal",
+            "contractOptions"
+          ],
+          "properties": {
+            "visitorId": true,
+            "name": true,
+            "state": {
+              "const": "available"
+            },
+            "actions": true,
+            "departureSignal": {
+              "enum": [
+                "unlikely",
+                "possible",
+                "likely"
+              ]
+            },
+            "contractOptions": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/ContractOptionView"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "VisitorNegotiating": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisitorBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "visitorId",
+            "name",
+            "state",
+            "actions",
+            "negotiationId",
+            "options",
+            "expiresAt"
+          ],
+          "properties": {
+            "visitorId": true,
+            "name": true,
+            "state": {
+              "const": "negotiating"
+            },
+            "actions": true,
+            "negotiationId": {
+              "$ref": "#/$defs/Id"
+            },
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/ContractOptionView"
+              }
+            },
+            "expiresAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            }
+          }
+        }
+      ]
+    },
+    "VisitorContracted": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisitorBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "visitorId",
+            "name",
+            "state",
+            "actions",
+            "contractId"
+          ],
+          "properties": {
+            "visitorId": true,
+            "name": true,
+            "state": {
+              "const": "contracted"
+            },
+            "actions": true,
+            "contractId": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        }
+      ]
+    },
+    "VisitorAway": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisitorBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "visitorId",
+            "name",
+            "state",
+            "actions",
+            "contractId",
+            "expeditionId"
+          ],
+          "properties": {
+            "visitorId": true,
+            "name": true,
+            "state": {
+              "const": "away"
+            },
+            "actions": true,
+            "contractId": {
+              "$ref": "#/$defs/Id"
+            },
+            "expeditionId": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        }
+      ]
+    },
+    "VisitorAwaitingSettlement": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisitorBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "visitorId",
+            "name",
+            "state",
+            "actions",
+            "expeditionId",
+            "settlementId",
+            "outcome"
+          ],
+          "properties": {
+            "visitorId": true,
+            "name": true,
+            "state": {
+              "const": "awaiting_settlement"
+            },
+            "actions": true,
+            "expeditionId": {
+              "$ref": "#/$defs/Id"
+            },
+            "settlementId": {
+              "$ref": "#/$defs/Id"
+            },
+            "outcome": {
+              "$ref": "#/$defs/ExpeditionOutcome"
+            }
+          }
+        }
+      ]
+    },
+    "VisitorDeparted": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisitorBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "visitorId",
+            "name",
+            "state",
+            "actions",
+            "departedAt",
+            "lastExpeditionId"
+          ],
+          "properties": {
+            "visitorId": true,
+            "name": true,
+            "state": {
+              "const": "departed"
+            },
+            "actions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "departedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "lastExpeditionId": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        }
+      ]
+    },
+    "VisitorDead": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisitorBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "visitorId",
+            "name",
+            "state",
+            "actions",
+            "diedAt",
+            "expeditionId",
+            "recoveryId"
+          ],
+          "properties": {
+            "visitorId": true,
+            "name": true,
+            "state": {
+              "const": "dead"
+            },
+            "actions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "diedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "expeditionId": {
+              "$ref": "#/$defs/Id"
+            },
+            "recoveryId": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        }
+      ]
+    },
+    "VisitorView": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/VisitorAvailable"
+        },
+        {
+          "$ref": "#/$defs/VisitorNegotiating"
+        },
+        {
+          "$ref": "#/$defs/VisitorContracted"
+        },
+        {
+          "$ref": "#/$defs/VisitorAway"
+        },
+        {
+          "$ref": "#/$defs/VisitorAwaitingSettlement"
+        },
+        {
+          "$ref": "#/$defs/VisitorDeparted"
+        },
+        {
+          "$ref": "#/$defs/VisitorDead"
+        }
+      ]
+    },
+    "ExpeditionOutcome": {
+      "enum": [
+        "returned",
+        "retreated",
+        "death"
+      ]
+    },
+    "ExpeditionBase": {
+      "type": "object",
+      "required": [
+        "expeditionId",
+        "visitorId",
+        "contractId",
+        "state",
+        "actions"
+      ],
+      "properties": {
+        "expeditionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "visitorId": {
+          "$ref": "#/$defs/Id"
+        },
+        "contractId": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "type": "string"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAvailability"
+          }
+        }
+      }
+    },
+    "ExpeditionScheduled": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ExpeditionBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "expeditionId",
+            "visitorId",
+            "contractId",
+            "state",
+            "actions",
+            "startsAt"
+          ],
+          "properties": {
+            "expeditionId": true,
+            "visitorId": true,
+            "contractId": true,
+            "state": {
+              "const": "scheduled"
+            },
+            "actions": true,
+            "startsAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            }
+          }
+        }
+      ]
+    },
+    "ExpeditionActive": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ExpeditionBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "expeditionId",
+            "visitorId",
+            "contractId",
+            "state",
+            "actions",
+            "startedAt",
+            "nextEventAt",
+            "currentHp",
+            "maxHp"
+          ],
+          "properties": {
+            "expeditionId": true,
+            "visitorId": true,
+            "contractId": true,
+            "state": {
+              "const": "active"
+            },
+            "actions": true,
+            "startedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "nextEventAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "currentHp": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxHp": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
+    },
+    "ExpeditionAwaiting": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ExpeditionBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "expeditionId",
+            "visitorId",
+            "contractId",
+            "state",
+            "actions",
+            "outcome",
+            "resolvedAt",
+            "settlementId"
+          ],
+          "properties": {
+            "expeditionId": true,
+            "visitorId": true,
+            "contractId": true,
+            "state": {
+              "const": "awaiting_settlement"
+            },
+            "actions": true,
+            "outcome": {
+              "$ref": "#/$defs/ExpeditionOutcome"
+            },
+            "resolvedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "settlementId": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        }
+      ]
+    },
+    "ExpeditionSettled": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ExpeditionBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "expeditionId",
+            "visitorId",
+            "contractId",
+            "state",
+            "actions",
+            "outcome",
+            "settledAt",
+            "settlementId",
+            "visitorResolution"
+          ],
+          "properties": {
+            "expeditionId": true,
+            "visitorId": true,
+            "contractId": true,
+            "state": {
+              "const": "settled"
+            },
+            "actions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "outcome": {
+              "$ref": "#/$defs/ExpeditionOutcome"
+            },
+            "settledAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "settlementId": {
+              "$ref": "#/$defs/Id"
+            },
+            "visitorResolution": {
+              "enum": [
+                "stays",
+                "departs",
+                "dead"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ExpeditionView": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ExpeditionScheduled"
+        },
+        {
+          "$ref": "#/$defs/ExpeditionActive"
+        },
+        {
+          "$ref": "#/$defs/ExpeditionAwaiting"
+        },
+        {
+          "$ref": "#/$defs/ExpeditionSettled"
+        }
+      ]
+    },
+    "SettlementPreviewFields": {
+      "type": "object",
+      "required": [
+        "settlementId",
+        "expeditionId",
+        "state",
+        "previewVersion",
+        "outcome",
+        "createdAt",
+        "expiresAt",
+        "gold",
+        "loans",
+        "choiceGroups",
+        "departureSignal",
+        "departureResolution",
+        "actions"
+      ],
+      "properties": {
+        "settlementId": {
+          "$ref": "#/$defs/Id"
+        },
+        "expeditionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "type": "string"
+        },
+        "previewVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "outcome": {
+          "$ref": "#/$defs/ExpeditionOutcome"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "gold": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "gross",
+            "caravan",
+            "visitor"
+          ],
+          "properties": {
+            "gross": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "caravan": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "visitor": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "loans": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "itemId",
+              "resolution"
+            ],
+            "properties": {
+              "itemId": {
+                "$ref": "#/$defs/Id"
+              },
+              "resolution": {
+                "enum": [
+                  "return",
+                  "recovery"
+                ]
+              }
+            }
+          }
+        },
+        "choiceGroups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChoiceGroup"
+          }
+        },
+        "departureSignal": {
+          "enum": [
+            "unlikely",
+            "possible",
+            "likely"
+          ]
+        },
+        "departureResolution": {
+          "enum": [
+            "stays",
+            "departs",
+            "dead"
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAvailability"
+          }
+        }
+      }
+    },
+    "SettlementReady": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SettlementPreviewFields"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "settlementId",
+            "expeditionId",
+            "state",
+            "previewVersion",
+            "outcome",
+            "createdAt",
+            "expiresAt",
+            "gold",
+            "loans",
+            "choiceGroups",
+            "departureSignal",
+            "departureResolution",
+            "actions"
+          ],
+          "properties": {
+            "settlementId": true,
+            "expeditionId": true,
+            "state": {
+              "const": "preview_ready"
+            },
+            "previewVersion": true,
+            "outcome": true,
+            "createdAt": true,
+            "expiresAt": true,
+            "gold": true,
+            "loans": true,
+            "choiceGroups": true,
+            "departureSignal": true,
+            "departureResolution": true,
+            "actions": true
+          }
+        }
+      ]
+    },
+    "SettlementExpired": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SettlementPreviewFields"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "settlementId",
+            "expeditionId",
+            "state",
+            "previewVersion",
+            "outcome",
+            "createdAt",
+            "expiresAt",
+            "gold",
+            "loans",
+            "choiceGroups",
+            "departureSignal",
+            "departureResolution",
+            "actions"
+          ],
+          "properties": {
+            "settlementId": true,
+            "expeditionId": true,
+            "state": {
+              "const": "preview_expired"
+            },
+            "previewVersion": true,
+            "outcome": true,
+            "createdAt": true,
+            "expiresAt": true,
+            "gold": true,
+            "loans": true,
+            "choiceGroups": true,
+            "departureSignal": true,
+            "departureResolution": true,
+            "actions": true
+          }
+        }
+      ]
+    },
+    "SettlementSettled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "settlementId",
+        "expeditionId",
+        "state",
+        "outcome",
+        "appliedAt",
+        "appliedBy",
+        "appliedChoices",
+        "visitorResolution",
+        "actions"
+      ],
+      "properties": {
+        "settlementId": {
+          "$ref": "#/$defs/Id"
+        },
+        "expeditionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "state": {
+          "const": "settled"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ExpeditionOutcome"
+        },
+        "appliedAt": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "appliedBy": {
+          "enum": [
+            "confirmation",
+            "expiry_default"
+          ]
+        },
+        "appliedChoices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "groupId",
+              "optionId",
+              "label"
+            ],
+            "properties": {
+              "groupId": {
+                "$ref": "#/$defs/Id"
+              },
+              "optionId": {
+                "$ref": "#/$defs/Id"
+              },
+              "label": {
+                "$ref": "#/$defs/LocalizedText"
+              }
+            }
+          }
+        },
+        "visitorResolution": {
+          "enum": [
+            "stays",
+            "departs",
+            "dead"
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "SettlementView": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SettlementReady"
+        },
+        {
+          "$ref": "#/$defs/SettlementExpired"
+        },
+        {
+          "$ref": "#/$defs/SettlementSettled"
+        }
+      ]
+    },
+    "RecoveryBase": {
+      "type": "object",
+      "required": [
+        "recoveryId",
+        "sourceExpeditionId",
+        "itemIds",
+        "state",
+        "actions"
+      ],
+      "properties": {
+        "recoveryId": {
+          "$ref": "#/$defs/Id"
+        },
+        "sourceExpeditionId": {
+          "$ref": "#/$defs/Id"
+        },
+        "itemIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Id"
+          }
+        },
+        "state": {
+          "type": "string"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAvailability"
+          }
+        }
+      }
+    },
+    "RecoveryOpen": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RecoveryBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recoveryId",
+            "sourceExpeditionId",
+            "itemIds",
+            "state",
+            "actions",
+            "expiresAt",
+            "options"
+          ],
+          "properties": {
+            "recoveryId": true,
+            "sourceExpeditionId": true,
+            "itemIds": true,
+            "state": {
+              "const": "open"
+            },
+            "actions": true,
+            "expiresAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/RecoveryOptionView"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "RecoveryAssigned": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RecoveryBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recoveryId",
+            "sourceExpeditionId",
+            "itemIds",
+            "state",
+            "actions",
+            "assignedVisitorId",
+            "assignedAt",
+            "completesAt"
+          ],
+          "properties": {
+            "recoveryId": true,
+            "sourceExpeditionId": true,
+            "itemIds": true,
+            "state": {
+              "const": "assigned"
+            },
+            "actions": true,
+            "assignedVisitorId": {
+              "$ref": "#/$defs/Id"
+            },
+            "assignedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "completesAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            }
+          }
+        }
+      ]
+    },
+    "RecoveryRecovered": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RecoveryBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recoveryId",
+            "sourceExpeditionId",
+            "itemIds",
+            "state",
+            "actions",
+            "resolvedAt",
+            "recoveredItemIds"
+          ],
+          "properties": {
+            "recoveryId": true,
+            "sourceExpeditionId": true,
+            "itemIds": true,
+            "state": {
+              "const": "recovered"
+            },
+            "actions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "resolvedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "recoveredItemIds": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/Id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "RecoveryFailed": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RecoveryBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recoveryId",
+            "sourceExpeditionId",
+            "itemIds",
+            "state",
+            "actions",
+            "resolvedAt",
+            "consequence"
+          ],
+          "properties": {
+            "recoveryId": true,
+            "sourceExpeditionId": true,
+            "itemIds": true,
+            "state": {
+              "const": "failed"
+            },
+            "actions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "resolvedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "consequence": {
+              "$ref": "#/$defs/FailRecoveryConsequence"
+            }
+          }
+        }
+      ]
+    },
+    "RecoveryAbandoned": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RecoveryBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recoveryId",
+            "sourceExpeditionId",
+            "itemIds",
+            "state",
+            "actions",
+            "resolvedAt",
+            "consequence"
+          ],
+          "properties": {
+            "recoveryId": true,
+            "sourceExpeditionId": true,
+            "itemIds": true,
+            "state": {
+              "const": "abandoned"
+            },
+            "actions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "resolvedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "consequence": {
+              "$ref": "#/$defs/FailRecoveryConsequence"
+            }
+          }
+        }
+      ]
+    },
+    "RecoveryView": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RecoveryOpen"
+        },
+        {
+          "$ref": "#/$defs/RecoveryAssigned"
+        },
+        {
+          "$ref": "#/$defs/RecoveryRecovered"
+        },
+        {
+          "$ref": "#/$defs/RecoveryFailed"
+        },
+        {
+          "$ref": "#/$defs/RecoveryAbandoned"
+        }
+      ]
+    },
+    "ServiceJobBase": {
+      "type": "object",
+      "required": [
+        "jobId",
+        "itemId",
+        "service",
+        "state",
+        "label",
+        "actions"
+      ],
+      "properties": {
+        "jobId": {
+          "$ref": "#/$defs/Id"
+        },
+        "itemId": {
+          "$ref": "#/$defs/Id"
+        },
+        "service": {
+          "enum": [
+            "blacksmith",
+            "enchanter"
+          ]
+        },
+        "state": {
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAvailability"
+          }
+        }
+      }
+    },
+    "ServiceQueued": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ServiceJobBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "jobId",
+            "itemId",
+            "service",
+            "state",
+            "label",
+            "actions",
+            "queuedAt",
+            "startsAt"
+          ],
+          "properties": {
+            "jobId": true,
+            "itemId": true,
+            "service": true,
+            "state": {
+              "const": "queued"
+            },
+            "label": true,
+            "actions": true,
+            "queuedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "startsAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            }
+          }
+        }
+      ]
+    },
+    "ServiceActive": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ServiceJobBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "jobId",
+            "itemId",
+            "service",
+            "state",
+            "label",
+            "actions",
+            "startedAt",
+            "completesAt"
+          ],
+          "properties": {
+            "jobId": true,
+            "itemId": true,
+            "service": true,
+            "state": {
+              "const": "active"
+            },
+            "label": true,
+            "actions": true,
+            "startedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "completesAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            }
+          }
+        }
+      ]
+    },
+    "ServiceCompleted": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ServiceJobBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "jobId",
+            "itemId",
+            "service",
+            "state",
+            "label",
+            "actions",
+            "completedAt",
+            "resultText"
+          ],
+          "properties": {
+            "jobId": true,
+            "itemId": true,
+            "service": true,
+            "state": {
+              "const": "completed"
+            },
+            "label": true,
+            "actions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "completedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "resultText": {
+              "$ref": "#/$defs/LocalizedText"
+            }
+          }
+        }
+      ]
+    },
+    "ServiceFailed": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ServiceJobBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "jobId",
+            "itemId",
+            "service",
+            "state",
+            "label",
+            "actions",
+            "failedAt",
+            "reasonText",
+            "consequences"
+          ],
+          "properties": {
+            "jobId": true,
+            "itemId": true,
+            "service": true,
+            "state": {
+              "const": "failed"
+            },
+            "label": true,
+            "actions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "failedAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "reasonText": {
+              "$ref": "#/$defs/LocalizedText"
+            },
+            "consequences": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ConsequenceView"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ServiceCancelled": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ServiceJobBase"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "jobId",
+            "itemId",
+            "service",
+            "state",
+            "label",
+            "actions",
+            "cancelledAt",
+            "consequences"
+          ],
+          "properties": {
+            "jobId": true,
+            "itemId": true,
+            "service": true,
+            "state": {
+              "const": "cancelled"
+            },
+            "label": true,
+            "actions": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "cancelledAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "consequences": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ConsequenceView"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ServiceJobView": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ServiceQueued"
+        },
+        {
+          "$ref": "#/$defs/ServiceActive"
+        },
+        {
+          "$ref": "#/$defs/ServiceCompleted"
+        },
+        {
+          "$ref": "#/$defs/ServiceFailed"
+        },
+        {
+          "$ref": "#/$defs/ServiceCancelled"
+        }
+      ]
+    },
+    "GameView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "labelCatalogVersion",
+        "revision",
+        "serverNow",
+        "nextTransitionAt",
+        "resources",
+        "capacity",
+        "caravan",
+        "visitors",
+        "expeditions",
+        "settlements",
+        "recoveries",
+        "serviceJobs",
+        "items",
+        "actions"
+      ],
+      "properties": {
+        "contractVersion": {
+          "const": "v2-etapa0-4"
+        },
+        "labelCatalogVersion": {
+          "const": "es-AR-v1"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "serverNow": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "nextTransitionAt": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/UtcDateTime"
+            }
+          ]
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "gold",
+            "materials"
+          ],
+          "properties": {
+            "gold": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "materials": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "capacity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "used",
+            "limit",
+            "reserved",
+            "blockers"
+          ],
+          "properties": {
+            "used": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reserved": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blockers": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/UnavailableReason"
+              }
+            }
+          }
+        },
+        "caravan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["visitorCapacity", "upgrades", "maintenance"],
+          "properties": {
+            "visitorCapacity": {
+              "type": "object", "additionalProperties": false,
+              "required": ["used", "limit"],
+              "properties": { "used": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 0} }
+            },
+            "upgrades": {
+              "type": "array", "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["upgradeId", "level", "maxLevel"],
+                "properties": {
+                  "upgradeId": {"enum": ["visitor_quarters", "blacksmith", "enchanter"]},
+                  "level": {"type": "integer", "minimum": 0},
+                  "maxLevel": {"type": "integer", "minimum": 0}
+                }
+              }
+            },
+            "maintenance": {
+              "type": "object", "additionalProperties": false,
+              "required": ["periodKey", "nextDueAt", "status", "debtPeriods", "debtGold"],
+              "properties": {
+                "periodKey": {"type": "string", "pattern": "^\\d{4}-W\\d{2}$"},
+                "nextDueAt": {"$ref": "#/$defs/UtcDateTime"},
+                "status": {"enum": ["current", "debt"]},
+                "debtPeriods": {"type": "integer", "minimum": 0},
+                "debtGold": {"type": "integer", "minimum": 0}
+              }
+            }
+          }
+        },
+        "visitors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VisitorView"
+          }
+        },
+        "expeditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExpeditionView"
+          }
+        },
+        "settlements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SettlementView"
+          }
+        },
+        "recoveries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RecoveryView"
+          }
+        },
+        "serviceJobs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ServiceJobView"
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ItemView"
+          }
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ActionAvailability"
+          }
+        }
+      }
+    },
+    "AcceptContractAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "accept_contract"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "visitorId",
+            "bindings"
+          ],
+          "properties": {
+            "visitorId": {
+              "$ref": "#/$defs/Id"
+            },
+            "bindings": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "optionId",
+                  "eligibleLoanItemIds",
+                  "expiresAt"
+                ],
+                "properties": {
+                  "optionId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "eligibleLoanItemIds": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "$ref": "#/$defs/Id"
+                    }
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/UtcDateTime"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "StartExpeditionAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "start_expedition"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contractId"
+          ],
+          "properties": {
+            "contractId": {
+              "$ref": "#/$defs/Id"
+            }
+          }
+        }
+      }
+    },
+    "ReconcileGameAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "reconcile_game"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {}
+        }
+      }
+    },
+    "ConfirmSettlementAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "confirm_settlement"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "settlementId",
+            "previewVersion",
+            "groups",
+            "expiresAt"
+          ],
+          "properties": {
+            "settlementId": {
+              "$ref": "#/$defs/Id"
+            },
+            "previewVersion": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "expiresAt": {
+              "$ref": "#/$defs/UtcDateTime"
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "groupId",
+                  "eligibleOptionIds"
+                ],
+                "properties": {
+                  "groupId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "eligibleOptionIds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "$ref": "#/$defs/Id"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "AssignRecoveryAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "assign_recovery"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recoveryId",
+            "bindings"
+          ],
+          "properties": {
+            "recoveryId": {
+              "$ref": "#/$defs/Id"
+            },
+            "bindings": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "optionId",
+                  "visitorId",
+                  "eligibleLoanItemIds",
+                  "expiresAt"
+                ],
+                "properties": {
+                  "optionId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "visitorId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "eligibleLoanItemIds": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "$ref": "#/$defs/Id"
+                    }
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/UtcDateTime"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "AbandonRecoveryAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "abandon_recovery"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recoveryId",
+            "acknowledgement"
+          ],
+          "properties": {
+            "recoveryId": {
+              "$ref": "#/$defs/Id"
+            },
+            "acknowledgement": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "acknowledgementId",
+                "expiresAt",
+                "text"
+              ],
+              "properties": {
+                "acknowledgementId": {
+                  "$ref": "#/$defs/Id"
+                },
+                "expiresAt": {
+                  "$ref": "#/$defs/UtcDateTime"
+                },
+                "text": {
+                  "$ref": "#/$defs/LocalizedText"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "SellItemAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "sell_item_to_visitor"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "itemId",
+            "offers"
+          ],
+          "properties": {
+            "itemId": {
+              "$ref": "#/$defs/Id"
+            },
+            "offers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "offerId",
+                  "visitorId",
+                  "itemId",
+                  "expiresAt",
+                  "label",
+                  "description",
+                  "consequences"
+                ],
+                "properties": {
+                  "offerId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "visitorId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "itemId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/UtcDateTime"
+                  },
+                  "label": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "description": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "consequences": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/ConsequenceView"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "IdentifyItemAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "identify_item"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "itemId",
+            "options"
+          ],
+          "properties": {
+            "itemId": {
+              "$ref": "#/$defs/Id"
+            },
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "optionId",
+                  "expiresAt",
+                  "label",
+                  "description",
+                  "consequences"
+                ],
+                "properties": {
+                  "optionId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/UtcDateTime"
+                  },
+                  "label": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "description": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "consequences": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/ConsequenceView"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "BlacksmithAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "queue_blacksmith_job"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "itemId",
+            "options"
+          ],
+          "properties": {
+            "itemId": {
+              "$ref": "#/$defs/Id"
+            },
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "optionId",
+                  "expiresAt",
+                  "label",
+                  "description",
+                  "consequences"
+                ],
+                "properties": {
+                  "optionId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/UtcDateTime"
+                  },
+                  "label": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "description": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "consequences": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/ConsequenceView"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "EnchanterAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "queue_enchanter_job"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "itemId",
+            "options"
+          ],
+          "properties": {
+            "itemId": {
+              "$ref": "#/$defs/Id"
+            },
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "optionId",
+                  "expiresAt",
+                  "label",
+                  "description",
+                  "consequences"
+                ],
+                "properties": {
+                  "optionId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/UtcDateTime"
+                  },
+                  "label": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "description": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "consequences": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/ConsequenceView"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "DismantleAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "dismantle_item"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "itemId",
+            "options"
+          ],
+          "properties": {
+            "itemId": {
+              "$ref": "#/$defs/Id"
+            },
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "optionId",
+                  "expiresAt",
+                  "label",
+                  "description",
+                  "consequences",
+                  "acknowledgement"
+                ],
+                "properties": {
+                  "optionId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/UtcDateTime"
+                  },
+                  "label": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "description": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "consequences": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/ConsequenceView"
+                    }
+                  },
+                  "acknowledgement": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "acknowledgementId",
+                      "expiresAt",
+                      "text"
+                    ],
+                    "properties": {
+                      "acknowledgementId": {
+                        "$ref": "#/$defs/Id"
+                      },
+                      "expiresAt": {
+                        "$ref": "#/$defs/UtcDateTime"
+                      },
+                      "text": {
+                        "$ref": "#/$defs/LocalizedText"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ReplaceImprintAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution",
+        "targetId"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "replace_boss_imprint"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "targetId": {
+          "$ref": "#/$defs/Id"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "itemId",
+            "options"
+          ],
+          "properties": {
+            "itemId": {
+              "$ref": "#/$defs/Id"
+            },
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "optionId",
+                  "expiresAt",
+                  "label",
+                  "description",
+                  "consequences",
+                  "acknowledgement"
+                ],
+                "properties": {
+                  "optionId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/UtcDateTime"
+                  },
+                  "label": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "description": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "consequences": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/ConsequenceView"
+                    }
+                  },
+                  "acknowledgement": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "acknowledgementId",
+                      "expiresAt",
+                      "text"
+                    ],
+                    "properties": {
+                      "acknowledgementId": {
+                        "$ref": "#/$defs/Id"
+                      },
+                      "expiresAt": {
+                        "$ref": "#/$defs/UtcDateTime"
+                      },
+                      "text": {
+                        "$ref": "#/$defs/LocalizedText"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "UpgradeCaravanAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authorizationId",
+        "action",
+        "enabled",
+        "label",
+        "consequences",
+        "execution"
+      ],
+      "properties": {
+        "authorizationId": {
+          "$ref": "#/$defs/Id"
+        },
+        "action": {
+          "const": "upgrade_caravan"
+        },
+        "enabled": {
+          "const": true
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "consequences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsequenceView"
+          }
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "options"
+          ],
+          "properties": {
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "optionId",
+                  "expiresAt",
+                  "label",
+                  "description",
+                  "consequences"
+                ],
+                "properties": {
+                  "optionId": {
+                    "$ref": "#/$defs/Id"
+                  },
+                  "expiresAt": {
+                    "$ref": "#/$defs/UtcDateTime"
+                  },
+                  "label": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "description": {
+                    "$ref": "#/$defs/LocalizedText"
+                  },
+                  "consequences": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/ConsequenceView"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,4 +1,4 @@
-// Generated from contracts/v2-etapa0-3/schema.json. Do not edit by hand.
+// Generated from contracts/v2-etapa0-4/schema.json. Do not edit by hand.
 // Run `pnpm generate:v2-types` after changing the normative schema.
 
 export type Id = string
@@ -446,7 +446,7 @@ export type ServiceCancelled = ServiceJobBase & {
 export type ServiceJobView = ServiceQueued | ServiceActive | ServiceCompleted | ServiceFailed | ServiceCancelled
 
 export type GameView = {
-  contractVersion: "v2-etapa0-3"
+  contractVersion: "v2-etapa0-4"
   labelCatalogVersion: "es-AR-v1"
   revision: number
   serverNow: UtcDateTime
@@ -462,6 +462,24 @@ export type GameView = {
     limit: number
     reserved: number
     blockers: Array<UnavailableReason>
+  }
+  caravan: {
+    visitorCapacity: {
+      used: number
+      limit: number
+    }
+    upgrades: Array<{
+      upgradeId: "visitor_quarters" | "blacksmith" | "enchanter"
+      level: number
+      maxLevel: number
+    }>
+    maintenance: {
+      periodKey: string
+      nextDueAt: UtcDateTime
+      status: "current" | "debt"
+      debtPeriods: number
+      debtGold: number
+    }
   }
   visitors: Array<VisitorView>
   expeditions: Array<ExpeditionView>

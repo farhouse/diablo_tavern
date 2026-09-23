@@ -3,8 +3,8 @@ import { createRequire } from 'node:module'
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 
-const schemaPath = new URL('../contracts/v2-etapa0-3/schema.json', import.meta.url)
-const fixturesPath = new URL('../contracts/v2-etapa0-3/fixtures.json', import.meta.url)
+const schemaPath = new URL('../contracts/v2-etapa0-4/schema.json', import.meta.url)
+const fixturesPath = new URL('../contracts/v2-etapa0-4/fixtures.json', import.meta.url)
 const require = createRequire(import.meta.url)
 const ajvVersion = require('ajv/package.json').version
 const schema = JSON.parse(fs.readFileSync(schemaPath))

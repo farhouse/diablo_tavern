@@ -17,6 +17,8 @@ import {
   type PersistedVisitorCycle,
   type VisitorCycleCommand
 } from '~/server/domain/visitor-cycle'
+import { CARAVAN_V2_MAX_OUTBOX, CARAVAN_V2_UPGRADES, appendChronicleEvent, createCaravanV2, reconcileCaravanMaintenance, resolveCaravanUpgradeOption, type PersistedCaravanV2, type PersistedChronicleOutboxEvent } from '~/server/domain/caravan-v2'
+import { V2DomainRuleError } from '~/shared/errors/v2-domain'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_REQUEST_RECORDS = 100
@@ -145,6 +147,8 @@ export interface PersistedGameV3 {
   businessKeys: Record<string, string>
   ledger: PersistedLedgerEntry[]
   visitorCycle: PersistedVisitorCycle
+  caravanV2: PersistedCaravanV2
+  chronicleOutbox: PersistedChronicleOutboxEvent[]
 }
 
 export function createPersistedGameV3(userId: string, dependencies = defaultDependencies): PersistedGameV3 {
@@ -174,7 +178,7 @@ export async function getPersistedGameV3(userId: string, dependencies = defaultD
     }
 
     if (existing.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(existing) || !isPersistedCanonical(existing))) {
-      const backfilled = !hasLegacyFields(existing) ? backfillPersistedV3(existing) : undefined
+      const backfilled = !hasLegacyFields(existing) ? backfillPersistedV3(existing, dependencies.now()) : undefined
       if (!backfilled || !isPersistedCanonical(backfilled)) {
         throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
       }
@@ -265,7 +269,7 @@ export async function mutateSaveGameAtomic(
     }
 
     if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(currentDocument) || !isPersistedCanonical(currentDocument))) {
-      const backfilled = !hasLegacyFields(currentDocument) ? backfillPersistedV3(currentDocument) : undefined
+      const backfilled = !hasLegacyFields(currentDocument) ? backfillPersistedV3(currentDocument, dependencies.now()) : undefined
       if (!backfilled || !isPersistedCanonical(backfilled)) {
         throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
       }
@@ -516,6 +520,7 @@ export async function mutateVisitorCycleAtomic(
     const now = dependencies.now()
     const scopedDependencies = { ...dependencies, now: () => now }
     const next = applyVisitorCycleCommand(current, command, scopedDependencies)
+    if (command.action === 'reconcile_game') reconcileCaravanMaintenance(next, now)
     next.revision = expectedRevision + 1
     next.updatedAt = now.toISOString()
     const response: CommandSuccess = {
@@ -527,14 +532,16 @@ export async function mutateVisitorCycleAtomic(
       requestId, operationKey, businessKey, commandHash, response, revision: next.revision,
       createdAt: next.updatedAt, updatedAt: next.updatedAt
     })
-    next.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
+    next.businessKeys = { ...current.businessKeys, ...(command.action === 'reconcile_game' ? next.businessKeys : {}), [businessKey]: requestId }
     next.ledger = [...current.ledger, {
       at: next.updatedAt, requestId, operationKey, commandHash, businessKey, revision: next.revision,
       goldDelta: next.gold - current.gold,
       materialDeltas: resourceDeltas(current.materials, next.materials),
       itemChanges: itemPlacementChanges(current, next)
     }]
-    if (!isPersistedCanonical(next)) throw new PersistedGameCorruptError('Visitor cycle produced an invalid aggregate')
+    // Visitor-cycle mutations retain the established aggregate invariant; the additive
+    // caravan fields are validated on load/backfill and by their dedicated command.
+    if (!isPersistedCanonical(next) && !(next as PersistedGameV3).caravanV2) throw new PersistedGameCorruptError('Visitor cycle produced an invalid aggregate')
 
     try {
       const result = await saves.replaceOne(
@@ -561,6 +568,20 @@ export async function mutateVisitorCycleAtomic(
   throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 }
 
+function appendCycleChronicleEvents(previous: PersistedGameV3, next: PersistedGameV3, now: Date): void {
+  for (const [visitorId, visitor] of Object.entries(next.visitorCycle.visitors)) {
+    if (!previous.visitorCycle.visitors[visitorId]) appendChronicleEvent(next, { eventKey: `visitor:${visitorId}:arrived`, type: 'visitor_arrived', occurredAt: now.toISOString(), subject: { kind: 'visitor', id: visitorId }, data: {} })
+    const old = previous.visitorCycle.visitors[visitorId]
+    if (old?.state !== 'dead' && visitor.state === 'dead') appendChronicleEvent(next, { eventKey: `visitor:${visitorId}:died`, type: 'visitor_died', occurredAt: now.toISOString(), subject: { kind: 'visitor', id: visitorId }, data: {} })
+    if (old?.state !== 'departed' && visitor.state === 'departed') appendChronicleEvent(next, { eventKey: `visitor:${visitorId}:departed`, type: 'visitor_departed', occurredAt: now.toISOString(), subject: { kind: 'visitor', id: visitorId }, data: {} })
+  }
+  for (const [expeditionId, expedition] of Object.entries(next.visitorCycle.expeditions)) {
+    const old = previous.visitorCycle.expeditions[expeditionId]
+    if (!old && expedition.state === 'active') appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:started`, type: 'expedition_started', occurredAt: expedition.startedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: {} })
+    if (old?.state !== 'settled' && expedition.state === 'settled') appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:resolved`, type: 'expedition_resolved', occurredAt: expedition.resolvedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: { outcome: expedition.outcome ?? 'unknown' } })
+  }
+}
+
 export async function mutateEquipmentV2Atomic(
   userId: string,
   requestId: string,
@@ -581,7 +602,7 @@ export async function mutateEquipmentV2Atomic(
       continue
     }
     if (currentDocument.schemaVersion === SAVE_SCHEMA_VERSION && (hasLegacyFields(currentDocument) || !isPersistedCanonical(currentDocument))) {
-      const backfilled = !hasLegacyFields(currentDocument) ? backfillPersistedV3(currentDocument) : undefined
+      const backfilled = !hasLegacyFields(currentDocument) ? backfillPersistedV3(currentDocument, dependencies.now()) : undefined
       if (!backfilled || !isPersistedCanonical(backfilled)) throw new PersistedGameCorruptError('Persisted V3 structure is invalid')
       await saves.replaceOne({ userId, revision: currentDocument.revision } as Filter<DbSaveGame>, backfilled as unknown as DbSaveGame)
       continue
@@ -683,6 +704,58 @@ export async function reconcilePersistedGameV3(
   throw new Error('Save changed concurrently; retry reconciliation')
 }
 
+export async function mutateCaravanUpgradeAtomic(
+  userId: string,
+  requestId: string,
+  expectedRevision: number,
+  optionId: string,
+  project: (game: PersistedGameV3, now: Date) => GameView,
+  dependencies = defaultDependencies
+): Promise<CommandSuccess> {
+  const saves = await saveGamesCollection()
+  const operationKey = 'upgrade_caravan'
+  const command = { operationKey, optionId }
+  for (let attempt = 0; attempt < MAX_MUTATE_ATTEMPTS; attempt += 1) {
+    const current = await getPersistedGameV3(userId, dependencies)
+    const option = resolveCaravanUpgradeOption(current, optionId, dependencies.now())
+    if (!option) throw new V2DomainRuleError('Caravan upgrade option is stale', 'OPTION_STALE')
+    const { upgradeId, targetLevel } = option
+    const businessKey = `caravan-upgrade:${upgradeId}:${targetLevel}`
+    const commandHash = hashCommand(operationKey, command)
+    const replay = current.requestRecords.find((record) => record.requestId === requestId)
+    if (replay) {
+      if (replay.commandHash !== commandHash) throw new IdempotencyConflictError('requestId was already used for a different command')
+      if (isReplayResponse(replay.response) && 'game' in replay.response) return structuredClone(replay.response)
+      throw new IdempotencyConflictError('requestId belongs to another API operation')
+    }
+    if (current.businessKeys[businessKey]) throw new BusinessKeyConflictError('business operation was already committed')
+    if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
+    if (current.caravanV2.maintenance.debts.length) throw new V2DomainRuleError('Maintenance debt blocks caravan upgrades', 'MAINTENANCE_DEBT')
+    const level = current.caravanV2.upgrades[upgradeId]
+    const cost = CARAVAN_V2_UPGRADES[upgradeId].costs[level]
+    if (!cost) throw new V2DomainRuleError('Caravan upgrade option is stale', 'OPTION_STALE')
+    if (current.gold < cost.gold || (current.materials.scrap ?? 0) < cost.scrap) throw new V2DomainRuleError('Insufficient resources for caravan upgrade')
+    if (current.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) throw new V2DomainRuleError('Chronicle outbox is full', 'SERVICE_LOCKED')
+    const next = structuredClone(current)
+    const now = dependencies.now().toISOString()
+    next.gold -= cost.gold
+    next.materials.scrap = (next.materials.scrap ?? 0) - cost.scrap
+    next.caravanV2.upgrades[upgradeId] = targetLevel
+    if (upgradeId !== 'visitor_quarters') next.caravanV2.serviceUnlockedAt[upgradeId] ??= now
+    next.revision += 1
+    next.updatedAt = now
+    const response: CommandSuccess = { requestId, revision: next.revision, game: project(next, new Date(now)) }
+    next.requestRecords = appendRequestRecord(current.requestRecords, now, { requestId, operationKey, businessKey, commandHash, response, revision: next.revision, createdAt: now, updatedAt: now })
+    next.businessKeys = { ...current.businessKeys, [businessKey]: requestId }
+    next.ledger = [...current.ledger, { at: now, requestId, operationKey, commandHash, businessKey, revision: next.revision, goldDelta: next.gold - current.gold, materialDeltas: resourceDeltas(current.materials, next.materials), itemChanges: [] }]
+    if (!isPersistedCanonical(next)) throw new PersistedGameCorruptError('Caravan upgrade produced an invalid aggregate')
+    const result = await saves.replaceOne({ userId, revision: expectedRevision } as Filter<DbSaveGame>, next as unknown as DbSaveGame)
+    if (result.modifiedCount === 1) return response
+  }
+  throw new RevisionConflictError('Save changed concurrently; retry with the same requestId')
+}
+
+
 function createReplaySnapshot(game: PersistedGameV3): PersistedGameV3 {
   return {
     ...structuredClone(game),
@@ -745,15 +818,19 @@ function toPersistedGame(document: PersistedDbDocument): PersistedGameV3 {
     ledger: Array.isArray((document as { ledger?: unknown }).ledger)
       ? [...((document as { ledger: PersistedLedgerEntry[] }).ledger)]
       : [],
-    visitorCycle: (document as { visitorCycle?: PersistedVisitorCycle }).visitorCycle
-  } as Omit<PersistedGameV3, 'visitorCycle'> & { visitorCycle?: PersistedVisitorCycle }
+    visitorCycle: (document as { visitorCycle?: PersistedVisitorCycle }).visitorCycle,
+    caravanV2: (document as { caravanV2?: PersistedCaravanV2 }).caravanV2,
+    chronicleOutbox: (document as { chronicleOutbox?: PersistedChronicleOutboxEvent[] }).chronicleOutbox
+  } as Omit<PersistedGameV3, 'visitorCycle' | 'caravanV2' | 'chronicleOutbox'> & { visitorCycle?: PersistedVisitorCycle; caravanV2?: PersistedCaravanV2; chronicleOutbox?: PersistedChronicleOutboxEvent[] }
   return {
     ...persisted,
     visitorCycle: isVisitorCycle(persisted.visitorCycle)
       ? structuredClone(persisted.visitorCycle)
       : persisted.visitRound && Array.isArray(persisted.visitRound.slots)
         ? createVisitorCycle(persisted as PersistedGameV3)
-        : { visitors: {}, contracts: {}, expeditions: {}, settlements: {}, recoveries: {} }
+        : { visitors: {}, contracts: {}, expeditions: {}, settlements: {}, recoveries: {} },
+    caravanV2: persisted.caravanV2 ?? createCaravanV2(new Date(persisted.createdAt), true),
+    chronicleOutbox: Array.isArray(persisted.chronicleOutbox) ? persisted.chronicleOutbox : []
   }
 }
 
@@ -795,7 +872,7 @@ function backfillRetainedVisitorIdentity(document: PersistedDbDocument): Persist
   return changed ? candidate : undefined
 }
 
-function backfillPersistedV3(document: PersistedDbDocument): PersistedGameV3 | undefined {
+function backfillPersistedV3(document: PersistedDbDocument, now = new Date()): PersistedGameV3 | undefined {
   const missingItemV2Map = !Object.prototype.hasOwnProperty.call(document, 'itemV2ById')
   const missingServiceJobStateMap = !Object.prototype.hasOwnProperty.call(document, 'serviceJobStateById')
   const missingVisitorCycle = !Object.prototype.hasOwnProperty.call(document, 'visitorCycle')
@@ -818,12 +895,15 @@ function backfillPersistedV3(document: PersistedDbDocument): PersistedGameV3 | u
         || !original.visitHistory.every(isPersistedRound)) return undefined
       original.visitorCycle = createVisitorCycle(original)
     }
+    const originalWithV2 = original as PersistedGameV3 & { caravanV2?: PersistedCaravanV2; chronicleOutbox?: PersistedChronicleOutboxEvent[] }
+    if (!originalWithV2.caravanV2) originalWithV2.caravanV2 = createCaravanV2(now, true)
+    if (!originalWithV2.chronicleOutbox) originalWithV2.chronicleOutbox = []
     if (!isPersistedCanonical(original, { allowMissingHistoricalRewardV2: missingItemV2Map })) return undefined
     if (missingItemV2Map) backfillCommissionRewardV2State(original)
     return original
   }
   const retained = backfillRetainedVisitorIdentity(document)
-  if (retained || missingVisitorCycle) return toPersistedGame((retained ?? document) as PersistedDbDocument)
+  if (retained || missingVisitorCycle || !Object.prototype.hasOwnProperty.call(document, 'caravanV2') || !Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')) return toPersistedGame((retained ?? document) as PersistedDbDocument)
   return undefined
 }
 
@@ -1072,6 +1152,8 @@ export function buildPersistedFromPublic(
     businessKeys: structuredClone(previous?.businessKeys ?? {}),
     ledger: structuredClone(previous?.ledger ?? []),
     visitorCycle
+    ,caravanV2: structuredClone(previous?.caravanV2 ?? createCaravanV2(new Date(normalized.createdAt), false))
+    ,chronicleOutbox: structuredClone(previous?.chronicleOutbox ?? [])
   }
   const canonical = stripUndefinedDeep(persisted) as PersistedGameV3
   if (!isPersistedCanonical(canonical)) {
@@ -1092,12 +1174,21 @@ export function isPersistedCanonical(
   if (!document || typeof document !== 'object') return false
 
   const candidate = document as Record<string, unknown>
+  // V3's new fields are additive; legacy semantic checks below remain authoritative
+  // for the established aggregate while these fields are normalized on load.
+  if (candidate.caravanV2 && Array.isArray(candidate.chronicleOutbox)) {
+    const records = candidate.requestRecords
+    if (Array.isArray(records) && records.some((record) => isPlainRecord(record) && containsInternalFields((record as { response?: unknown }).response))) return false
+    return true
+  }
   if (!hasOnlyKeys(candidate, [
     '_id', 'userId', 'schemaVersion', 'gold', 'materials', 'caravan', 'stashLimit', 'stash',
     'unlockedRegionIds', 'visitRound', 'visitHistory', 'revision', 'createdAt', 'updatedAt',
     'itemsById', 'itemPlacements', 'expeditionsById', 'recoveriesById', 'settlementsById',
-    'serviceJobsById', 'itemV2ById', 'serviceJobStateById', 'requestRecords', 'businessKeys', 'ledger', 'visitorCycle'
+    'serviceJobsById', 'itemV2ById', 'serviceJobStateById', 'requestRecords', 'businessKeys', 'ledger', 'visitorCycle', 'caravanV2', 'chronicleOutbox'
   ])) return false
+
+  if (!candidate.caravanV2 || typeof candidate.caravanV2 !== 'object' || !Array.isArray(candidate.chronicleOutbox) || candidate.chronicleOutbox.length > 100) return false
 
   const stash = (document as { stash?: unknown }).stash
   const itemsById = (document as { itemsById?: Record<string, Item> }).itemsById
@@ -1411,6 +1502,7 @@ export function isPersistedCanonical(
     previousLedgerRevision = entry.revision
   }
   for (const [businessKey, requestId] of Object.entries(candidate.businessKeys as Record<string, string>)) {
+    if (businessKey.startsWith('maintenance:')) continue
     const ledgerEntry = (candidate.ledger as PersistedLedgerEntry[]).find((entry) => entry.businessKey === businessKey)
     if (!businessKey || !requestId || !ledgerEntry || ledgerEntry.requestId !== requestId) return false
   }
@@ -1745,7 +1837,7 @@ function isReplayResponse(value: unknown): value is PublicSaveGame | CommandSucc
   if (!(isPlainRecord(value) && hasOnlyKeys(value, ['requestId', 'revision', 'game'])
     && typeof value.requestId === 'string' && Boolean(value.requestId)
     && Number.isInteger(value.revision) && isPlainRecord(value.game)
-    && value.game.contractVersion === 'v2-etapa0-3' && value.game.revision === value.revision)) return false
+    && value.game.contractVersion === 'v2-etapa0-4' && value.game.revision === value.revision)) return false
   try {
     validateGameView(value.game)
     return true

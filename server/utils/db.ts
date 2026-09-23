@@ -4,6 +4,7 @@ import { resolveServerRuntimeConfig } from '~/server/utils/runtime-config'
 
 export type DbUser = Omit<User, '_id'> & { _id?: ObjectId }
 export type DbSaveGame = { userId: string; _id?: ObjectId; [key: string]: unknown }
+export type DbChronicleEvent = { userId: string; eventId: string; eventKey: string; type: string; occurredAt: string; subject: { kind: string; id: string }; data: Record<string, string> }
 
 let client: MongoClient | undefined
 let db: Db | undefined
@@ -36,7 +37,13 @@ export async function saveGamesCollection(): Promise<Collection<DbSaveGame>> {
   return (await getDb()).collection<DbSaveGame>('savegames')
 }
 
+export async function chronicleEventsCollection(): Promise<Collection<DbChronicleEvent>> {
+  return (await getDb()).collection<DbChronicleEvent>('chronicleEvents')
+}
+
 async function ensureIndexes(database: Db) {
   await database.collection<User>('users').createIndex({ email: 1 }, { unique: true })
   await database.collection<DbSaveGame>('savegames').createIndex({ userId: 1 }, { unique: true })
+  await database.collection<DbChronicleEvent>('chronicleEvents').createIndex({ userId: 1, eventId: 1 }, { unique: true })
+  await database.collection<DbChronicleEvent>('chronicleEvents').createIndex({ userId: 1, occurredAt: -1, eventId: -1 })
 }
