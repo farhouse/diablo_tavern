@@ -264,7 +264,7 @@ describe('game V2 store', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('retries a due transition after a failed reconciliation', async () => {
+  it('deduplicates a due transition after a failed reconciliation', async () => {
     const store = useGameV2Store()
     const game = fixture('integrated-system')
     game.nextTransitionAt = '2026-09-14T10:31:00Z'
@@ -277,7 +277,7 @@ describe('game V2 store', () => {
     await store.reconcileDueTransition(Date.parse('2026-09-14T10:31:01Z'), true)
     await store.reconcileDueTransition(Date.parse('2026-09-14T10:31:02Z'), true)
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(store.reconciledTransitions).toHaveProperty(`${game.revision}:${game.nextTransitionAt}`)
   })
 })

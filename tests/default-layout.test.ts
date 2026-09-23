@@ -8,6 +8,7 @@ const stores = vi.hoisted(() => ({
   legacy: { save: null, load: vi.fn(), $reset: vi.fn() },
   v2: { $reset: vi.fn() }
 }))
+let routePath = '/tavern'
 
 vi.mock('../stores/auth', () => ({ useAuthStore: () => stores.auth }))
 vi.mock('../stores/game', () => ({ useGameStore: () => stores.legacy }))
@@ -16,6 +17,8 @@ vi.mock('../stores/game-v2', () => ({ useGameV2Store: () => stores.v2 }))
 describe('default layout session isolation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    routePath = '/tavern'
+    vi.stubGlobal('useRoute', () => ({ path: routePath }))
     vi.stubGlobal('navigateTo', vi.fn())
   })
 
@@ -30,5 +33,21 @@ describe('default layout session isolation', () => {
     expect(stores.legacy.$reset).toHaveBeenCalledOnce()
     expect(stores.v2.$reset).toHaveBeenCalledOnce()
     expect(navigateTo).toHaveBeenCalledWith('/login')
+  })
+
+  it('does not load or display legacy state on the V2 route', async () => {
+    routePath = '/visitors-v2'
+    const wrapper = mount(DefaultLayout, {
+      global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } }
+    })
+
+    await wrapper.vm.$nextTick()
+
+    expect(stores.legacy.load).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('Round')
+    expect(wrapper.text()).not.toContain('stash')
+    expect(wrapper.text()).toContain('Tavern')
+    expect(wrapper.text()).toContain('Stash')
+    expect(wrapper.text()).toContain('Caravan')
   })
 })

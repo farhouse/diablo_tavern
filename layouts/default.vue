@@ -9,10 +9,12 @@
         <NuxtLink to="/caravan">Caravan</NuxtLink>
       </nav>
       <div class="row topbar-stats">
-        <span class="tag">{{ game.save?.gold ?? 0 }}g</span>
-        <span class="tag">Round {{ game.save?.visitRound.number ?? '—' }}</span>
-        <span class="tag">{{ visitorCount }} visitors</span>
-        <span class="tag">{{ stashCount }}/{{ stashCap }} stash</span>
+        <template v-if="!isVisitorsV2">
+          <span class="tag">{{ game.save?.gold ?? 0 }}g</span>
+          <span class="tag">Round {{ game.save?.visitRound.number ?? '—' }}</span>
+          <span class="tag">{{ visitorCount }} visitors</span>
+          <span class="tag">{{ stashCount }}/{{ stashCap }} stash</span>
+        </template>
         <button class="btn ghost" type="button" @click="logout">Logout</button>
       </div>
     </header>
@@ -21,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useGameStore } from '~/stores/game'
 import { useGameV2Store } from '~/stores/game-v2'
@@ -29,14 +31,22 @@ import { useGameV2Store } from '~/stores/game-v2'
 const auth = useAuthStore()
 const game = useGameStore()
 const gameV2 = useGameV2Store()
+const route = useRoute()
+const isVisitorsV2 = computed(() => route.path === '/visitors-v2')
 
 const visitorCount = computed(() => game.save?.visitRound.slots.filter((slot) => Boolean(slot.visitor)).length ?? 0)
 const stashCount = computed(() => game.save?.stash.length ?? 0)
 const stashCap = computed(() => game.save?.stashLimit ?? 0)
 
+function loadLegacyGame() {
+  if (!isVisitorsV2.value && auth.loggedIn && !game.save && !game.loading) void game.load()
+}
+
+watch(() => route.path, loadLegacyGame)
+
 onMounted(() => {
   auth.hydrate()
-  if (auth.loggedIn && !game.save) game.load()
+  loadLegacyGame()
 })
 
 function logout() {

@@ -10,6 +10,7 @@ const store = vi.hoisted(() => ({
   game: { revision: 7 }, loadState: 'ready', operationState: 'idle',
   errorMessage: 'error', unavailableReason: 'reason', snapshotStale: true,
   load: vi.fn(), acceptContract: vi.fn(), startExpedition: vi.fn(), reconcileGame: vi.fn(),
+  reconcileDueTransition: vi.fn(),
   confirmSettlement: vi.fn(), assignRecovery: vi.fn(), abandonRecovery: vi.fn(),
   retryUncertain: vi.fn(), retryConflictReload: vi.fn()
 }))
@@ -19,7 +20,7 @@ vi.mock('../stores/game-v2', () => ({ useGameV2Store: () => store }))
 const VisitorCycleStub = defineComponent({
   name: 'VisitorCycleV2',
   props: ['game', 'loadState', 'operationState', 'errorMessage', 'unavailableReason', 'snapshotStale'],
-  emits: ['acceptContract', 'startExpedition', 'reconcileGame', 'confirmSettlement', 'assignRecovery', 'abandonRecovery', 'retry', 'reload'],
+  emits: ['acceptContract', 'startExpedition', 'reconcileGame', 'reconcileDueTransition', 'confirmSettlement', 'assignRecovery', 'abandonRecovery', 'retry', 'reload'],
   template: `<div>
     <button data-event="accept" @click="$emit('acceptContract', { kind: 'contract' })" />
     <button data-event="start" @click="$emit('startExpedition', 'visitor-1')" />
@@ -53,6 +54,15 @@ describe('/visitors-v2', () => {
     const wrapper = mount(VisitorsV2Page, { global: { stubs: { VisitorCycleV2: VisitorCycleStub } } })
     await wrapper.get(`[data-event="${event}"]`).trigger('click')
     expect(store[method]).toHaveBeenCalledOnce()
+  })
+
+  it('routes automatic clock ticks through the deduplicated store helper', async () => {
+    const wrapper = mount(VisitorsV2Page, { global: { stubs: { VisitorCycleV2: VisitorCycleStub } } })
+    await wrapper.get('[data-event="reconcile"]').trigger('click')
+    expect(store.reconcileGame).toHaveBeenCalledOnce()
+
+    await wrapper.getComponent(VisitorCycleStub).vm.$emit('reconcileDueTransition', 123)
+    expect(store.reconcileDueTransition).toHaveBeenCalledWith(123)
   })
 
   it('is linked from authenticated navigation', () => {

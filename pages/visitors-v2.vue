@@ -17,6 +17,7 @@
       @accept-contract="game.acceptContract"
       @start-expedition="game.startExpedition"
       @reconcile-game="game.reconcileGame"
+      @reconcile-due-transition="game.reconcileDueTransition"
       @confirm-settlement="game.confirmSettlement"
       @assign-recovery="game.assignRecovery"
       @abandon-recovery="game.abandonRecovery"

@@ -252,9 +252,9 @@ describe('VisitorCycleV2', () => {
     const wrapper = mount(VisitorCycleV2, { attachTo: document.body, props: { game, loadState: 'ready' } })
 
     await vi.advanceTimersByTimeAsync(1000)
-    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+    expect(wrapper.emitted('reconcileDueTransition')).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(2000)
-    expect(wrapper.emitted('reconcileGame')).toHaveLength(3)
+    expect(wrapper.emitted('reconcileDueTransition')).toHaveLength(3)
   })
 
   it('pauses transition checks while hidden and reconciles once after returning visible', async () => {
@@ -267,13 +267,13 @@ describe('VisitorCycleV2', () => {
     const wrapper = mount(VisitorCycleV2, { attachTo: document.body, props: { game, loadState: 'ready' } })
 
     await vi.advanceTimersByTimeAsync(2000)
-    expect(wrapper.emitted('reconcileGame')).toBeUndefined()
+    expect(wrapper.emitted('reconcileDueTransition')).toBeUndefined()
 
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
     document.dispatchEvent(new Event('visibilitychange'))
-    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+    expect(wrapper.emitted('reconcileDueTransition')).toHaveLength(1)
     document.dispatchEvent(new Event('visibilitychange'))
-    expect(wrapper.emitted('reconcileGame')).toHaveLength(2)
+    expect(wrapper.emitted('reconcileDueTransition')).toHaveLength(2)
   })
 
   it('does not consume a due transition while pending or uncertain', async () => {
@@ -285,15 +285,15 @@ describe('VisitorCycleV2', () => {
     const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready', operationState: 'pending' } })
 
     await vi.advanceTimersByTimeAsync(1000)
-    expect(wrapper.emitted('reconcileGame')).toBeUndefined()
+    expect(wrapper.emitted('reconcileDueTransition')).toBeUndefined()
 
     await wrapper.setProps({ operationState: 'uncertain' })
     await vi.advanceTimersByTimeAsync(1000)
-    expect(wrapper.emitted('reconcileGame')).toBeUndefined()
+    expect(wrapper.emitted('reconcileDueTransition')).toBeUndefined()
 
     await wrapper.setProps({ operationState: 'idle' })
     await vi.advanceTimersByTimeAsync(1000)
-    expect(wrapper.emitted('reconcileGame')).toHaveLength(1)
+    expect(wrapper.emitted('reconcileDueTransition')).toHaveLength(1)
   })
 
   it('resets contract and recovery selections when a newer snapshot removes the selected binding', async () => {

@@ -30,6 +30,7 @@ const emit = defineEmits<{
   acceptContract: [selection: Extract<VisitorV2Selection, { kind: 'contract' }>]
   startExpedition: [visitorId: string]
   reconcileGame: []
+  reconcileDueTransition: [nowMs: number]
   confirmSettlement: [selection: Extract<VisitorV2Selection, { kind: 'settlement' }>]
   assignRecovery: [selection: Extract<VisitorV2Selection, { kind: 'recovery' }>]
   abandonRecovery: [selection: Extract<VisitorV2Selection, { kind: 'abandon_recovery' }>]
@@ -114,7 +115,7 @@ function onVisibilityChange() {
 function emitDueReconcile() {
   if (!props.game?.nextTransitionAt || !reconcileAction.value || !visible() || locked.value) return
   if (Date.parse(props.game.nextTransitionAt) > currentNowMs.value) return
-  emit('reconcileGame')
+  emit('reconcileDueTransition', currentNowMs.value)
 }
 
 function selectedContractBinding(visitor: VisitorView) {

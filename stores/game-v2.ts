@@ -119,7 +119,8 @@ export const useGameV2Store = defineStore('game-v2', {
       const key = `${this.game.revision}:${this.game.nextTransitionAt}`
       if (this.reconciledTransitions[key]) return
       if (this.operationState === 'pending' || this.operationState === 'uncertain') return
-      if (await this.reconcileGame()) this.reconciledTransitions[key] = true
+      this.reconciledTransitions[key] = true
+      await this.reconcileGame()
     },
     async runOperation(name: OperationName, endpoint: string, payload: Record<string, unknown>) {
       if (!this.game || this.operationState === 'pending' || this.operationState === 'uncertain' || this.snapshotStale) return false
