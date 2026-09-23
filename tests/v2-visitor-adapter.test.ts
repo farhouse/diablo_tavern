@@ -13,8 +13,8 @@ import {
 } from '../utils/v2-visitor-adapter'
 import type { VisitorV2Selection } from '../utils/v2-visitor-adapter'
 
-const cases = fixtures.integratedPositiveCases as Array<{ id: string, value: GameView }>
-const negativeCases = fixtures.negativeCases as Array<{ id: string, value: GameView }>
+const cases = fixtures.integratedPositiveCases as unknown as Array<{ id: string, value: GameView }>
+const negativeCases = fixtures.negativeCases as unknown as Array<{ id: string, value: GameView }>
 
 function fixture(id: string): GameView {
   const match = cases.find((candidate) => candidate.id === id)

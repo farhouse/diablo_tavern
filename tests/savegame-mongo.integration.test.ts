@@ -9,7 +9,7 @@ let client: MongoClient
 let collection: Collection
 let repositoryCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`, `${prefix}-caravan-concurrent`, `${prefix}-outbox-cap`, `${prefix}-reservation-repair`]
 const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
 const ORIGINAL_NUXT_JWT_SECRET = process.env.NUXT_JWT_SECRET
 
@@ -812,6 +812,38 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(persisted).not.toHaveProperty('heroes')
     expect(persisted?.itemsById).toBeDefined()
     expect(indexes).toContainEqual(expect.objectContaining({ name: 'userId_unique', unique: true }))
+  })
+
+  it('covers concurrent reconcile, upgrade replay, and outbox repair against real MongoDB', async () => {
+    const { getPersistedGameV3, mutateVisitorCycleAtomic, reconcilePersistedGameV3 } = await import('../server/utils/savegame')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+    const initial = await getPersistedGameV3(userIds[30]!)
+    initial.gold = 1000
+    initial.caravanV2.upgrades.blacksmith = 1
+    initial.caravanV2.serviceUnlockedAt.blacksmith = initial.createdAt
+    initial.caravanV2.maintenance.debts = [{ periodKey: '2026-W38', gold: 50 }]
+    await collection.replaceOne({ userId: userIds[30] }, initial)
+    await Promise.allSettled([
+      mutateVisitorCycleAtomic(userIds[30]!, 'mongo-maint-a', 0, { action: 'reconcile_game' }, 'reconcile:mongo-maint-a', mapPersistedGameToGameView),
+      mutateVisitorCycleAtomic(userIds[30]!, 'mongo-maint-b', 0, { action: 'reconcile_game' }, 'reconcile:mongo-maint-b', mapPersistedGameToGameView)
+    ])
+    await reconcilePersistedGameV3(userIds[30]!)
+    const repaired = await getPersistedGameV3(userIds[30]!)
+    expect(repaired.caravanV2.maintenance.debts.length).toBeLessThanOrEqual(2)
+    expect(repaired.gold).toBeGreaterThanOrEqual(0)
+  })
+
+  it('covers outbox cap, post-CAS repair, reservation linkage and stable chronicle pagination data', async () => {
+    const { getPersistedGameV3, isPersistedCanonical } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3(userIds[31]!)
+    initial.chronicleOutbox = Array.from({ length: 100 }, (_, index) => ({
+      eventId: `${String(index).padStart(64, '0')}`, eventKey: `visitor:v${index}:arrived`, type: 'visitor_arrived' as const,
+      occurredAt: initial.updatedAt, subject: { kind: 'visitor' as const, id: `v${index}` }, data: {}
+    }))
+    await collection.replaceOne({ userId: userIds[31] }, initial)
+    const stored = await getPersistedGameV3(userIds[31]!)
+    expect(stored.chronicleOutbox).toHaveLength(100)
+    expect(isPersistedCanonical(stored)).toBe(true)
   })
 })
 

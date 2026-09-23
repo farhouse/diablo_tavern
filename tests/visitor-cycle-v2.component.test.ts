@@ -8,7 +8,7 @@ import fixtures from '../contracts/v2-etapa0-3/fixtures.json'
 import type { GameView, VisitorView } from '../shared/types/v2-game-view'
 import VisitorCycleV2 from '../components/VisitorCycleV2.vue'
 
-const cases = fixtures.integratedPositiveCases as Array<{ id: string, value: GameView }>
+const cases = fixtures.integratedPositiveCases as unknown as Array<{ id: string, value: GameView }>
 const retainedCases = fixtures.retainedPositiveCases as Array<{ id: string, value: unknown }>
 
 function fixture(id: string): GameView {

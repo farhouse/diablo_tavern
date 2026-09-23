@@ -577,11 +577,13 @@ function reconcileSettlementReservations(game: PersistedGameV3): void {
     if (settlement.state === 'preview_ready' && settlement.rewardItemIds.length) expected.set(settlement.settlementId, settlement.rewardItemIds.length)
   }
   for (const [id, reservation] of Object.entries(game.caravanV2.capacityReservations)) {
-    if (expected.get(id) !== reservation.slots) delete game.caravanV2.capacityReservations[id]
+    const settlementId = id.startsWith('settlement:') ? id.slice('settlement:'.length) : ''
+    if (expected.get(settlementId) !== reservation.slots || reservation.reservationId !== id || reservation.sourceId !== settlementId || reservation.sourceKind !== 'settlement') delete game.caravanV2.capacityReservations[id]
   }
   for (const [id, slots] of expected) {
-    if (!game.caravanV2.capacityReservations[id]) game.caravanV2.capacityReservations[id] = {
-      reservationId: `settlement:${id}`, sourceKind: 'settlement', sourceId: id, slots, createdAt: game.updatedAt
+    const key = `settlement:${id}`
+    game.caravanV2.capacityReservations[key] = {
+      reservationId: key, sourceKind: 'settlement', sourceId: id, slots, createdAt: game.visitorCycle.settlements[id]!.createdAt
     }
   }
 }

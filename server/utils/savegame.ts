@@ -17,7 +17,7 @@ import {
   type PersistedVisitorCycle,
   type VisitorCycleCommand
 } from '~/server/domain/visitor-cycle'
-import { CARAVAN_V2_MAX_OUTBOX, CARAVAN_V2_UPGRADES, appendChronicleEvent, createCaravanV2, reconcileCaravanMaintenance, resolveCaravanUpgradeOption, type PersistedCaravanV2, type PersistedChronicleOutboxEvent } from '~/server/domain/caravan-v2'
+import { CARAVAN_V2_MAX_OUTBOX, CARAVAN_V2_UPGRADES, appendChronicleEvent, createCaravanV2, isChronicleEventDataValid, reconcileCaravanMaintenance, resolveCaravanUpgradeOption, type PersistedCaravanV2, type PersistedChronicleOutboxEvent } from '~/server/domain/caravan-v2'
 import { V2DomainRuleError } from '~/shared/errors/v2-domain'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -519,12 +519,6 @@ export async function mutateVisitorCycleAtomic(
 
     const now = dependencies.now()
     const scopedDependencies = { ...dependencies, now: () => now }
-    if (current.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) {
-      await projectChronicleOutboxBestEffort(userId)
-      const drained = await getPersistedGameV3(userId, dependencies)
-      if (drained.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) throw new V2DomainRuleError('Chronicle outbox is full', 'SERVICE_LOCKED')
-      continue
-    }
     const next = applyVisitorCycleCommand(current, command, scopedDependencies)
     if (command.action === 'reconcile_game') reconcileCaravanMaintenance(next, now)
     next.revision = expectedRevision + 1
@@ -545,7 +539,13 @@ export async function mutateVisitorCycleAtomic(
       materialDeltas: resourceDeltas(current.materials, next.materials),
       itemChanges: itemPlacementChanges(current, next)
     }]
-    appendCycleChronicleEvents(current, next, now)
+    if (current.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX || current.chronicleOutbox.length + countCycleChronicleEvents(current, next, now, businessKey) > CARAVAN_V2_MAX_OUTBOX) {
+      await projectChronicleOutboxBestEffort(userId)
+      const drained = await getPersistedGameV3(userId, dependencies)
+      if (drained.chronicleOutbox.length + countCycleChronicleEvents(drained, next, now, businessKey) > CARAVAN_V2_MAX_OUTBOX || drained.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) throw new V2DomainRuleError('Chronicle outbox is full', 'SERVICE_LOCKED')
+      continue
+    }
+    appendCycleChronicleEvents(current, next, now, businessKey)
     if (!isPersistedCanonical(next)) throw new PersistedGameCorruptError('Visitor cycle produced an invalid aggregate')
 
     try {
@@ -576,7 +576,7 @@ export async function mutateVisitorCycleAtomic(
   throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 }
 
-function appendCycleChronicleEvents(previous: PersistedGameV3, next: PersistedGameV3, now: Date): void {
+function appendCycleChronicleEvents(previous: PersistedGameV3, next: PersistedGameV3, now: Date, mutationBusinessKey = ''): void {
   for (const [visitorId, visitor] of Object.entries(next.visitorCycle.visitors)) {
     if (!previous.visitorCycle.visitors[visitorId]) appendChronicleEvent(next, { eventKey: `visitor:${visitorId}:arrived`, type: 'visitor_arrived', occurredAt: now.toISOString(), subject: { kind: 'visitor', id: visitorId }, data: {} })
     const old = previous.visitorCycle.visitors[visitorId]
@@ -585,8 +585,8 @@ function appendCycleChronicleEvents(previous: PersistedGameV3, next: PersistedGa
   }
   for (const [expeditionId, expedition] of Object.entries(next.visitorCycle.expeditions)) {
     const old = previous.visitorCycle.expeditions[expeditionId]
-    if (old?.state !== 'active' && expedition.state === 'active') appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:started:${next.revision}`, type: 'expedition_started', occurredAt: expedition.startedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: {} })
-    if (old?.state !== 'awaiting_settlement' && (expedition.state === 'awaiting_settlement' || expedition.state === 'settled')) appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:resolved:${next.revision}`, type: 'expedition_resolved', occurredAt: expedition.resolvedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: { outcome: expedition.outcome ?? 'unknown' } })
+    if (old?.state !== 'active' && expedition.state === 'active') appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:started`, type: 'expedition_started', occurredAt: expedition.startedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: {} })
+    if (old?.state !== 'awaiting_settlement' && expedition.state === 'awaiting_settlement') appendChronicleEvent(next, { eventKey: `expedition:${expeditionId}:resolved`, type: 'expedition_resolved', occurredAt: expedition.resolvedAt ?? now.toISOString(), subject: { kind: 'expedition', id: expeditionId }, data: { outcome: expedition.outcome ?? 'returned' } })
   }
   for (const [itemId, placement] of Object.entries(next.itemPlacements)) {
     const previousPlacement = previous.itemPlacements[itemId]
@@ -594,8 +594,16 @@ function appendCycleChronicleEvents(previous: PersistedGameV3, next: PersistedGa
       const provenance = next.itemV2ById[itemId]?.provenance
       appendChronicleEvent(next, { eventKey: `item:${itemId}:found:${provenance?.businessKey ?? 'initial'}`, type: 'item_found', occurredAt: now.toISOString(), subject: { kind: 'item', id: itemId }, data: provenance ? { zoneId: provenance.zoneId, ...(provenance.lootTableId ? { lootTableId: provenance.lootTableId } : {}) } : {} })
     }
-    else if (JSON.stringify(previousPlacement) !== JSON.stringify(placement)) appendChronicleEvent(next, { eventKey: `item:${itemId}:custody:${next.revision}`, type: 'item_custody_changed', occurredAt: now.toISOString(), subject: { kind: 'item', id: itemId }, data: { custodyKind: placement.custodyKind } })
+    else if (JSON.stringify(previousPlacement) !== JSON.stringify(placement)) appendChronicleEvent(next, { eventKey: `item:${itemId}:custody:${mutationBusinessKey}`, type: 'item_custody_changed', occurredAt: now.toISOString(), subject: { kind: 'item', id: itemId }, data: { custodyKind: placement.custodyKind } })
   }
+}
+
+function countCycleChronicleEvents(previous: PersistedGameV3, next: PersistedGameV3, now: Date, mutationBusinessKey: string): number {
+  const candidate = structuredClone(next)
+  candidate.chronicleOutbox = []
+  appendCycleChronicleEvents(previous, candidate, now, mutationBusinessKey)
+  const existing = new Set(previous.chronicleOutbox.map((event) => event.eventId))
+  return candidate.chronicleOutbox.filter((event) => !existing.has(event.eventId)).length
 }
 
 async function projectChronicleOutboxBestEffort(userId: string): Promise<void> {
@@ -644,13 +652,6 @@ export async function mutateEquipmentV2Atomic(
     }
     if (current.revision !== expectedRevision) throw new RevisionConflictError('Save changed concurrently; reload and retry with current revision')
 
-    if (current.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) {
-      await projectChronicleOutboxBestEffort(userId)
-      const drained = await getPersistedGameV3(userId, dependencies)
-      if (drained.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) throw new V2DomainRuleError('Chronicle outbox is full', 'SERVICE_LOCKED')
-      continue
-    }
-
     authorizeEquipmentV2Command(current, command, dependencies)
     const transitioned = applyEquipmentV2Command(current, command, dependencies)
     pruneEmptyOrphanedLifecycle(
@@ -663,7 +664,13 @@ export async function mutateEquipmentV2Atomic(
     const now = dependencies.now().toISOString()
     transitioned.revision = expectedRevision + 1
     transitioned.updatedAt = now
-    appendCycleChronicleEvents(current, transitioned, dependencies.now())
+    if (current.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX || current.chronicleOutbox.length + countCycleChronicleEvents(current, transitioned, dependencies.now(), businessKey) > CARAVAN_V2_MAX_OUTBOX) {
+      await projectChronicleOutboxBestEffort(userId)
+      const drained = await getPersistedGameV3(userId, dependencies)
+      if (drained.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX || drained.chronicleOutbox.length + countCycleChronicleEvents(drained, transitioned, dependencies.now(), businessKey) > CARAVAN_V2_MAX_OUTBOX) throw new V2DomainRuleError('Chronicle outbox is full', 'SERVICE_LOCKED')
+      continue
+    }
+    appendCycleChronicleEvents(current, transitioned, dependencies.now(), businessKey)
     const response = sanitizeGameResponse(hydratePersistedGame(transitioned))
     const persistedResponse = createReplaySnapshot(transitioned)
     transitioned.requestRecords = appendRequestRecord(current.requestRecords, now, {
@@ -1235,9 +1242,9 @@ function isPersistedCaravanV2(value: unknown): value is PersistedCaravanV2 {
     || !Array.isArray(maintenance.debts) || maintenance.debts.length > 2
     || !maintenance.debts.every((debt) => isPlainRecord(debt) && hasOnlyKeys(debt, ['periodKey', 'gold']) && typeof debt.periodKey === 'string' && Number.isInteger(Number(debt.gold)) && Number(debt.gold) > 0)) return false
   const reservations = value.capacityReservations
-  return isPlainRecord(reservations) && Object.values(reservations).every((reservation) => isPlainRecord(reservation)
+  return isPlainRecord(reservations) && Object.entries(reservations).every(([key, reservation]) => isPlainRecord(reservation)
     && hasOnlyKeys(reservation, ['reservationId', 'sourceKind', 'sourceId', 'slots', 'createdAt'])
-    && typeof reservation.reservationId === 'string' && reservation.sourceKind === 'settlement' && typeof reservation.sourceId === 'string'
+    && key === `settlement:${reservation.sourceId}` && reservation.reservationId === key && reservation.sourceKind === 'settlement' && typeof reservation.sourceId === 'string'
     && Number.isInteger(Number(reservation.slots)) && Number(reservation.slots) > 0 && typeof reservation.createdAt === 'string' && Number.isFinite(Date.parse(reservation.createdAt)))
 }
 
@@ -1250,6 +1257,7 @@ function isPersistedChronicleOutboxEvent(value: unknown): value is PersistedChro
   return isPlainRecord(subject) && hasOnlyKeys(subject, ['kind', 'id']) && ['visitor', 'expedition', 'item'].includes(String(subject.kind))
     && typeof subject.id === 'string' && Boolean(subject.id) && isPlainRecord(value.data)
     && Object.values(value.data).every((entry) => typeof entry === 'string')
+    && isChronicleEventDataValid(value as unknown as PersistedChronicleOutboxEvent)
 }
 
 export function isPersistedCanonical(
@@ -1305,6 +1313,14 @@ export function isPersistedCanonical(
   if (visitorIds.size !== visitors.length) return false
   const visitorContracts = new Map(visitors.map((visitor) => [visitor.id, visitor.commission?.id]))
   const cycle = candidate.visitorCycle as PersistedVisitorCycle
+  const pendingReservations = new Set(Object.values(cycle.settlements)
+    .filter((settlement) => settlement.state === 'preview_ready' && settlement.rewardItemIds.length > 0)
+    .map((settlement) => `settlement:${settlement.settlementId}`))
+  for (const [key, reservation] of Object.entries((candidate.caravanV2 as PersistedCaravanV2).capacityReservations)) {
+    const settlement = cycle.settlements[reservation.sourceId]
+    if (!pendingReservations.has(key) || !settlement || settlement.state !== 'preview_ready'
+      || settlement.rewardItemIds.length !== reservation.slots || reservation.sourceId !== key.slice('settlement:'.length)) return false
+  }
   const cycleExpeditionIds = new Set(Object.keys(cycle.expeditions))
   if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
   if (!isItemV2Map(itemV2ById) || !isServiceJobStateMap(serviceJobStateById)) return false

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createPersistedGameV3 } from '~/server/utils/savegame'
-import { maintenancePeriodKey, reconcileCaravanMaintenance } from '~/server/domain/caravan-v2'
+import { appendChronicleEvent, eventIdFor, isChronicleEventDataValid, maintenancePeriodKey, reconcileCaravanMaintenance } from '~/server/domain/caravan-v2'
 
 describe('caravan V2 regression coverage', () => {
   const dependencies = () => {
@@ -24,5 +24,22 @@ describe('caravan V2 regression coverage', () => {
     expect(before).toBe(game.caravanV2.maintenance.accountedThroughPeriodKey)
     expect(game.gold).toBe(900)
     expect(game.caravanV2.maintenance.debts).toEqual([])
+  })
+
+  it('uses natural event keys and rejects payloads outside each event union', () => {
+    const game = createPersistedGameV3('chronicle-account', dependencies())
+    appendChronicleEvent(game, {
+      eventKey: 'expedition:e1:started', type: 'expedition_started', occurredAt: game.updatedAt,
+      subject: { kind: 'expedition', id: 'e1' }, data: {}
+    })
+    appendChronicleEvent(game, {
+      eventKey: 'expedition:e1:started', type: 'expedition_started', occurredAt: game.updatedAt,
+      subject: { kind: 'expedition', id: 'e1' }, data: {}
+    })
+    expect(game.chronicleOutbox).toHaveLength(1)
+    expect(game.chronicleOutbox[0]?.eventId).toBe(eventIdFor(game.userId, 'expedition:e1:started'))
+    expect(isChronicleEventDataValid({
+      ...game.chronicleOutbox[0]!, type: 'expedition_started', data: { outcome: 'returned' }
+    })).toBe(false)
   })
 })

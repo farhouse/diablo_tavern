@@ -152,3 +152,15 @@ export function appendChronicleEvent(game: Pick<PersistedGameV3, 'userId' | 'chr
   if (game.chronicleOutbox.length >= CARAVAN_V2_MAX_OUTBOX) throw new Error('Chronicle outbox is full')
   game.chronicleOutbox.push({ ...event, eventId })
 }
+
+export function isChronicleEventDataValid(event: PersistedChronicleOutboxEvent): boolean {
+  const data = event.data
+  const keys = Object.keys(data)
+  if (event.type === 'visitor_arrived' || event.type === 'visitor_died' || event.type === 'visitor_departed') {
+    return event.subject.kind === 'visitor' && keys.length === 0
+  }
+  if (event.type === 'expedition_started') return event.subject.kind === 'expedition' && keys.length === 0
+  if (event.type === 'expedition_resolved') return event.subject.kind === 'expedition' && keys.length === 1 && keys[0] === 'outcome' && ['returned', 'retreated', 'death'].includes(data.outcome ?? '')
+  if (event.type === 'item_found') return event.subject.kind === 'item' && (keys.length === 0 || (keys.every((key) => key === 'zoneId' || key === 'lootTableId') && typeof data.zoneId === 'string'))
+  return event.subject.kind === 'item' && keys.length === 1 && keys[0] === 'custodyKind' && ['stash', 'visitor', 'expedition', 'recovery', 'settlement', 'service', 'tombstone'].includes(data.custodyKind ?? '')
+}

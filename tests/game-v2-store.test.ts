@@ -11,7 +11,7 @@ vi.mock('../stores/auth', () => ({
   useAuthStore: () => ({ accessToken: 'token', hydrate, refresh })
 }))
 
-const cases = fixtures.integratedPositiveCases as Array<{ id: string, value: GameView }>
+const cases = fixtures.integratedPositiveCases as unknown as Array<{ id: string, value: GameView }>
 
 function fixture(id: string): GameView {
   const match = cases.find((candidate) => candidate.id === id)
