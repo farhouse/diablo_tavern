@@ -14,7 +14,7 @@ import type {
 } from '~/shared/types/v2-game-view'
 import { V2DomainRuleError } from '~/shared/errors/v2-domain'
 import type { PersistenceDependencies, PersistedGameV3, PersistedVisitorCommission } from '~/server/utils/savegame'
-import { visitorCapacityLimit } from '~/server/domain/caravan-v2'
+import { settlementReservationKey, visitorCapacityLimit } from '~/server/domain/caravan-v2'
 
 const CONTRACT_TTL_MS = 24 * 60 * 60 * 1000
 const SETTLEMENT_TTL_MS = 5 * 60 * 1000
@@ -433,8 +433,9 @@ function resolveExpedition(
   }
   game.visitorCycle.settlements[settlementId] = settlement
   if (settlement.rewardItemIds.length) {
-    game.caravanV2.capacityReservations[settlementId] = {
-      reservationId: `settlement:${settlementId}`, sourceKind: 'settlement', sourceId: settlementId,
+    const reservationKey = settlementReservationKey(settlementId)
+    game.caravanV2.capacityReservations[reservationKey] = {
+      reservationId: reservationKey, sourceKind: 'settlement', sourceId: settlementId,
       slots: settlement.rewardItemIds.length, createdAt: materializedAt.toISOString()
     }
   }
@@ -470,7 +471,7 @@ function applySettlement(
   const expedition = game.visitorCycle.expeditions[settlement.expeditionId]
   if (!expedition) throw new Error(`Missing expedition ${settlement.expeditionId}`)
   const visitor = requireVisitor(game.visitorCycle, expedition.visitorId)
-  delete game.caravanV2.capacityReservations[settlement.settlementId]
+  delete game.caravanV2.capacityReservations[settlementReservationKey(settlement.settlementId)]
   game.gold += settlement.caravanGold
   for (const itemId of settlement.rewardItemIds) {
     moveItem(game, itemId, { ownerKind: 'caravan', custodyKind: 'stash' })
@@ -574,14 +575,16 @@ function archiveLegacyVisitor(game: PersistedGameV3, visitorId: string, now: Dat
 function reconcileSettlementReservations(game: PersistedGameV3): void {
   const expected = new Map<string, number>()
   for (const settlement of Object.values(game.visitorCycle.settlements)) {
-    if (settlement.state === 'preview_ready' && settlement.rewardItemIds.length) expected.set(settlement.settlementId, settlement.rewardItemIds.length)
+    const slots = settlement.rewardItemIds.filter((itemId) => game.itemPlacements[itemId]?.ownerKind !== 'caravan').length
+    if (settlement.state === 'preview_ready' && slots) expected.set(settlement.settlementId, slots)
   }
   for (const [id, reservation] of Object.entries(game.caravanV2.capacityReservations)) {
     const settlementId = id.startsWith('settlement:') ? id.slice('settlement:'.length) : ''
-    if (expected.get(settlementId) !== reservation.slots || reservation.reservationId !== id || reservation.sourceId !== settlementId || reservation.sourceKind !== 'settlement') delete game.caravanV2.capacityReservations[id]
+    const canonicalKey = settlementReservationKey(settlementId)
+    if (expected.get(settlementId) !== reservation.slots || reservation.reservationId !== canonicalKey || reservation.sourceId !== settlementId || reservation.sourceKind !== 'settlement') delete game.caravanV2.capacityReservations[id]
   }
   for (const [id, slots] of expected) {
-    const key = `settlement:${id}`
+    const key = settlementReservationKey(id)
     game.caravanV2.capacityReservations[key] = {
       reservationId: key, sourceKind: 'settlement', sourceId: id, slots, createdAt: game.visitorCycle.settlements[id]!.createdAt
     }

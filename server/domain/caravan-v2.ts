@@ -107,6 +107,10 @@ export function reservedCapacity(caravan: PersistedCaravanV2): number {
   return Object.values(caravan.capacityReservations).reduce((sum, reservation) => sum + reservation.slots, 0)
 }
 
+export function settlementReservationKey(settlementId: string): string {
+  return `settlement:${settlementId}`
+}
+
 export function reconcileCaravanMaintenance(game: Pick<PersistedGameV3, 'gold' | 'caravanV2' | 'businessKeys'>, now: Date): string[] {
   const currentKey = maintenancePeriodKey(now)
   while (game.caravanV2.maintenance.debts.length && game.gold >= game.caravanV2.maintenance.debts[0]!.gold) {

@@ -4,11 +4,11 @@ import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import fixtures from '../contracts/v2-etapa0-3/fixtures.json'
+import fixtures from '../contracts/v2-etapa0-4/fixtures.json'
 import type { GameView, VisitorView } from '../shared/types/v2-game-view'
 import VisitorCycleV2 from '../components/VisitorCycleV2.vue'
 
-const cases = fixtures.integratedPositiveCases as unknown as Array<{ id: string, value: GameView }>
+const cases = fixtures.integratedPositiveCases.map((candidate) => ({ id: candidate.id, value: candidate.value as GameView }))
 const retainedCases = fixtures.retainedPositiveCases as Array<{ id: string, value: unknown }>
 
 function fixture(id: string): GameView {

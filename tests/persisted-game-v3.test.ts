@@ -382,6 +382,7 @@ describe('PersistedGameV3 invariants', () => {
     cycleExpedition.settledAt = save.updatedAt
     cycleExpedition.visitorResolution = 'departs'
     cycleSettlement.state = 'settled'
+    delete claimed.caravanV2.capacityReservations[`settlement:${cycleSettlement.settlementId}`]
     cycleSettlement.appliedAt = save.updatedAt
     cycleSettlement.appliedBy = 'confirmation'
     cycleSettlement.appliedChoices = cycleSettlement.choiceGroups.map((group) => {

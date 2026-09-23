@@ -17,7 +17,7 @@ import {
   type PersistedVisitorCycle,
   type VisitorCycleCommand
 } from '~/server/domain/visitor-cycle'
-import { CARAVAN_V2_MAX_OUTBOX, CARAVAN_V2_UPGRADES, appendChronicleEvent, createCaravanV2, isChronicleEventDataValid, reconcileCaravanMaintenance, resolveCaravanUpgradeOption, type PersistedCaravanV2, type PersistedChronicleOutboxEvent } from '~/server/domain/caravan-v2'
+import { CARAVAN_V2_MAX_OUTBOX, CARAVAN_V2_UPGRADES, appendChronicleEvent, createCaravanV2, eventIdFor, isChronicleEventDataValid, reconcileCaravanMaintenance, resolveCaravanUpgradeOption, settlementReservationKey, type PersistedCaravanV2, type PersistedChronicleOutboxEvent } from '~/server/domain/caravan-v2'
 import { V2DomainRuleError } from '~/shared/errors/v2-domain'
 
 const REQUEST_RECORD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -955,6 +955,7 @@ function backfillPersistedV3(document: PersistedDbDocument, now = new Date()): P
     const originalWithV2 = original as PersistedGameV3 & { caravanV2?: PersistedCaravanV2; chronicleOutbox?: PersistedChronicleOutboxEvent[] }
     if (!originalWithV2.caravanV2) originalWithV2.caravanV2 = createCaravanV2(now, true)
     if (!originalWithV2.chronicleOutbox) originalWithV2.chronicleOutbox = []
+    normalizePendingSettlementReservations(original)
     if (!isPersistedCanonical(original, { allowMissingHistoricalRewardV2: missingItemV2Map })) return undefined
     if (missingItemV2Map) backfillCommissionRewardV2State(original)
     return original
@@ -964,9 +965,28 @@ function backfillPersistedV3(document: PersistedDbDocument, now = new Date()): P
     const migrated = toPersistedGame((retained ?? document) as PersistedDbDocument)
     if (!Object.prototype.hasOwnProperty.call(document, 'caravanV2')) migrated.caravanV2 = createCaravanV2(now, true)
     if (!Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')) migrated.chronicleOutbox = []
+    normalizePendingSettlementReservations(migrated)
     return migrated
   }
-  return undefined
+  const migrated = toPersistedGame(document)
+  normalizePendingSettlementReservations(migrated)
+  return isPersistedCanonical(migrated) ? migrated : undefined
+}
+
+function normalizePendingSettlementReservations(game: PersistedGameV3): void {
+  const expected = Object.values(game.visitorCycle.settlements)
+    .map((settlement) => ({ settlement, slots: settlement.rewardItemIds.filter((itemId) => game.itemPlacements[itemId]?.ownerKind !== 'caravan').length }))
+    .filter(({ settlement, slots }) => settlement.state === 'preview_ready' && slots > 0)
+  game.caravanV2.capacityReservations = Object.fromEntries(expected.map(({ settlement, slots }) => {
+    const key = settlementReservationKey(settlement.settlementId)
+    return [key, {
+      reservationId: key,
+      sourceKind: 'settlement' as const,
+      sourceId: settlement.settlementId,
+      slots,
+      createdAt: settlement.createdAt
+    }]
+  }))
 }
 
 function backfillCommissionRewardV2State(candidate: PersistedGameV3): void {
@@ -1218,6 +1238,7 @@ export function buildPersistedFromPublic(
     ,caravanV2: structuredClone(previous?.caravanV2 ?? createCaravanV2(new Date(normalized.createdAt), !newGame))
     ,chronicleOutbox: structuredClone(previous?.chronicleOutbox ?? [])
   }
+  normalizePendingSettlementReservations(persisted as PersistedGameV3)
   const canonical = stripUndefinedDeep(persisted) as PersistedGameV3
   if (!isPersistedCanonical(canonical)) {
     throw new PersistedGameCorruptError('Public aggregate cannot be represented as canonical PersistedGameV3')
@@ -1248,9 +1269,9 @@ function isPersistedCaravanV2(value: unknown): value is PersistedCaravanV2 {
     && Number.isInteger(Number(reservation.slots)) && Number(reservation.slots) > 0 && typeof reservation.createdAt === 'string' && Number.isFinite(Date.parse(reservation.createdAt)))
 }
 
-function isPersistedChronicleOutboxEvent(value: unknown): value is PersistedChronicleOutboxEvent {
+function isPersistedChronicleOutboxEvent(value: unknown, userId?: string): value is PersistedChronicleOutboxEvent {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, ['eventId', 'eventKey', 'type', 'occurredAt', 'subject', 'data'])) return false
-  if (typeof value.eventId !== 'string' || !/^[a-f0-9]{64}$/.test(value.eventId) || typeof value.eventKey !== 'string' || !value.eventKey
+  if (typeof value.eventId !== 'string' || !/^[a-f0-9]{64}$/.test(value.eventId) || (userId !== undefined && value.eventId !== eventIdFor(userId, String(value.eventKey))) || typeof value.eventKey !== 'string' || !value.eventKey
     || !['visitor_arrived', 'expedition_started', 'expedition_resolved', 'item_found', 'item_custody_changed', 'visitor_died', 'visitor_departed'].includes(String(value.type))
     || typeof value.occurredAt !== 'string' || !Number.isFinite(Date.parse(value.occurredAt))) return false
   const subject = value.subject
@@ -1275,7 +1296,7 @@ export function isPersistedCanonical(
   ])) return false
 
   if (!isPersistedCaravanV2(candidate.caravanV2) || !Array.isArray(candidate.chronicleOutbox) || candidate.chronicleOutbox.length > 100
-    || !candidate.chronicleOutbox.every(isPersistedChronicleOutboxEvent)) return false
+    || !candidate.chronicleOutbox.every((event) => isPersistedChronicleOutboxEvent(event))) return false
 
   const stash = (document as { stash?: unknown }).stash
   const itemsById = (document as { itemsById?: Record<string, Item> }).itemsById
@@ -1292,6 +1313,7 @@ export function isPersistedCanonical(
   if (candidate.schemaVersion !== SAVE_SCHEMA_VERSION) return false
   if (!Array.isArray(stash) || !isPlainRecord(itemsById) || !isPlainRecord(itemPlacements)) return false
   if (typeof candidate.userId !== 'string' || !candidate.userId) return false
+  if (!(candidate.chronicleOutbox as unknown[]).every((event) => isPersistedChronicleOutboxEvent(event, candidate.userId as string))) return false
   if (!Number.isInteger(candidate.gold) || Number(candidate.gold) < 0 || !isResourceMap(candidate.materials)) return false
   if (!Number.isInteger(candidate.stashLimit) || Number(candidate.stashLimit) < 0) return false
   if (!Array.isArray(candidate.unlockedRegionIds) || !candidate.unlockedRegionIds.every((id) => typeof id === 'string' && Boolean(id))) return false
@@ -1314,13 +1336,15 @@ export function isPersistedCanonical(
   const visitorContracts = new Map(visitors.map((visitor) => [visitor.id, visitor.commission?.id]))
   const cycle = candidate.visitorCycle as PersistedVisitorCycle
   const pendingReservations = new Set(Object.values(cycle.settlements)
-    .filter((settlement) => settlement.state === 'preview_ready' && settlement.rewardItemIds.length > 0)
+    .filter((settlement) => settlement.state === 'preview_ready' && settlement.rewardItemIds.some((itemId) => itemPlacements[itemId]?.ownerKind !== 'caravan'))
     .map((settlement) => `settlement:${settlement.settlementId}`))
   for (const [key, reservation] of Object.entries((candidate.caravanV2 as PersistedCaravanV2).capacityReservations)) {
     const settlement = cycle.settlements[reservation.sourceId]
+    const slots = settlement?.rewardItemIds.filter((itemId) => itemPlacements[itemId]?.ownerKind !== 'caravan').length ?? 0
     if (!pendingReservations.has(key) || !settlement || settlement.state !== 'preview_ready'
-      || settlement.rewardItemIds.length !== reservation.slots || reservation.sourceId !== key.slice('settlement:'.length)) return false
+      || slots !== reservation.slots || reservation.sourceId !== key.slice('settlement:'.length)) return false
   }
+  if (Object.keys((candidate.caravanV2 as PersistedCaravanV2).capacityReservations).length !== pendingReservations.size) return false
   const cycleExpeditionIds = new Set(Object.keys(cycle.expeditions))
   if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
   if (!isItemV2Map(itemV2ById) || !isServiceJobStateMap(serviceJobStateById)) return false

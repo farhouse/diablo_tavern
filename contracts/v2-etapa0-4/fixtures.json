@@ -981,6 +981,7 @@
       "id": "integrated-contract",
       "schema": "GameView",
       "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
         "contractVersion": "v2-etapa0-3",
         "labelCatalogVersion": "es-AR-v1",
         "revision": 10,
@@ -1082,6 +1083,7 @@
       "id": "integrated-expedition",
       "schema": "GameView",
       "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
         "contractVersion": "v2-etapa0-3",
         "labelCatalogVersion": "es-AR-v1",
         "revision": 10,
@@ -1136,6 +1138,7 @@
       "id": "integrated-system",
       "schema": "GameView",
       "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
         "contractVersion": "v2-etapa0-3",
         "labelCatalogVersion": "es-AR-v1",
         "revision": 10,
@@ -1203,6 +1206,7 @@
       "id": "integrated-settlement",
       "schema": "GameView",
       "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
         "contractVersion": "v2-etapa0-3",
         "labelCatalogVersion": "es-AR-v1",
         "revision": 10,
@@ -1387,6 +1391,7 @@
       "id": "integrated-recovery",
       "schema": "GameView",
       "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
         "contractVersion": "v2-etapa0-3",
         "labelCatalogVersion": "es-AR-v1",
         "revision": 10,
@@ -1564,6 +1569,7 @@
       "id": "integrated-trade",
       "schema": "GameView",
       "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
         "contractVersion": "v2-etapa0-3",
         "labelCatalogVersion": "es-AR-v1",
         "revision": 10,
@@ -1705,6 +1711,7 @@
       "id": "integrated-services",
       "schema": "GameView",
       "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
         "contractVersion": "v2-etapa0-3",
         "labelCatalogVersion": "es-AR-v1",
         "revision": 10,
@@ -1840,6 +1847,7 @@
       "id": "integrated-destructive",
       "schema": "GameView",
       "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
         "contractVersion": "v2-etapa0-3",
         "labelCatalogVersion": "es-AR-v1",
         "revision": 10,
