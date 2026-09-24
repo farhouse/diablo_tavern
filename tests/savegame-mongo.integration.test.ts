@@ -27,6 +27,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     repositoryCollection = collection
     chronicleCollection = client.db('diablo_tavern_alta43_integration').collection('chronicleEvents')
     await collection.createIndex({ userId: 1 }, { unique: true, name: 'userId_unique' })
+    await chronicleCollection.createIndex({ userId: 1, eventId: 1 }, { unique: true, name: 'userId_eventId_unique' })
+    await chronicleCollection.createIndex({ userId: 1, occurredAt: -1, eventId: -1 }, { name: 'userId_occurredAt_eventId' })
     await collection.deleteMany({ userId: { $in: userIds } })
     await chronicleCollection.deleteMany({ userId: { $in: userIds } })
   })
@@ -820,26 +822,58 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
   })
 
   it('covers concurrent reconcile, upgrade replay, and outbox repair against real MongoDB', async () => {
-    const { getPersistedGameV3, mutateCaravanUpgradeAtomic, mutateVisitorCycleAtomic, reconcilePersistedGameV3 } = await import('../server/utils/savegame')
+    const { getPersistedGameV3, mutateCaravanUpgradeAtomic, mutateVisitorCycleAtomic, reconcilePersistedGameV3, RevisionConflictError } = await import('../server/utils/savegame')
     const { caravanUpgradeToken } = await import('../server/domain/caravan-v2')
-    const { projectChronicleOutbox } = await import('../server/domain/chronicle')
+    const { listChronicle, projectChronicleOutbox } = await import('../server/domain/chronicle')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const initial = await getPersistedGameV3(userIds[30]!)
     initial.gold = 2000
     initial.materials.scrap = 100
+    initial.caravanV2.upgrades.blacksmith = 1
+    initial.caravanV2.serviceUnlockedAt.blacksmith = '2026-08-01T00:00:00.000Z'
+    initial.caravanV2.maintenance.accountedThroughPeriodKey = '2026-W30'
     initial.caravanV2.maintenance.debts = []
-    initial.chronicleOutbox = [{ eventId: eventIdFor(initial.userId, 'visitor:mongo:arrived'), eventKey: 'visitor:mongo:arrived', type: 'visitor_arrived', occurredAt: initial.updatedAt, subject: { kind: 'visitor', id: 'mongo' }, data: {} }]
+    initial.chronicleOutbox = ['arrived', 'departed', 'died'].map((suffix) => ({
+      eventId: eventIdFor(initial.userId, `visitor:mongo:${suffix}`), eventKey: `visitor:mongo:${suffix}`, type: `visitor_${suffix}` as 'visitor_arrived', occurredAt: initial.updatedAt,
+      subject: { kind: 'visitor' as const, id: `mongo-${suffix}` }, data: {}
+    }))
     await collection.replaceOne({ userId: userIds[30] }, initial)
     const reconcileResults = await Promise.allSettled([
       mutateVisitorCycleAtomic(userIds[30]!, 'mongo-maint-a', 0, { action: 'reconcile_game' }, 'reconcile:mongo-maint-a', mapPersistedGameToGameView),
       mutateVisitorCycleAtomic(userIds[30]!, 'mongo-maint-b', 0, { action: 'reconcile_game' }, 'reconcile:mongo-maint-b', mapPersistedGameToGameView)
     ])
     expect(reconcileResults.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
-    expect(reconcileResults.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    const rejectedReconcile = reconcileResults.find((result) => result.status === 'rejected') as PromiseRejectedResult
+    expect(rejectedReconcile.reason).toBeInstanceOf(RevisionConflictError)
     const repaired = await getPersistedGameV3(userIds[30]!)
     expect(repaired.revision).toBe(1)
     expect(repaired.chronicleOutbox).toHaveLength(0)
-    expect(await chronicleCollection.countDocuments({ userId: userIds[30] })).toBeGreaterThanOrEqual(1)
+    expect(repaired.gold).toBeLessThan(2000)
+    expect(Object.keys(repaired.businessKeys).some((key) => key.startsWith('maintenance:assessed:'))).toBe(true)
+    expect(await chronicleCollection.countDocuments({ userId: userIds[30] })).toBe(3)
+    expect(await chronicleCollection.indexExists('userId_eventId_unique')).toBe(true)
+    expect(await chronicleCollection.indexExists('userId_occurredAt_eventId')).toBe(true)
+    const firstPage = await listChronicle(userIds[30]!, undefined, 2)
+    expect(firstPage.entries).toHaveLength(2)
+    expect(firstPage.nextCursor).toBeTruthy()
+    const secondPage = await listChronicle(userIds[30]!, firstPage.nextCursor!, 2)
+    expect(secondPage.entries).toHaveLength(1)
+    expect(new Set([...firstPage.entries, ...secondPage.entries].map((entry) => entry.eventId)).size).toBe(3)
+
+    const postCas = await getPersistedGameV3(userIds[30]!)
+    postCas.chronicleOutbox = [{ eventId: eventIdFor(postCas.userId, 'visitor:post-cas:arrived'), eventKey: 'visitor:post-cas:arrived', type: 'visitor_arrived', occurredAt: postCas.updatedAt, subject: { kind: 'visitor', id: 'post-cas' }, data: {} }]
+    await collection.replaceOne({ userId: userIds[30] }, postCas)
+    const updateOne = chronicleCollection.updateOne.bind(chronicleCollection)
+    let failProjection = true
+    chronicleCollection.updateOne = (async (...args: Parameters<typeof chronicleCollection.updateOne>) => {
+      if (failProjection) { failProjection = false; throw new Error('simulated post-CAS projection failure') }
+      return updateOne(...args)
+    }) as typeof chronicleCollection.updateOne
+    const postCasBefore = await getPersistedGameV3(userIds[30]!)
+    await mutateVisitorCycleAtomic(userIds[30]!, 'mongo-post-cas', postCasBefore.revision, { action: 'reconcile_game' }, 'reconcile:mongo-post-cas', mapPersistedGameToGameView)
+    expect((await getPersistedGameV3(userIds[30]!)).chronicleOutbox).toHaveLength(1)
+    await projectChronicleOutbox(userIds[30]!)
+    expect((await getPersistedGameV3(userIds[30]!)).chronicleOutbox).toHaveLength(0)
 
     const upgradeBase = await getPersistedGameV3(userIds[30]!)
     const expiresAt = new Date(Date.parse(upgradeBase.updatedAt) + 60_000).toISOString()
@@ -871,6 +905,18 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const optionId = caravanUpgradeToken(stored, 'blacksmith', 1, expiresAt)
     await expect(mutateCaravanUpgradeAtomic(userIds[31]!, 'mongo-cap', stored.revision, optionId, (game) => game as never)).resolves.toMatchObject({ requestId: 'mongo-cap' })
     expect(await chronicleCollection.countDocuments({ userId: userIds[31] })).toBe(100)
+
+    const reservationUser = userIds[32]!
+    const reservationGame = await getPersistedGameV3(reservationUser)
+    reservationGame.caravanV2.capacityReservations = {
+      'settlement:corrupt': {
+        reservationId: 'settlement:corrupt', sourceKind: 'settlement', sourceId: 'corrupt', slots: 1, createdAt: reservationGame.createdAt
+      }
+    }
+    await collection.replaceOne({ userId: reservationUser }, reservationGame)
+    const repairedReservation = await getPersistedGameV3(reservationUser)
+    expect(repairedReservation.caravanV2.capacityReservations).toEqual({})
+    expect((await collection.findOne({ userId: reservationUser }))?.caravanV2).toMatchObject({ capacityReservations: {} })
   })
 })
 

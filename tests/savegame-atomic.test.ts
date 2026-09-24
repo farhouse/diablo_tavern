@@ -721,6 +721,17 @@ describe('atomic persisted-game mutation', () => {
     await expect(getSaveGame('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
 
+  it.each(['visitorCycle', 'caravanV2', 'chronicleOutbox'] as const)('does not repair corrupt %s while repairing reservations', async (field) => {
+    const { getPersistedGameV3, getSaveGame, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3('atomic-user')
+    const corrupt = structuredClone(initial) as PersistedGameV3 & Record<string, unknown>
+    ;(corrupt as Record<string, unknown>)[field] = field === 'chronicleOutbox' ? { lost: 'events' } : null
+    document = corrupt
+
+    await expect(getSaveGame('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(document).toEqual(corrupt)
+  })
+
   it('applies V2 identification through the persisted aggregate without rerolling sealed affixes', async () => {
     const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')

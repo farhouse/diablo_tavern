@@ -938,6 +938,11 @@ function backfillPersistedV3(document: PersistedDbDocument, now = new Date()): P
   const serviceJobStateMap = (document as { serviceJobStateById?: unknown }).serviceJobStateById
   if ((!missingItemV2Map && !isItemV2Map(itemV2Map))
     || (!missingServiceJobStateMap && !isServiceJobStateMap(serviceJobStateMap))) return undefined
+  if (Object.prototype.hasOwnProperty.call(document, 'visitorCycle') && !isVisitorCycle(document.visitorCycle)) return undefined
+  if (Object.prototype.hasOwnProperty.call(document, 'caravanV2') && !isPersistedCaravanV2(document.caravanV2)) return undefined
+  if (Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')
+    && (!Array.isArray(document.chronicleOutbox)
+      || !document.chronicleOutbox.every((event) => isPersistedChronicleOutboxEvent(event, document.userId)))) return undefined
   if (missingV2Maps) {
     const original = structuredClone(document) as PersistedGameV3
     if (Object.prototype.hasOwnProperty.call(document, '_id')) {
@@ -953,22 +958,30 @@ function backfillPersistedV3(document: PersistedDbDocument, now = new Date()): P
       original.visitorCycle = createVisitorCycle(original)
     }
     const originalWithV2 = original as PersistedGameV3 & { caravanV2?: PersistedCaravanV2; chronicleOutbox?: PersistedChronicleOutboxEvent[] }
-    if (!originalWithV2.caravanV2) originalWithV2.caravanV2 = createCaravanV2(now, true)
-    if (!originalWithV2.chronicleOutbox) originalWithV2.chronicleOutbox = []
+    if (!Object.prototype.hasOwnProperty.call(originalWithV2, 'caravanV2')) originalWithV2.caravanV2 = createCaravanV2(now, true)
+    if (!Object.prototype.hasOwnProperty.call(originalWithV2, 'chronicleOutbox')) originalWithV2.chronicleOutbox = []
+    if (!isPersistedCanonicalExceptReservations(original, { allowMissingHistoricalRewardV2: missingItemV2Map })) return undefined
     normalizePendingSettlementReservations(original)
     if (!isPersistedCanonical(original, { allowMissingHistoricalRewardV2: missingItemV2Map })) return undefined
     if (missingItemV2Map) backfillCommissionRewardV2State(original)
     return original
   }
+  if (!missingV2Maps
+    && !missingVisitorCycle
+    && Object.prototype.hasOwnProperty.call(document, 'caravanV2')
+    && Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')
+    && !isPersistedCanonicalExceptReservations(document)) return undefined
   const retained = backfillRetainedVisitorIdentity(document)
   if (retained || missingVisitorCycle || !Object.prototype.hasOwnProperty.call(document, 'caravanV2') || !Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')) {
-    const migrated = toPersistedGame((retained ?? document) as PersistedDbDocument)
+    const migrated = structuredClone((retained ?? document) as PersistedGameV3)
     if (!Object.prototype.hasOwnProperty.call(document, 'caravanV2')) migrated.caravanV2 = createCaravanV2(now, true)
     if (!Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')) migrated.chronicleOutbox = []
+    if (!isPersistedCanonicalExceptReservations(migrated)) return undefined
     normalizePendingSettlementReservations(migrated)
     return migrated
   }
-  const migrated = toPersistedGame(document)
+  const migrated = structuredClone(document) as unknown as PersistedGameV3
+  if (!isPersistedCanonicalExceptReservations(migrated)) return undefined
   normalizePendingSettlementReservations(migrated)
   return isPersistedCanonical(migrated) ? migrated : undefined
 }
@@ -987,6 +1000,17 @@ function normalizePendingSettlementReservations(game: PersistedGameV3): void {
       createdAt: settlement.createdAt
     }]
   }))
+}
+
+function isPersistedCanonicalExceptReservations(
+  document: unknown,
+  options: { allowMissingHistoricalRewardV2?: boolean } = {}
+): document is PersistedGameV3 {
+  if (!isPlainRecord(document) || !isPlainRecord(document.caravanV2)) return false
+  const candidate = structuredClone(document) as Record<string, unknown>
+  const caravanV2 = candidate.caravanV2 as Record<string, unknown>
+  caravanV2.capacityReservations = {}
+  return isPersistedCanonical(candidate, { ...options, skipReservationValidation: true })
 }
 
 function backfillCommissionRewardV2State(candidate: PersistedGameV3): void {
@@ -1283,7 +1307,7 @@ function isPersistedChronicleOutboxEvent(value: unknown, userId?: string): value
 
 export function isPersistedCanonical(
   document: unknown,
-  options: { allowMissingHistoricalRewardV2?: boolean } = {}
+  options: { allowMissingHistoricalRewardV2?: boolean; skipReservationValidation?: boolean } = {}
 ): document is PersistedGameV3 {
   if (!document || typeof document !== 'object') return false
 
@@ -1335,16 +1359,18 @@ export function isPersistedCanonical(
   if (visitorIds.size !== visitors.length) return false
   const visitorContracts = new Map(visitors.map((visitor) => [visitor.id, visitor.commission?.id]))
   const cycle = candidate.visitorCycle as PersistedVisitorCycle
-  const pendingReservations = new Set(Object.values(cycle.settlements)
-    .filter((settlement) => settlement.state === 'preview_ready' && settlement.rewardItemIds.some((itemId) => itemPlacements[itemId]?.ownerKind !== 'caravan'))
-    .map((settlement) => `settlement:${settlement.settlementId}`))
-  for (const [key, reservation] of Object.entries((candidate.caravanV2 as PersistedCaravanV2).capacityReservations)) {
-    const settlement = cycle.settlements[reservation.sourceId]
-    const slots = settlement?.rewardItemIds.filter((itemId) => itemPlacements[itemId]?.ownerKind !== 'caravan').length ?? 0
-    if (!pendingReservations.has(key) || !settlement || settlement.state !== 'preview_ready'
-      || slots !== reservation.slots || reservation.sourceId !== key.slice('settlement:'.length)) return false
+  if (!options.skipReservationValidation) {
+    const pendingReservations = new Set(Object.values(cycle.settlements)
+      .filter((settlement) => settlement.state === 'preview_ready' && settlement.rewardItemIds.some((itemId) => itemPlacements[itemId]?.ownerKind !== 'caravan'))
+      .map((settlement) => `settlement:${settlement.settlementId}`))
+    for (const [key, reservation] of Object.entries((candidate.caravanV2 as PersistedCaravanV2).capacityReservations)) {
+      const settlement = cycle.settlements[reservation.sourceId]
+      const slots = settlement?.rewardItemIds.filter((itemId) => itemPlacements[itemId]?.ownerKind !== 'caravan').length ?? 0
+      if (!pendingReservations.has(key) || !settlement || settlement.state !== 'preview_ready'
+        || slots !== reservation.slots || reservation.sourceId !== key.slice('settlement:'.length)) return false
+    }
+    if (Object.keys((candidate.caravanV2 as PersistedCaravanV2).capacityReservations).length !== pendingReservations.size) return false
   }
-  if (Object.keys((candidate.caravanV2 as PersistedCaravanV2).capacityReservations).length !== pendingReservations.size) return false
   const cycleExpeditionIds = new Set(Object.keys(cycle.expeditions))
   if (Object.values(containerMaps).some((value) => !isContainerMap(value))) return false
   if (!isItemV2Map(itemV2ById) || !isServiceJobStateMap(serviceJobStateById)) return false
