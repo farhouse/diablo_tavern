@@ -11,7 +11,7 @@ let collection: Collection
 let repositoryCollection: Collection
 let chronicleCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`, `${prefix}-caravan-concurrent`, `${prefix}-outbox-cap`, `${prefix}-reservation-repair`, `${prefix}-upgrade-replay`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`, `${prefix}-caravan-concurrent`, `${prefix}-outbox-cap`, `${prefix}-reservation-repair`, `${prefix}-upgrade-replay`, `${prefix}-retained-gold-absent`, `${prefix}-retained-gold-invalid`]
 const foreignChronicleUserId = `${userIds[30]}-other`
 const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
 const ORIGINAL_NUXT_JWT_SECRET = process.env.NUXT_JWT_SECRET
@@ -413,6 +413,22 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     await expect(getPersistedGameV3(userId)).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
 
+  it.each([
+    ['absent', userIds[34]!],
+    ['invalid', userIds[35]!]
+  ])('rejects retained backfill when unrelated gold is %s without writing', async (goldKind, userId) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const { retainedLifecycle } = await createLegacyRetainedLifecycle(userId)
+    const corrupt = structuredClone(retainedLifecycle) as unknown as Record<string, unknown>
+    if (goldKind === 'absent') delete corrupt.gold
+    else corrupt.gold = 'not-gold'
+    await collection.replaceOne({ userId }, corrupt)
+    const before = await collection.findOne({ userId })
+
+    await expect(getPersistedGameV3(userId)).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(await collection.findOne({ userId })).toEqual(before)
+  })
+
   it('converges concurrent backfill readers without changing aggregate identity or economics', async () => {
     const { getPersistedGameV3, isPersistedCanonical } = await import('../server/utils/savegame')
     const userId = userIds[16]!
@@ -773,7 +789,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
       const targetId = targetFor(operation)
       if (operation === 'loan') addExpedition(initial, targetId)
     }
-    enableMongoTestServices(initial)
+    if ([firstName, secondName].includes('service')) enableMongoTestServices(initial)
     await collection.replaceOne({ userId }, initial)
     const deps = fixedDeps()
     const serviceOption = [firstName, secondName].includes('service')
@@ -847,9 +863,10 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
       subject: { kind: 'visitor' as const, id: `mongo-${suffix}` }, data: {}
     }))
     await collection.replaceOne({ userId: userIds[30] }, initial)
+    const maintenanceDependencies = fixedDeps(new Date('2026-09-23T12:00:00.000Z'))
     const reconcileResults = await Promise.allSettled([
-      mutateVisitorCycleAtomic(userIds[30]!, 'mongo-maint-a', 0, { action: 'reconcile_game' }, 'reconcile:mongo-maint-a', mapPersistedGameToGameView),
-      mutateVisitorCycleAtomic(userIds[30]!, 'mongo-maint-b', 0, { action: 'reconcile_game' }, 'reconcile:mongo-maint-b', mapPersistedGameToGameView)
+      mutateVisitorCycleAtomic(userIds[30]!, 'mongo-maint-a', 0, { action: 'reconcile_game' }, 'reconcile:mongo-maint-a', mapPersistedGameToGameView, maintenanceDependencies),
+      mutateVisitorCycleAtomic(userIds[30]!, 'mongo-maint-b', 0, { action: 'reconcile_game' }, 'reconcile:mongo-maint-b', mapPersistedGameToGameView, maintenanceDependencies)
     ])
     expect(reconcileResults.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
     const rejectedReconcile = reconcileResults.find((result) => result.status === 'rejected') as PromiseRejectedResult

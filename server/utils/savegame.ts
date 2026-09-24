@@ -901,8 +901,11 @@ function upgradePersistedGame(document: PersistedDbDocument): PersistedGameV3 | 
 }
 
 function backfillRetainedVisitorIdentity(document: PersistedDbDocument): PersistedGameV3 | undefined {
-  const candidate = toPersistedGame(document)
-  const candidateRounds: unknown[] = [candidate.visitRound, ...(Array.isArray(candidate.visitHistory) ? candidate.visitHistory : [])]
+  if (!isPersistedCanonicalExceptReservations(document, { allowMissingRetainedVisitor: true })) return undefined
+  const source = toPersistedGame(document)
+  const candidate = structuredClone(document) as unknown as PersistedGameV3
+  delete (candidate as PersistedGameV3 & { _id?: unknown })._id
+  const candidateRounds: unknown[] = [source.visitRound, ...(Array.isArray(source.visitHistory) ? source.visitHistory : [])]
   const currentVisitors = candidateRounds.filter(isPersistedRound)
     .flatMap((round) => round?.slots?.flatMap((slot) => slot.visitor ? [slot.visitor] : []) ?? [])
   const currentVisitorIds = new Set(currentVisitors.map((visitor) => visitor.id))
@@ -915,7 +918,7 @@ function backfillRetainedVisitorIdentity(document: PersistedDbDocument): Persist
   })
   let changed = false
 
-  for (const expedition of Object.values(candidate.expeditionsById ?? {})) {
+  for (const expedition of Object.values(candidate.expeditionsById)) {
     const projection = expedition.projection
     if (projection?.kind !== 'expedition' || projection.retainedVisitor || currentVisitorIds.has(projection.visitorId)) continue
     const historical = replayVisitors.find((visitor) => visitor.id === projection.visitorId
@@ -1007,7 +1010,7 @@ function normalizePendingSettlementReservations(game: PersistedGameV3): void {
 
 function isPersistedCanonicalExceptReservations(
   document: unknown,
-  options: { allowMissingHistoricalRewardV2?: boolean } = {}
+  options: { allowMissingHistoricalRewardV2?: boolean; allowMissingRetainedVisitor?: boolean } = {}
 ): document is PersistedGameV3 {
   if (!isPlainRecord(document) || !isPlainRecord(document.caravanV2)) return false
   const candidate = structuredClone(document) as Record<string, unknown>
@@ -1310,7 +1313,7 @@ function isPersistedChronicleOutboxEvent(value: unknown, userId?: string): value
 
 export function isPersistedCanonical(
   document: unknown,
-  options: { allowMissingHistoricalRewardV2?: boolean; skipReservationValidation?: boolean } = {}
+  options: { allowMissingHistoricalRewardV2?: boolean; allowMissingRetainedVisitor?: boolean; skipReservationValidation?: boolean } = {}
 ): document is PersistedGameV3 {
   if (!document || typeof document !== 'object') return false
 
@@ -1390,7 +1393,8 @@ export function isPersistedCanonical(
       continue
     }
     if (!visitorIds.has(projection.visitorId)) {
-      if (!projection.retainedVisitor
+      if (options.allowMissingRetainedVisitor && !projection.retainedVisitor) continue
+      if (!projection.retainedVisitor && !options.allowMissingRetainedVisitor
         || !hasRetainedExpeditionDependency(container, settlements, recoveries)) return false
       continue
     }
