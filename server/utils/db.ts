@@ -41,7 +41,7 @@ export async function chronicleEventsCollection(): Promise<Collection<DbChronicl
   return (await getDb()).collection<DbChronicleEvent>('chronicleEvents')
 }
 
-async function ensureIndexes(database: Db) {
+export async function ensureIndexes(database: Db) {
   await database.collection<User>('users').createIndex({ email: 1 }, { unique: true })
   await database.collection<DbSaveGame>('savegames').createIndex({ userId: 1 }, { unique: true })
   await database.collection<DbChronicleEvent>('chronicleEvents').createIndex({ userId: 1, eventId: 1 }, { unique: true })

@@ -26,9 +26,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     collection = client.db('diablo_tavern_alta43_integration').collection('savegames')
     repositoryCollection = collection
     chronicleCollection = client.db('diablo_tavern_alta43_integration').collection('chronicleEvents')
-    await collection.createIndex({ userId: 1 }, { unique: true, name: 'userId_unique' })
-    await chronicleCollection.createIndex({ userId: 1, eventId: 1 }, { unique: true, name: 'userId_eventId_unique' })
-    await chronicleCollection.createIndex({ userId: 1, occurredAt: -1, eventId: -1 }, { name: 'userId_occurredAt_eventId' })
+    const { ensureIndexes } = await vi.importActual<typeof import('../server/utils/db')>('../server/utils/db')
+    await ensureIndexes(client.db('diablo_tavern_alta43_integration'))
     await collection.deleteMany({ userId: { $in: userIds } })
     await chronicleCollection.deleteMany({ userId: { $in: userIds } })
   })
@@ -829,8 +828,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const initial = await getPersistedGameV3(userIds[30]!)
     initial.gold = 2000
     initial.materials.scrap = 100
-    initial.caravanV2.upgrades.blacksmith = 1
-    initial.caravanV2.serviceUnlockedAt.blacksmith = '2026-08-01T00:00:00.000Z'
+    initial.caravanV2.upgrades.blacksmith = 0
+    delete initial.caravanV2.serviceUnlockedAt.blacksmith
     initial.caravanV2.maintenance.accountedThroughPeriodKey = '2026-W30'
     initial.caravanV2.maintenance.debts = []
     initial.chronicleOutbox = ['arrived', 'departed', 'died'].map((suffix) => ({
@@ -850,15 +849,37 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(repaired.chronicleOutbox).toHaveLength(0)
     expect(repaired.gold).toBeLessThan(2000)
     expect(Object.keys(repaired.businessKeys).some((key) => key.startsWith('maintenance:assessed:'))).toBe(true)
-    expect(await chronicleCollection.countDocuments({ userId: userIds[30] })).toBe(3)
-    expect(await chronicleCollection.indexExists('userId_eventId_unique')).toBe(true)
-    expect(await chronicleCollection.indexExists('userId_occurredAt_eventId')).toBe(true)
+    const indexes = await chronicleCollection.listIndexes().toArray()
+    const uniqueIndex = indexes.find((index) => JSON.stringify(index.key) === JSON.stringify({ userId: 1, eventId: 1 }))
+    const queryIndex = indexes.find((index) => JSON.stringify(index.key) === JSON.stringify({ userId: 1, occurredAt: -1, eventId: -1 }))
+    expect(uniqueIndex).toMatchObject({ key: { userId: 1, eventId: 1 }, unique: true })
+    expect(queryIndex).toMatchObject({ key: { userId: 1, occurredAt: -1, eventId: -1 } })
+    expect(queryIndex).not.toHaveProperty('expireAfterSeconds')
+
+    await chronicleCollection.deleteMany({ userId: userIds[30] })
+    const chronicleSeed = [
+      { eventKey: 'visitor:chronicle-a:arrived', occurredAt: '2026-08-02T00:00:00.000Z', subjectId: 'chronicle-a' },
+      { eventKey: 'visitor:chronicle-b:departed', occurredAt: '2026-08-02T00:00:00.000Z', subjectId: 'chronicle-b' },
+      { eventKey: 'item:chronicle-c:found:loot', occurredAt: '2026-08-01T00:00:00.000Z', subjectId: 'chronicle-c' },
+      { eventKey: 'visitor:chronicle-d:died', occurredAt: '2026-07-31T00:00:00.000Z', subjectId: 'chronicle-d' }
+    ] as const
+    await chronicleCollection.insertMany([
+      ...chronicleSeed.map((event) => ({
+        userId: userIds[30], eventId: eventIdFor(userIds[30]!, event.eventKey), eventKey: event.eventKey,
+        type: event.eventKey.startsWith('item:') ? 'item_found' : `visitor_${event.eventKey.split(':')[2]}`,
+        occurredAt: event.occurredAt, subject: { kind: event.eventKey.startsWith('item:') ? 'item' : 'visitor', id: event.subjectId }, data: {}
+      })),
+      { userId: `${userIds[30]}-other`, eventId: eventIdFor(`${userIds[30]}-other`, 'visitor:foreign:arrived'), eventKey: 'visitor:foreign:arrived', type: 'visitor_arrived', occurredAt: '2026-12-01T00:00:00.000Z', subject: { kind: 'visitor', id: 'foreign' }, data: {} }
+    ] as never)
+    const expectedChronicleOrder = [...chronicleSeed].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || eventIdFor(userIds[30]!, b.eventKey).localeCompare(eventIdFor(userIds[30]!, a.eventKey)))
     const firstPage = await listChronicle(userIds[30]!, undefined, 2)
-    expect(firstPage.entries).toHaveLength(2)
+    expect(firstPage.entries.map((entry) => entry.eventId)).toEqual(expectedChronicleOrder.slice(0, 2).map((event) => eventIdFor(userIds[30]!, event.eventKey)))
     expect(firstPage.nextCursor).toBeTruthy()
     const secondPage = await listChronicle(userIds[30]!, firstPage.nextCursor!, 2)
-    expect(secondPage.entries).toHaveLength(1)
-    expect(new Set([...firstPage.entries, ...secondPage.entries].map((entry) => entry.eventId)).size).toBe(3)
+    expect(secondPage.entries.map((entry) => entry.eventId)).toEqual(expectedChronicleOrder.slice(2).map((event) => eventIdFor(userIds[30]!, event.eventKey)))
+    expect(secondPage.nextCursor).toBeNull()
+    expect([...firstPage.entries, ...secondPage.entries]).toHaveLength(4)
+    expect([...firstPage.entries, ...secondPage.entries].every((entry) => entry.subject.id !== 'foreign')).toBe(true)
 
     const postCas = await getPersistedGameV3(userIds[30]!)
     postCas.chronicleOutbox = [{ eventId: eventIdFor(postCas.userId, 'visitor:post-cas:arrived'), eventKey: 'visitor:post-cas:arrived', type: 'visitor_arrived', occurredAt: postCas.updatedAt, subject: { kind: 'visitor', id: 'post-cas' }, data: {} }]
