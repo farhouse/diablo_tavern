@@ -1,5 +1,6 @@
 <template>
   <div class="equipment-v2">
+    <div ref="content" :inert="Boolean(confirmation)">
     <div v-if="loadState === 'loading' && !game" class="equipment-state" aria-busy="true">Cargando inventario confirmado…</div>
     <div v-else-if="!game" class="equipment-state" role="alert">
       <h2>No hay inventario disponible</h2>
@@ -34,7 +35,10 @@
             <ul v-if="item.identification === 'identified'" class="affixes"><li v-for="affix in item.affixes" :key="affix.affixId">{{ affix.name.fallback }} {{ affix.valueText.fallback }}</li><li v-if="item.activeImprint">Impronta: {{ item.activeImprint.name.fallback }}</li></ul>
             <p v-else class="unidentified">Los afijos están ocultos hasta identificar.</p>
             <div class="item-actions">
-              <button v-for="action in item.actions" :key="action.authorizationId" class="btn" :disabled="!action.enabled || operationState === 'pending' || operationState === 'uncertain'" @click="choose(item.itemId, action)">{{ action.label.fallback }}</button>
+              <span v-for="action in item.actions" :key="action.authorizationId" class="action-control">
+                <button :id="`action-${action.authorizationId}`" class="btn" :disabled="!action.enabled || operationState === 'pending' || operationState === 'uncertain' || snapshotStale" :aria-describedby="!action.enabled ? `reason-${action.authorizationId}` : undefined" @click="choose(item.itemId, action, $event)">{{ action.label.fallback }}</button>
+                <span v-if="!action.enabled" :id="`reason-${action.authorizationId}`" class="action-reason">{{ action.reasonText.fallback }}</span>
+              </span>
             </div>
           </article>
         </div>
@@ -42,35 +46,66 @@
 
       <section class="jobs" aria-labelledby="jobs-title"><div class="section-title"><h2 id="jobs-title">Trabajos de servicio</h2><span class="muted">El servidor decide cuándo terminan</span></div><div v-if="!game.serviceJobs.length" class="card"><p class="muted">No hay trabajos en curso.</p></div><ul v-else class="job-list"><li v-for="job in game.serviceJobs" :key="job.jobId"><strong>{{ job.service === 'blacksmith' ? 'Herrero' : 'Encantador' }}</strong><span>{{ job.state }}</span><time>{{ jobTime(job) }}</time></li></ul></section>
     </template>
+    </div>
 
-    <div v-if="confirmation" class="confirm-backdrop" role="presentation" @click.self="confirmation = null"><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title"><h2 id="confirm-title">{{ confirmation.action.label.fallback }}</h2><p>{{ confirmation.option.description.fallback }}</p><ul><li v-for="consequence in confirmation.option.consequences" :key="consequence.text.key">{{ consequence.text.fallback }}</li></ul><div class="item-actions"><button class="btn ghost" type="button" @click="confirmation = null">Cancelar</button><button class="btn primary" type="button" @click="confirm">Confirmar</button></div></section></div>
+    <div v-if="confirmation" class="confirm-backdrop" role="presentation" @click.self="closeConfirmation">
+      <section ref="dialog" class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" tabindex="-1" @keydown="trapFocus" @keydown.esc="closeConfirmation">
+        <h2 id="confirm-title">{{ confirmation.action.label.fallback }}</h2><p>{{ confirmation.option.description.fallback }}</p>
+        <ul><li v-for="consequence in confirmation.option.consequences" :key="consequence.text.key">{{ consequence.text.fallback }}</li></ul>
+        <div class="item-actions"><button ref="cancelButton" class="btn ghost" type="button" @click="closeConfirmation">Cancelar</button><button class="btn primary" type="button" @click="confirm">Confirmar</button></div>
+      </section>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ActionAvailability, GameView, ItemView, ServiceJobView } from '~/shared/types/v2-game-view'
 import { selectionFor, type EquipmentAction, type EquipmentEnabledAction, type EquipmentSelection } from '~/utils/v2-equipment-adapter'
 
 const props = defineProps<{ game: GameView | null; loadState: string; operationState: string; errorMessage: string; unavailableReason: string; snapshotStale: boolean }>()
 const emit = defineEmits<{ reload: []; retry: []; action: [selection: EquipmentSelection] }>()
-const confirmation = ref<{ itemId: string; action: EquipmentEnabledAction; option: { optionId: string; description: { fallback: string }; consequences: Array<{ text: { key: string; fallback: string } }>; acknowledgement?: { acknowledgementId: string } } } | null>(null)
+const dialog = ref<HTMLElement | null>(null)
+const cancelButton = ref<HTMLButtonElement | null>(null)
+const trigger = ref<HTMLElement | null>(null)
+const confirmation = ref<{ revision: number; itemId: string; action: EquipmentEnabledAction; option: { optionId: string; description: { fallback: string }; consequences: Array<{ text: { key: string; fallback: string } }>; acknowledgement?: { acknowledgementId: string } } } | null>(null)
 const statusCopy = computed(() => props.errorMessage || (props.operationState === 'pending' ? 'Orden enviada; esperando snapshot confirmado…' : props.unavailableReason ? `La acción está bloqueada: ${props.unavailableReason}.` : 'Revisá el estado publicado.'))
 
-function choose(itemId: string, action: ActionAvailability) {
+watch(() => props.game, (game) => {
+  if (!confirmation.value || !game || confirmation.value.revision !== game.revision || !selectionFor(game, confirmation.value.itemId, confirmation.value.action.action as EquipmentAction, confirmation.value.option.optionId, confirmation.value.option.acknowledgement?.acknowledgementId)) closeConfirmation()
+})
+watch(() => props.snapshotStale, (stale) => { if (stale) closeConfirmation() })
+watch(confirmation, async (value) => { if (value) { await nextTick(); cancelButton.value?.focus() } })
+
+function choose(itemId: string, action: ActionAvailability, event?: Event) {
   if (!action.enabled || !['identify_item', 'queue_blacksmith_job', 'queue_enchanter_job', 'dismantle_item', 'replace_boss_imprint'].includes(action.action)) return
   const equipmentAction = action as EquipmentEnabledAction
   const option = equipmentAction.execution.options[0]
   if (!props.game || !option) return
-  if ('acknowledgement' in option) confirmation.value = { itemId, action: equipmentAction, option }
+  if ('acknowledgement' in option) {
+    trigger.value = event?.currentTarget instanceof HTMLElement ? event.currentTarget : document.activeElement instanceof HTMLElement ? document.activeElement : null
+    confirmation.value = { revision: props.game.revision, itemId, action: equipmentAction, option }
+  }
   else submit(itemId, equipmentAction, option.optionId)
 }
 function confirm() {
   if (!confirmation.value) return
-  const { itemId, action, option } = confirmation.value
+  const { itemId, action, option, revision } = confirmation.value
+  if (!props.game || props.game.revision !== revision) return closeConfirmation()
   submit(itemId, action, option.optionId, option.acknowledgement?.acknowledgementId)
-  confirmation.value = null
+  closeConfirmation()
 }
+function closeConfirmation() { confirmation.value = null; nextTick(() => trigger.value?.focus()) }
+function trapFocus(event: KeyboardEvent) {
+  if (event.key !== 'Tab') return
+  const focusable = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+  if (!focusable.length) return
+  const first = focusable[0]!
+  const last = focusable[focusable.length - 1]!
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+}
+onBeforeUnmount(() => { confirmation.value = null })
 function submit(itemId: string, action: EquipmentEnabledAction, optionId: string, acknowledgementId?: string) {
   if (!props.game) return
   const selection = selectionFor(props.game, itemId, action.action as EquipmentAction, optionId, acknowledgementId)
@@ -97,6 +132,8 @@ function jobTime(job: ServiceJobView) { return 'completesAt' in job ? new Date(j
 .item-topline { justify-content: space-between; }
 .item-actions { margin-top: auto; padding-top: .5rem; }
 .item-actions .btn { min-height: 2.75rem; }
+.action-control { display: grid; gap: .2rem; min-width: 0; }
+.action-reason { color: var(--muted); font-size: .8rem; max-width: 18rem; }
 .affixes { color: var(--ok); margin: 0; padding-left: 1.1rem; }
 .unidentified { color: var(--muted); font-style: italic; }
 .blockers { display: flex; flex-wrap: wrap; gap: .5rem 1rem; border-color: var(--accent-2); }

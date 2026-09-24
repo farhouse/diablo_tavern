@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import fixtures from '../contracts/v2-etapa0-3/fixtures.json'
 import type { GameView } from '../shared/types/v2-game-view'
 import { useGameV2Store } from '../stores/game-v2'
+import { selectionFor } from '../utils/v2-equipment-adapter'
 
 const hydrate = vi.fn()
 const refresh = vi.fn()
@@ -202,6 +203,50 @@ describe('game V2 store', () => {
     expect(store.game).toEqual(initial)
     expect(store.operationState).toBe('unavailable')
     expect(store.unavailableReason).toBe('RECOVERY_LIMIT_REACHED')
+  })
+
+  it('keeps equipment state unchanged while pending and retries the exact sealed command', async () => {
+    const store = useGameV2Store()
+    const game = fixture('integrated-destructive')
+    const item = game.items.find((entry) => entry.actions.some((action) => action.action === 'dismantle_item' && action.enabled))
+    const action = item?.actions.find((entry) => entry.action === 'dismantle_item' && entry.enabled)
+    if (!item || !action || !action.enabled || action.action !== 'dismantle_item') throw new Error('Expected irreversible equipment authorization')
+    const option = action.execution.options[0]
+    if (!option || !('acknowledgement' in option)) throw new Error('Expected acknowledgement token')
+    const selection = selectionFor(game, item.itemId, action.action, option.optionId, option.acknowledgement.acknowledgementId)
+    if (!selection) throw new Error('Expected sealed equipment selection')
+    store.applySnapshot(game)
+    const before = JSON.parse(JSON.stringify(store.game))
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(apiError({ code: 'uncertain', retryable: true, requestId: 'same' }))
+      .mockResolvedValueOnce(game)
+    vi.stubGlobal('$fetch', fetchMock)
+
+    await store.runEquipmentAction(selection)
+    expect(store.game).toEqual(before)
+    expect(store.operationState).toBe('uncertain')
+    const firstBody = structuredClone(fetchMock.mock.calls[0]?.[1]?.body)
+    await store.retryEquipmentUncertain()
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toEqual(firstBody)
+    expect(store.operationState).toBe('idle')
+  })
+
+  it('rejects equipment actions from an old revision without posting', async () => {
+    const store = useGameV2Store()
+    const game = fixture('integrated-services')
+    const item = game.items[0]
+    if (!item) throw new Error('Expected equipment item')
+    const action = item.actions.find((entry) => entry.enabled && entry.action === 'identify_item')
+    if (!action || !action.enabled || action.action !== 'identify_item') throw new Error('Expected identify authorization')
+    const option = action.execution.options[0]
+    if (!option) throw new Error('Expected identify option')
+    store.applySnapshot(game)
+    const fetchMock = vi.fn()
+    vi.stubGlobal('$fetch', fetchMock)
+    const accepted = await store.runEquipmentAction({ itemId: item.itemId, action: action.action, optionId: option.optionId, revision: game.revision - 1 })
+    expect(accepted).toBe(false)
+    expect(store.equipmentSelection).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('accepts only the closed public error union and hides non-public details', async () => {

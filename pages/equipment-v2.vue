@@ -12,5 +12,8 @@ import { useGameV2Store } from '~/stores/game-v2'
 
 const gameV2 = useGameV2Store()
 onMounted(() => { if (!gameV2.game) void gameV2.load() })
-async function reload() { await gameV2.load() }
+async function reload() {
+  if (gameV2.snapshotStale) await gameV2.retryConflictReload()
+  else await gameV2.load()
+}
 </script>
