@@ -11,7 +11,7 @@ let collection: Collection
 let repositoryCollection: Collection
 let chronicleCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`, `${prefix}-caravan-concurrent`, `${prefix}-outbox-cap`, `${prefix}-reservation-repair`, `${prefix}-upgrade-replay`, `${prefix}-retained-gold-absent`, `${prefix}-retained-gold-invalid`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`, `${prefix}-caravan-concurrent`, `${prefix}-outbox-cap`, `${prefix}-reservation-repair`, `${prefix}-upgrade-replay`, `${prefix}-retained-gold-absent`, `${prefix}-retained-gold-invalid`, `${prefix}-retained-reservation-corrupt`]
 const foreignChronicleUserId = `${userIds[30]}-other`
 const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
 const ORIGINAL_NUXT_JWT_SECRET = process.env.NUXT_JWT_SECRET
@@ -423,6 +423,23 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     if (goldKind === 'absent') delete corrupt.gold
     else corrupt.gold = 'not-gold'
     await collection.replaceOne({ userId }, corrupt)
+    const before = await collection.findOne({ userId })
+
+    await expect(getPersistedGameV3(userId)).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(await collection.findOne({ userId })).toEqual(before)
+  })
+
+  it('rejects retained backfill with inconsistent reservations without writing', async () => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const userId = userIds[36]!
+    const { retainedLifecycle } = await createLegacyRetainedLifecycle(userId)
+    retainedLifecycle.caravanV2.capacityReservations = {
+      'settlement:spurious': {
+        reservationId: 'settlement:spurious', sourceKind: 'settlement', sourceId: 'spurious', slots: 1,
+        createdAt: retainedLifecycle.createdAt
+      }
+    }
+    await collection.replaceOne({ userId }, retainedLifecycle)
     const before = await collection.findOne({ userId })
 
     await expect(getPersistedGameV3(userId)).rejects.toBeInstanceOf(PersistedGameCorruptError)

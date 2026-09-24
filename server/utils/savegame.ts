@@ -901,7 +901,7 @@ function upgradePersistedGame(document: PersistedDbDocument): PersistedGameV3 | 
 }
 
 function backfillRetainedVisitorIdentity(document: PersistedDbDocument): PersistedGameV3 | undefined {
-  if (!isPersistedCanonicalExceptReservations(document, { allowMissingRetainedVisitor: true })) return undefined
+  if (!isPersistedCanonical(document, { allowMissingRetainedVisitor: true })) return undefined
   const source = toPersistedGame(document)
   const candidate = structuredClone(document) as unknown as PersistedGameV3
   delete (candidate as PersistedGameV3 & { _id?: unknown })._id
@@ -929,7 +929,7 @@ function backfillRetainedVisitorIdentity(document: PersistedDbDocument): Persist
     changed = true
   }
 
-  return changed ? candidate : undefined
+  return changed && isPersistedCanonical(candidate) ? candidate : undefined
 }
 
 function backfillPersistedV3(document: PersistedDbDocument, now = new Date()): PersistedGameV3 | undefined {
@@ -1393,9 +1393,8 @@ export function isPersistedCanonical(
       continue
     }
     if (!visitorIds.has(projection.visitorId)) {
-      if (options.allowMissingRetainedVisitor && !projection.retainedVisitor) continue
-      if (!projection.retainedVisitor && !options.allowMissingRetainedVisitor
-        || !hasRetainedExpeditionDependency(container, settlements, recoveries)) return false
+      if (!projection.retainedVisitor && !hasRetainedExpeditionDependency(container, settlements, recoveries)) return false
+      if (!projection.retainedVisitor && !options.allowMissingRetainedVisitor) return false
       continue
     }
     const visitor = visitors.find((entry) => entry.id === projection.visitorId)!
