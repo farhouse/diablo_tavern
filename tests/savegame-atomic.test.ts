@@ -898,6 +898,21 @@ describe('atomic persisted-game mutation', () => {
     expect(collection.replaceOne).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ['missing visitRound', (corrupt: Record<string, unknown>) => { delete corrupt.visitRound }],
+    ['malformed visitRound', (corrupt: Record<string, unknown>) => { corrupt.visitRound = { slots: [] } }],
+    ['malformed visitHistory', (corrupt: Record<string, unknown>) => { corrupt.visitHistory = [{ slots: [] }] }]
+  ])('rejects a missing visitor cycle with %s without writing', async (_label, corrupt) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const legacy = structuredClone(document as PersistedGameV3) as unknown as Record<string, unknown>
+    delete legacy.visitorCycle
+    corrupt(legacy)
+    document = legacy as unknown as PersistedGameV3
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(collection.replaceOne).not.toHaveBeenCalled()
+  })
+
   it('backfills historical claimed commission rewards without moving or recreating them', async () => {
     const { getPersistedGameV3, hydratePersistedGame, isPersistedCanonical } = await import('../server/utils/savegame')
     const legacyV3 = historicalClaimedRewardFixture()
@@ -915,12 +930,18 @@ describe('atomic persisted-game mutation', () => {
     expect(backfilled.revision).toBe(before.revision)
     expect(backfilled.gold).toBe(before.gold)
     expect(backfilled.materials).toEqual(before.materials)
+    expect(backfilled.stash).toEqual(before.stash)
     expect(backfilled.itemsById).toEqual(before.itemsById)
+    expect(backfilled.itemPlacements).toEqual(before.itemPlacements)
     expect(backfilled.visitRound).toEqual(before.visitRound)
     expect(backfilled.visitHistory).toEqual(before.visitHistory)
+    expect(backfilled.expeditionsById).toEqual(before.expeditionsById)
+    expect(backfilled.recoveriesById).toEqual(before.recoveriesById)
+    expect(backfilled.settlementsById).toEqual(before.settlementsById)
     expect(backfilled.ledger).toEqual(before.ledger)
     expect(backfilled.requestRecords).toEqual(before.requestRecords)
     expect(backfilled.businessKeys).toEqual(before.businessKeys)
+    expect(backfilled.caravanV2).toEqual(before.caravanV2)
     expect(backfilled.itemPlacements[movedRewardId]).toEqual(before.itemPlacements[movedRewardId])
     expect(backfilled.itemPlacements[soldRewardId]).toEqual(before.itemPlacements[soldRewardId])
     expect(backfilled.stash).not.toContain(movedRewardId)

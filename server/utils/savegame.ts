@@ -979,7 +979,12 @@ function backfillPersistedV3(document: PersistedDbDocument, now = new Date()): P
   if (retained || missingVisitorCycle || !Object.prototype.hasOwnProperty.call(document, 'caravanV2') || !Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')) {
     const migrated = structuredClone((retained ?? document) as PersistedGameV3)
     delete (migrated as PersistedGameV3 & { _id?: unknown })._id
-    if (missingVisitorCycle) migrated.visitorCycle = createVisitorCycle(migrated)
+    if (missingVisitorCycle) {
+      if (!isPersistedRound(migrated.visitRound)
+        || !Array.isArray(migrated.visitHistory)
+        || !migrated.visitHistory.every(isPersistedRound)) return undefined
+      migrated.visitorCycle = createVisitorCycle(migrated)
+    }
     if (!Object.prototype.hasOwnProperty.call(document, 'caravanV2')) migrated.caravanV2 = createCaravanV2(now, true)
     if (!Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')) migrated.chronicleOutbox = []
     if (!isPersistedCanonicalExceptReservations(migrated)) return undefined
