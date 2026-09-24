@@ -244,6 +244,11 @@ export const useGameV2Store = defineStore('game-v2', {
             ...operation.payload
           }
         })
+        if (game.revision <= operation.expectedRevision) {
+          this.operationState = 'uncertain'
+          this.errorMessage = 'La orden no publicó una revisión nueva. Reintentá la misma orden.'
+          return false
+        }
         this.applySnapshot(game)
         this.operationState = 'idle'
         this.pendingEquipmentOperation = null

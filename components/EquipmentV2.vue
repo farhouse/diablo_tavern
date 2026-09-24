@@ -1,6 +1,6 @@
 <template>
   <div class="equipment-v2">
-    <div ref="content" :inert="Boolean(confirmation)">
+    <div ref="content" tabindex="-1" :inert="Boolean(confirmation)">
     <div v-if="loadState === 'loading' && !game" class="equipment-state" aria-busy="true">Cargando inventario confirmado…</div>
     <div v-else-if="!game" class="equipment-state" role="alert">
       <h2>No hay inventario disponible</h2>
@@ -48,11 +48,11 @@
     </template>
     </div>
 
-    <div v-if="confirmation" class="confirm-backdrop" role="presentation" @click.self="closeConfirmation">
-      <section ref="dialog" class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" tabindex="-1" @keydown="trapFocus" @keydown.esc="closeConfirmation">
+    <div v-if="confirmation" class="confirm-backdrop" role="presentation" @click.self="closeConfirmation()">
+      <section ref="dialog" class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" tabindex="-1" @keydown="trapFocus" @keydown.esc="closeConfirmation()">
         <h2 id="confirm-title">{{ confirmation.action.label.fallback }}</h2><p>{{ confirmation.option.description.fallback }}</p>
         <ul><li v-for="consequence in confirmation.option.consequences" :key="consequence.text.key">{{ consequence.text.fallback }}</li></ul>
-        <div class="item-actions"><button ref="cancelButton" class="btn ghost" type="button" @click="closeConfirmation">Cancelar</button><button class="btn primary" type="button" @click="confirm">Confirmar</button></div>
+        <div class="item-actions"><button ref="cancelButton" class="btn ghost" type="button" @click="closeConfirmation()">Cancelar</button><button class="btn primary" type="button" @click="confirm">Confirmar</button></div>
       </section>
     </div>
   </div>
@@ -65,17 +65,29 @@ import { selectionFor, type EquipmentAction, type EquipmentEnabledAction, type E
 
 const props = defineProps<{ game: GameView | null; loadState: string; operationState: string; errorMessage: string; unavailableReason: string; snapshotStale: boolean }>()
 const emit = defineEmits<{ reload: []; retry: []; action: [selection: EquipmentSelection] }>()
+const content = ref<HTMLElement | null>(null)
 const dialog = ref<HTMLElement | null>(null)
 const cancelButton = ref<HTMLButtonElement | null>(null)
 const trigger = ref<HTMLElement | null>(null)
+const triggerId = ref<string | null>(null)
 const confirmation = ref<{ revision: number; itemId: string; action: EquipmentEnabledAction; option: { optionId: string; description: { fallback: string }; consequences: Array<{ text: { key: string; fallback: string } }>; acknowledgement?: { acknowledgementId: string } } } | null>(null)
 const statusCopy = computed(() => props.errorMessage || (props.operationState === 'pending' ? 'Orden enviada; esperando snapshot confirmado…' : props.unavailableReason ? `La acción está bloqueada: ${props.unavailableReason}.` : 'Revisá el estado publicado.'))
 
 watch(() => props.game, (game) => {
-  if (!confirmation.value || !game || confirmation.value.revision !== game.revision || !selectionFor(game, confirmation.value.itemId, confirmation.value.action.action as EquipmentAction, confirmation.value.option.optionId, confirmation.value.option.acknowledgement?.acknowledgementId)) closeConfirmation()
+  if (!confirmation.value) return
+  if (!game || confirmation.value.revision !== game.revision) return closeConfirmation()
+  try {
+    if (!selectionFor(game, confirmation.value.itemId, confirmation.value.action.action as EquipmentAction, confirmation.value.option.optionId, confirmation.value.option.acknowledgement?.acknowledgementId)) closeConfirmation()
+  } catch {
+    closeConfirmation()
+  }
 })
-watch(() => props.snapshotStale, (stale) => { if (stale) closeConfirmation() })
-watch(confirmation, async (value) => { if (value) { await nextTick(); cancelButton.value?.focus() } })
+watch(() => props.snapshotStale, (stale) => { if (stale) closeConfirmation(true) })
+watch(confirmation, async (value) => {
+  if (!value) return
+  await nextTick()
+  if (confirmation.value === value) cancelButton.value?.focus()
+})
 
 function choose(itemId: string, action: ActionAvailability, event?: Event) {
   if (!action.enabled || !['identify_item', 'queue_blacksmith_job', 'queue_enchanter_job', 'dismantle_item', 'replace_boss_imprint'].includes(action.action)) return
@@ -83,7 +95,9 @@ function choose(itemId: string, action: ActionAvailability, event?: Event) {
   const option = equipmentAction.execution.options[0]
   if (!props.game || !option) return
   if ('acknowledgement' in option) {
-    trigger.value = event?.currentTarget instanceof HTMLElement ? event.currentTarget : document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const target = event?.currentTarget instanceof HTMLElement ? event.currentTarget : event?.target instanceof HTMLElement ? event.target.closest('button') : null
+    trigger.value = target ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+    triggerId.value = trigger.value?.id || null
     confirmation.value = { revision: props.game.revision, itemId, action: equipmentAction, option }
   }
   else submit(itemId, equipmentAction, option.optionId)
@@ -92,10 +106,21 @@ function confirm() {
   if (!confirmation.value) return
   const { itemId, action, option, revision } = confirmation.value
   if (!props.game || props.game.revision !== revision) return closeConfirmation()
+  closeConfirmation(false, true)
   submit(itemId, action, option.optionId, option.acknowledgement?.acknowledgementId)
-  closeConfirmation()
 }
-function closeConfirmation() { confirmation.value = null; nextTick(() => trigger.value?.focus()) }
+function closeConfirmation(preferContent = false, immediate = false) {
+  confirmation.value = null
+  content.value?.removeAttribute('inert')
+  const target = trigger.value
+  const restore = () => {
+    const currentTarget = target?.isConnected ? target : triggerId.value ? content.value?.querySelector<HTMLElement>(`#${triggerId.value}`) : null
+    if (!preferContent && currentTarget && !currentTarget.hasAttribute('disabled')) currentTarget.focus()
+    else content.value?.focus()
+  }
+  restore()
+  if (!immediate) nextTick(() => nextTick(restore))
+}
 function trapFocus(event: KeyboardEvent) {
   if (event.key !== 'Tab') return
   const focusable = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
@@ -108,8 +133,12 @@ function trapFocus(event: KeyboardEvent) {
 onBeforeUnmount(() => { confirmation.value = null })
 function submit(itemId: string, action: EquipmentEnabledAction, optionId: string, acknowledgementId?: string) {
   if (!props.game) return
-  const selection = selectionFor(props.game, itemId, action.action as EquipmentAction, optionId, acknowledgementId)
-  if (selection) emit('action', selection)
+  try {
+    const selection = selectionFor(props.game, itemId, action.action as EquipmentAction, optionId, acknowledgementId)
+    if (selection) emit('action', selection)
+  } catch {
+    closeConfirmation()
+  }
 }
 function identification(item: ItemView) { return item.identification === 'identified' ? 'Identificado' : 'Sin identificar' }
 function owner(item: ItemView) { return item.owner.kind === 'caravan' ? 'Propiedad de la caravana' : 'Prestado por visitante' }

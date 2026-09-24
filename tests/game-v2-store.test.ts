@@ -220,6 +220,7 @@ describe('game V2 store', () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(apiError({ code: 'uncertain', retryable: true, requestId: 'same' }))
       .mockResolvedValueOnce(game)
+      .mockResolvedValueOnce({ ...game, revision: game.revision + 1 })
     vi.stubGlobal('$fetch', fetchMock)
 
     await store.runEquipmentAction(selection)
@@ -228,7 +229,11 @@ describe('game V2 store', () => {
     const firstBody = structuredClone(fetchMock.mock.calls[0]?.[1]?.body)
     await store.retryEquipmentUncertain()
     expect(fetchMock.mock.calls[1]?.[1]?.body).toEqual(firstBody)
+    expect(store.operationState).toBe('uncertain')
+    await store.retryEquipmentUncertain()
+    expect(fetchMock.mock.calls[2]?.[1]?.body).toEqual(firstBody)
     expect(store.operationState).toBe('idle')
+    expect(store.game?.revision).toBe(game.revision + 1)
   })
 
   it('rejects equipment actions from an old revision without posting', async () => {
