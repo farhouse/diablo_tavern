@@ -61,7 +61,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ActionAvailability, GameView, ItemView, ServiceJobView } from '~/shared/types/v2-game-view'
-import { selectionFor, type EquipmentAction, type EquipmentEnabledAction, type EquipmentSelection } from '~/utils/v2-equipment-adapter'
+import { itemAction, selectionFor, type EquipmentAction, type EquipmentEnabledAction, type EquipmentSelection } from '~/utils/v2-equipment-adapter'
 
 const props = defineProps<{ game: GameView | null; loadState: string; operationState: string; errorMessage: string; unavailableReason: string; snapshotStale: boolean }>()
 const emit = defineEmits<{ reload: []; retry: []; action: [selection: EquipmentSelection] }>()
@@ -77,7 +77,10 @@ watch(() => props.game, (game) => {
   if (!confirmation.value) return
   if (!game || confirmation.value.revision !== game.revision) return closeConfirmation()
   try {
-    if (!selectionFor(game, confirmation.value.itemId, confirmation.value.action.action as EquipmentAction, confirmation.value.option.optionId, confirmation.value.option.acknowledgement?.acknowledgementId)) closeConfirmation()
+    const item = game.items.find((entry) => entry.itemId === confirmation.value?.itemId)
+    const published = item && itemAction(item, confirmation.value.action.action as EquipmentAction)
+    if (!published || published.authorizationId !== confirmation.value.action.authorizationId
+      || !selectionFor(game, confirmation.value.itemId, confirmation.value.action.action as EquipmentAction, confirmation.value.option.optionId, confirmation.value.option.acknowledgement?.acknowledgementId)) closeConfirmation()
   } catch {
     closeConfirmation()
   }
@@ -114,7 +117,8 @@ function closeConfirmation(preferContent = false, immediate = false) {
   content.value?.removeAttribute('inert')
   const target = trigger.value
   const restore = () => {
-    const currentTarget = target?.isConnected ? target : triggerId.value ? content.value?.querySelector<HTMLElement>(`#${triggerId.value}`) : null
+    const fallback = triggerId.value ? document.getElementById(triggerId.value) : null
+    const currentTarget = target?.isConnected ? target : fallback && content.value?.contains(fallback) ? fallback : null
     if (!preferContent && currentTarget && !currentTarget.hasAttribute('disabled')) currentTarget.focus()
     else content.value?.focus()
   }

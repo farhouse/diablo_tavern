@@ -42,11 +42,17 @@ describe('EquipmentV2', () => {
   })
 
   it('restores focus before confirming an irreversible action emits a pending operation', async () => {
-    const wrapper = mount(EquipmentV2, { attachTo: document.body, props: { game: destructive, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false } })
+    let activeElementAtEmit: Element | null = null
+    const wrapper = mount(EquipmentV2, {
+      attachTo: document.body,
+      props: { game: destructive, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false },
+      attrs: { onAction: () => { activeElementAtEmit = document.activeElement } }
+    })
     const button = wrapper.findAll('button').find((entry) => entry.text().toLowerCase().includes('dismantle'))!
     await button.trigger('click')
     await wrapper.findAll('button').find((entry) => entry.text() === 'Confirmar')!.trigger('click')
     expect(wrapper.emitted('action')).toHaveLength(1)
+    expect(activeElementAtEmit).toBe(button.element)
     expect(document.activeElement?.id).toBe(button.element.id)
     wrapper.unmount()
   })
@@ -72,7 +78,38 @@ describe('EquipmentV2', () => {
     wrapper.unmount()
   })
 
-  it('invalidates an open confirmation when its published binding changes at the same revision', async () => {
+  it('invalidates an open confirmation when its authorization changes at the same revision', async () => {
+    const wrapper = mount(EquipmentV2, { props: { game: destructive, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false } })
+    const button = wrapper.findAll('button').find((entry) => entry.text().toLowerCase().includes('dismantle'))!
+    await button.trigger('click')
+    const changed = structuredClone(destructive)
+    const item = changed.items.find((entry) => entry.actions.some((action) => action.action === 'dismantle_item'))!
+    const action = item.actions.find((entry) => entry.enabled && entry.action === 'dismantle_item')
+    if (!action || !action.enabled || action.action !== 'dismantle_item' || !('acknowledgement' in action.execution.options[0]!)) throw new Error('Expected acknowledgement option')
+    action.authorizationId = 'changed-authorization'
+    await wrapper.setProps({ game: changed })
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
+    expect(wrapper.emitted('action')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('invalidates an open confirmation when its option changes at the same revision', async () => {
+    const wrapper = mount(EquipmentV2, { props: { game: destructive, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false } })
+    const button = wrapper.findAll('button').find((entry) => entry.text().toLowerCase().includes('dismantle'))!
+    await button.trigger('click')
+    const changed = structuredClone(destructive)
+    const item = changed.items.find((entry) => entry.actions.some((action) => action.action === 'dismantle_item'))!
+    const action = item.actions.find((entry) => entry.enabled && entry.action === 'dismantle_item')
+    if (!action || !action.enabled || action.action !== 'dismantle_item') throw new Error('Expected acknowledgement option')
+    const option = action.execution.options[0]
+    if (!option) throw new Error('Expected service option')
+    option.optionId = 'changed-option'
+    await wrapper.setProps({ game: changed })
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('invalidates an open confirmation when its acknowledgement changes at the same revision', async () => {
     const wrapper = mount(EquipmentV2, { props: { game: destructive, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false } })
     const button = wrapper.findAll('button').find((entry) => entry.text().toLowerCase().includes('dismantle'))!
     await button.trigger('click')
@@ -83,7 +120,22 @@ describe('EquipmentV2', () => {
     action.execution.options[0].acknowledgement.acknowledgementId = 'changed-acknowledgement'
     await wrapper.setProps({ game: changed })
     expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
-    expect(wrapper.emitted('action')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('restores focus safely for an opaque disconnected authorization id', async () => {
+    const changed = structuredClone(destructive)
+    const item = changed.items.find((entry) => entry.actions.some((action) => action.action === 'dismantle_item'))!
+    const action = item.actions.find((entry) => entry.enabled && entry.action === 'dismantle_item')
+    if (!action) throw new Error('Expected dismantle action')
+    action.authorizationId = 'auth:opaque.[v1]'
+    const wrapper = mount(EquipmentV2, { attachTo: document.body, props: { game: changed, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false } })
+    const button = wrapper.find('#action-auth\\:opaque\\.\\[v1\\]')
+    await button.trigger('click')
+    button.element.remove()
+    await wrapper.setProps({ snapshotStale: true })
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(wrapper.find('[tabindex="-1"]').element)
     wrapper.unmount()
   })
 })
