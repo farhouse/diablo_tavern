@@ -11,7 +11,8 @@ let collection: Collection
 let repositoryCollection: Collection
 let chronicleCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`, `${prefix}-caravan-concurrent`, `${prefix}-outbox-cap`, `${prefix}-reservation-repair`]
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`, `${prefix}-caravan-concurrent`, `${prefix}-outbox-cap`, `${prefix}-reservation-repair`, `${prefix}-upgrade-replay`]
+const foreignChronicleUserId = `${userIds[30]}-other`
 const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
 const ORIGINAL_NUXT_JWT_SECRET = process.env.NUXT_JWT_SECRET
 
@@ -28,14 +29,14 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     chronicleCollection = client.db('diablo_tavern_alta43_integration').collection('chronicleEvents')
     const { ensureIndexes } = await vi.importActual<typeof import('../server/utils/db')>('../server/utils/db')
     await ensureIndexes(client.db('diablo_tavern_alta43_integration'))
-    await collection.deleteMany({ userId: { $in: userIds } })
-    await chronicleCollection.deleteMany({ userId: { $in: userIds } })
+    await collection.deleteMany({ userId: { $in: [...userIds, foreignChronicleUserId] } })
+    await chronicleCollection.deleteMany({ userId: { $in: [...userIds, foreignChronicleUserId] } })
   })
 
   afterAll(async () => {
     if (client) {
-      await collection.deleteMany({ userId: { $in: userIds } })
-      await chronicleCollection.deleteMany({ userId: { $in: userIds } })
+      await collection.deleteMany({ userId: { $in: [...userIds, foreignChronicleUserId] } })
+      await chronicleCollection.deleteMany({ userId: { $in: [...userIds, foreignChronicleUserId] } })
       await client.close()
     }
     if (ORIGINAL_JWT_SECRET === undefined) delete process.env.JWT_SECRET
@@ -340,6 +341,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { getPersistedGameV3, mutateEquipmentV2Atomic, mutateSaveGameAtomic } = await import('../server/utils/savegame')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const initial = await getPersistedGameV3(userIds[12]!)
+    enableMongoTestServices(initial)
+    await collection.replaceOne({ userId: userIds[12] }, initial)
     const itemId = initial.stash[0]!
     const deps = fixedDeps()
     const blacksmith = executionOption(mapPersistedGameToGameView(initial, deps.now()), itemId, 'queue_blacksmith_job')
@@ -625,6 +628,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const userId = userIds[20]!
     const initial = await getPersistedGameV3(userId)
+    enableMongoTestServices(initial)
+    await collection.replaceOne({ userId }, initial)
     const [jobItemId, tombstoneItemId] = initial.stash
     if (!jobItemId || !tombstoneItemId) throw new Error('Expected two starter items')
     const deps = fixedDeps()
@@ -651,6 +656,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const userId = userIds[21]!
     const claimed = await claimConfiguredMongoReward(userId)
+    enableMongoTestServices(claimed.persisted)
+    await collection.replaceOne({ userId }, claimed.persisted)
     const rewardItemId = claimed.rewardItemId
     const deps = fixedDeps()
     const identify = executionOption(mapPersistedGameToGameView(claimed.persisted, deps.now()), rewardItemId, 'identify_item')
@@ -698,6 +705,8 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const userId = userIds[24]!
     const claimed = await claimConfiguredMongoReward(userId)
+    enableMongoTestServices(claimed.persisted)
+    await collection.replaceOne({ userId }, claimed.persisted)
     const { rewardItemId } = claimed
     const sealedAffixes = structuredClone(claimed.persisted.itemV2ById[rewardItemId]!.sealedAffixes!)
     const provenance = structuredClone(claimed.persisted.itemV2ById[rewardItemId]!.provenance!)
@@ -764,6 +773,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
       const targetId = targetFor(operation)
       if (operation === 'loan') addExpedition(initial, targetId)
     }
+    enableMongoTestServices(initial)
     await collection.replaceOne({ userId }, initial)
     const deps = fixedDeps()
     const serviceOption = [firstName, secondName].includes('service')
@@ -817,7 +827,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(recreated.revision).toBe(5)
     expect(persisted).not.toHaveProperty('heroes')
     expect(persisted?.itemsById).toBeDefined()
-    expect(indexes).toContainEqual(expect.objectContaining({ name: 'userId_unique', unique: true }))
+    expect(indexes).toContainEqual(expect.objectContaining({ key: { userId: 1 }, unique: true }))
   })
 
   it('covers concurrent reconcile, upgrade replay, and outbox repair against real MongoDB', async () => {
@@ -828,9 +838,9 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const initial = await getPersistedGameV3(userIds[30]!)
     initial.gold = 2000
     initial.materials.scrap = 100
-    initial.caravanV2.upgrades.blacksmith = 0
-    delete initial.caravanV2.serviceUnlockedAt.blacksmith
-    initial.caravanV2.maintenance.accountedThroughPeriodKey = '2026-W30'
+    initial.caravanV2.upgrades.blacksmith = 1
+    initial.caravanV2.serviceUnlockedAt.blacksmith = '2026-08-01T00:00:00.000Z'
+    initial.caravanV2.maintenance.accountedThroughPeriodKey = '2026-W38'
     initial.caravanV2.maintenance.debts = []
     initial.chronicleOutbox = ['arrived', 'departed', 'died'].map((suffix) => ({
       eventId: eventIdFor(initial.userId, `visitor:mongo:${suffix}`), eventKey: `visitor:mongo:${suffix}`, type: `visitor_${suffix}` as 'visitor_arrived', occurredAt: initial.updatedAt,
@@ -847,8 +857,10 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const repaired = await getPersistedGameV3(userIds[30]!)
     expect(repaired.revision).toBe(1)
     expect(repaired.chronicleOutbox).toHaveLength(0)
-    expect(repaired.gold).toBeLessThan(2000)
-    expect(Object.keys(repaired.businessKeys).some((key) => key.startsWith('maintenance:assessed:'))).toBe(true)
+    expect(repaired.gold).toBe(1950)
+    expect(repaired.businessKeys['maintenance:assessed:2026-W39']).toBe('reconcile_game')
+    expect(repaired.businessKeys['maintenance:paid:2026-W39']).toBe('reconcile_game')
+    expect(repaired.ledger.at(-1)).toMatchObject({ operationKey: '["v2","reconcile_game"]', goldDelta: -50, materialDeltas: {} })
     const indexes = await chronicleCollection.listIndexes().toArray()
     const uniqueIndex = indexes.find((index) => JSON.stringify(index.key) === JSON.stringify({ userId: 1, eventId: 1 }))
     const queryIndex = indexes.find((index) => JSON.stringify(index.key) === JSON.stringify({ userId: 1, occurredAt: -1, eventId: -1 }))
@@ -860,7 +872,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const chronicleSeed = [
       { eventKey: 'visitor:chronicle-a:arrived', occurredAt: '2026-08-02T00:00:00.000Z', subjectId: 'chronicle-a' },
       { eventKey: 'visitor:chronicle-b:departed', occurredAt: '2026-08-02T00:00:00.000Z', subjectId: 'chronicle-b' },
-      { eventKey: 'item:chronicle-c:found:loot', occurredAt: '2026-08-01T00:00:00.000Z', subjectId: 'chronicle-c' },
+      { eventKey: 'item:chronicle-c:found:loot', occurredAt: '2026-08-02T00:00:00.000Z', subjectId: 'chronicle-c' },
       { eventKey: 'visitor:chronicle-d:died', occurredAt: '2026-07-31T00:00:00.000Z', subjectId: 'chronicle-d' }
     ] as const
     await chronicleCollection.insertMany([
@@ -869,17 +881,20 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
         type: event.eventKey.startsWith('item:') ? 'item_found' : `visitor_${event.eventKey.split(':')[2]}`,
         occurredAt: event.occurredAt, subject: { kind: event.eventKey.startsWith('item:') ? 'item' : 'visitor', id: event.subjectId }, data: {}
       })),
-      { userId: `${userIds[30]}-other`, eventId: eventIdFor(`${userIds[30]}-other`, 'visitor:foreign:arrived'), eventKey: 'visitor:foreign:arrived', type: 'visitor_arrived', occurredAt: '2026-12-01T00:00:00.000Z', subject: { kind: 'visitor', id: 'foreign' }, data: {} }
+      { userId: foreignChronicleUserId, eventId: eventIdFor(foreignChronicleUserId, 'visitor:foreign:arrived'), eventKey: 'visitor:foreign:arrived', type: 'visitor_arrived', occurredAt: '2026-12-01T00:00:00.000Z', subject: { kind: 'visitor', id: 'foreign' }, data: {} }
     ] as never)
     const expectedChronicleOrder = [...chronicleSeed].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || eventIdFor(userIds[30]!, b.eventKey).localeCompare(eventIdFor(userIds[30]!, a.eventKey)))
-    const firstPage = await listChronicle(userIds[30]!, undefined, 2)
-    expect(firstPage.entries.map((entry) => entry.eventId)).toEqual(expectedChronicleOrder.slice(0, 2).map((event) => eventIdFor(userIds[30]!, event.eventKey)))
+    const firstPage = await listChronicle(userIds[30]!, undefined, 1)
+    expect(firstPage.entries.map((entry) => entry.eventId)).toEqual(expectedChronicleOrder.slice(0, 1).map((event) => eventIdFor(userIds[30]!, event.eventKey)))
     expect(firstPage.nextCursor).toBeTruthy()
-    const secondPage = await listChronicle(userIds[30]!, firstPage.nextCursor!, 2)
-    expect(secondPage.entries.map((entry) => entry.eventId)).toEqual(expectedChronicleOrder.slice(2).map((event) => eventIdFor(userIds[30]!, event.eventKey)))
-    expect(secondPage.nextCursor).toBeNull()
-    expect([...firstPage.entries, ...secondPage.entries]).toHaveLength(4)
-    expect([...firstPage.entries, ...secondPage.entries].every((entry) => entry.subject.id !== 'foreign')).toBe(true)
+    const secondPage = await listChronicle(userIds[30]!, firstPage.nextCursor!, 1)
+    const thirdPage = await listChronicle(userIds[30]!, secondPage.nextCursor!, 1)
+    const fourthPage = await listChronicle(userIds[30]!, thirdPage.nextCursor!, 1)
+    const pages = [firstPage, secondPage, thirdPage, fourthPage]
+    pages.forEach((page, index) => expect(page.entries.map((entry) => entry.eventId)).toEqual(expectedChronicleOrder.slice(index, index + 1).map((event) => eventIdFor(userIds[30]!, event.eventKey))))
+    expect(fourthPage.nextCursor).toBeNull()
+    expect(pages.flatMap((page) => page.entries)).toHaveLength(4)
+    expect(pages.flatMap((page) => page.entries).every((entry) => entry.subject.id !== 'foreign')).toBe(true)
 
     const postCas = await getPersistedGameV3(userIds[30]!)
     postCas.chronicleOutbox = [{ eventId: eventIdFor(postCas.userId, 'visitor:post-cas:arrived'), eventKey: 'visitor:post-cas:arrived', type: 'visitor_arrived', occurredAt: postCas.updatedAt, subject: { kind: 'visitor', id: 'post-cas' }, data: {} }]
@@ -896,24 +911,30 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     await projectChronicleOutbox(userIds[30]!)
     expect((await getPersistedGameV3(userIds[30]!)).chronicleOutbox).toHaveLength(0)
 
-    const upgradeBase = await getPersistedGameV3(userIds[30]!)
+    const upgradeBase = await getPersistedGameV3(userIds[33]!)
+    upgradeBase.gold = 2000
+    upgradeBase.materials.scrap = 100
+    await collection.replaceOne({ userId: userIds[33] }, upgradeBase)
     const expiresAt = new Date(Date.parse(upgradeBase.updatedAt) + 60_000).toISOString()
     const optionId = caravanUpgradeToken(upgradeBase, 'blacksmith', 1, expiresAt)
-    const upgrade = await mutateCaravanUpgradeAtomic(userIds[30]!, 'mongo-upgrade', upgradeBase.revision, optionId, mapPersistedGameToGameView)
-    const replay = await mutateCaravanUpgradeAtomic(userIds[30]!, 'mongo-upgrade', upgradeBase.revision, optionId, mapPersistedGameToGameView)
+    const upgrade = await mutateCaravanUpgradeAtomic(userIds[33]!, 'mongo-upgrade', upgradeBase.revision, optionId, mapPersistedGameToGameView)
+    const replay = await mutateCaravanUpgradeAtomic(userIds[33]!, 'mongo-upgrade', upgradeBase.revision, optionId, mapPersistedGameToGameView)
     expect(replay).toEqual(upgrade)
-    const afterUpgrade = await getPersistedGameV3(userIds[30]!)
+    const afterUpgrade = await getPersistedGameV3(userIds[33]!)
     expect(afterUpgrade.caravanV2.upgrades.blacksmith).toBe(1)
     expect(afterUpgrade.ledger.filter((entry) => entry.businessKey === 'caravan-upgrade:blacksmith:1')).toHaveLength(1)
-    await projectChronicleOutbox(userIds[30]!)
-    expect((await getPersistedGameV3(userIds[30]!)).chronicleOutbox).toHaveLength(0)
-    await reconcilePersistedGameV3(userIds[30]!)
+    await projectChronicleOutbox(userIds[33]!)
+    expect((await getPersistedGameV3(userIds[33]!)).chronicleOutbox).toHaveLength(0)
+    await reconcilePersistedGameV3(userIds[33]!)
   })
 
   it('covers outbox cap, post-CAS repair, reservation linkage and stable chronicle pagination data', async () => {
     const { getPersistedGameV3, isPersistedCanonical, mutateCaravanUpgradeAtomic } = await import('../server/utils/savegame')
     const { caravanUpgradeToken } = await import('../server/domain/caravan-v2')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
     const initial = await getPersistedGameV3(userIds[31]!)
+    initial.gold = 2000
+    initial.materials.scrap = 100
     initial.chronicleOutbox = Array.from({ length: 100 }, (_, index) => ({
       eventId: eventIdFor(initial.userId, `visitor:v${index}:arrived`), eventKey: `visitor:v${index}:arrived`, type: 'visitor_arrived' as const,
       occurredAt: initial.updatedAt, subject: { kind: 'visitor' as const, id: `v${index}` }, data: {}
@@ -924,8 +945,12 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     expect(isPersistedCanonical(stored)).toBe(true)
     const expiresAt = new Date(Date.parse(stored.updatedAt) + 60_000).toISOString()
     const optionId = caravanUpgradeToken(stored, 'blacksmith', 1, expiresAt)
-    await expect(mutateCaravanUpgradeAtomic(userIds[31]!, 'mongo-cap', stored.revision, optionId, (game) => game as never)).resolves.toMatchObject({ requestId: 'mongo-cap' })
+    await expect(mutateCaravanUpgradeAtomic(userIds[31]!, 'mongo-cap', stored.revision, optionId, mapPersistedGameToGameView)).resolves.toMatchObject({ requestId: 'mongo-cap' })
     expect(await chronicleCollection.countDocuments({ userId: userIds[31] })).toBe(100)
+    const capAfter = await getPersistedGameV3(userIds[31]!)
+    expect(capAfter.chronicleOutbox).toHaveLength(0)
+    expect(capAfter.caravanV2.upgrades.blacksmith).toBe(1)
+    expect(capAfter.ledger.at(-1)).toMatchObject({ businessKey: 'caravan-upgrade:blacksmith:1', goldDelta: -800, materialDeltas: { scrap: -30 } })
 
     const reservationUser = userIds[32]!
     const reservationGame = await getPersistedGameV3(reservationUser)
@@ -953,6 +978,13 @@ function addExpedition(game: PersistedGameV3, id: string, visitorIndex = 0): voi
   game.expeditionsById[id] = {
     id, itemIds: [], projection: { kind: 'expedition', visitorId, contractId, startsAt: game.updatedAt }
   }
+}
+
+function enableMongoTestServices(game: PersistedGameV3): void {
+  game.caravanV2.upgrades.blacksmith = 1
+  game.caravanV2.upgrades.enchanter = 1
+  game.caravanV2.serviceUnlockedAt.blacksmith ??= game.createdAt
+  game.caravanV2.serviceUnlockedAt.enchanter ??= game.createdAt
 }
 
 function executionOption(view: { items: unknown[] }, itemId: string, action: string) {

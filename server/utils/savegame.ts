@@ -966,14 +966,16 @@ function backfillPersistedV3(document: PersistedDbDocument, now = new Date()): P
     if (missingItemV2Map) backfillCommissionRewardV2State(original)
     return original
   }
+  const retained = backfillRetainedVisitorIdentity(document)
   if (!missingV2Maps
     && !missingVisitorCycle
     && Object.prototype.hasOwnProperty.call(document, 'caravanV2')
     && Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')
+    && !retained
     && !isPersistedCanonicalExceptReservations(document)) return undefined
-  const retained = backfillRetainedVisitorIdentity(document)
   if (retained || missingVisitorCycle || !Object.prototype.hasOwnProperty.call(document, 'caravanV2') || !Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')) {
     const migrated = structuredClone((retained ?? document) as PersistedGameV3)
+    delete (migrated as PersistedGameV3 & { _id?: unknown })._id
     if (!Object.prototype.hasOwnProperty.call(document, 'caravanV2')) migrated.caravanV2 = createCaravanV2(now, true)
     if (!Object.prototype.hasOwnProperty.call(document, 'chronicleOutbox')) migrated.chronicleOutbox = []
     if (!isPersistedCanonicalExceptReservations(migrated)) return undefined
@@ -981,6 +983,7 @@ function backfillPersistedV3(document: PersistedDbDocument, now = new Date()): P
     return migrated
   }
   const migrated = structuredClone(document) as unknown as PersistedGameV3
+  delete (migrated as PersistedGameV3 & { _id?: unknown })._id
   if (!isPersistedCanonicalExceptReservations(migrated)) return undefined
   normalizePendingSettlementReservations(migrated)
   return isPersistedCanonical(migrated) ? migrated : undefined
