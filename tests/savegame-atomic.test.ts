@@ -876,6 +876,28 @@ describe('atomic persisted-game mutation', () => {
     expect(collection.replaceOne).toHaveBeenCalledTimes(2)
   })
 
+  it('backfills the visitor cycle on pre-caravan V3 saves that already have equipment maps', async () => {
+    const { getPersistedGameV3, isPersistedCanonical } = await import('../server/utils/savegame')
+    const legacyV3 = structuredClone(document as PersistedGameV3)
+    const expectedVisitorIds = legacyV3.visitRound.slots
+      .flatMap((slot) => slot.visitor ? [slot.visitor.id] : [])
+      .sort()
+    delete (legacyV3 as Partial<PersistedGameV3>).visitorCycle
+    delete (legacyV3 as Partial<PersistedGameV3>).caravanV2
+    delete (legacyV3 as Partial<PersistedGameV3>).chronicleOutbox
+    document = legacyV3
+
+    const backfilled = await getPersistedGameV3('atomic-user')
+
+    expect(isPersistedCanonical(backfilled)).toBe(true)
+    expect(Object.keys(backfilled.visitorCycle.visitors).sort()).toEqual(expectedVisitorIds)
+    expect(backfilled.caravanV2).toBeDefined()
+    expect(backfilled.chronicleOutbox).toEqual([])
+    expect(backfilled.revision).toBe(legacyV3.revision)
+    expect(backfilled.gold).toBe(legacyV3.gold)
+    expect(collection.replaceOne).toHaveBeenCalledOnce()
+  })
+
   it('backfills historical claimed commission rewards without moving or recreating them', async () => {
     const { getPersistedGameV3, hydratePersistedGame, isPersistedCanonical } = await import('../server/utils/savegame')
     const legacyV3 = historicalClaimedRewardFixture()
