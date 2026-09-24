@@ -1393,7 +1393,7 @@ export function isPersistedCanonical(
       continue
     }
     if (!visitorIds.has(projection.visitorId)) {
-      if (!projection.retainedVisitor && !hasRetainedExpeditionDependency(container, settlements, recoveries)) return false
+      if (!hasRetainedExpeditionDependency(container, settlements, recoveries)) return false
       if (!projection.retainedVisitor && !options.allowMissingRetainedVisitor) return false
       continue
     }
