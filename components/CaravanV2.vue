@@ -22,7 +22,7 @@
 
       <section aria-labelledby="upgrades-title"><div class="section-title"><div><span class="eyebrow">Progresión</span><h2 id="upgrades-title">Mejoras de caravana</h2></div></div><div class="upgrade-grid"><article v-for="upgrade in game.caravan.upgrades" :key="upgrade.upgradeId" class="card upgrade-card"><div class="row"><h3>{{ upgradeName(upgrade.upgradeId) }}</h3><span class="tag">{{ upgrade.level }} / {{ upgrade.maxLevel }}</span></div><div class="upgrade-track" aria-hidden="true"><span :style="{ width: `${upgrade.maxLevel ? (upgrade.level / upgrade.maxLevel) * 100 : 0}%` }" /></div><p class="muted">{{ upgradeDescription(upgrade.upgradeId) }}</p></article></div></section>
 
-      <section class="card actions-card" aria-labelledby="actions-title"><div class="row"><div><span class="eyebrow">Autorizaciones selladas</span><h2 id="actions-title">Acciones disponibles</h2></div><span v-if="!upgradeAction" class="tag">Sin mejoras habilitadas</span></div><div v-if="upgradeAction" class="upgrade-option"><div><strong>{{ upgradeAction.execution.options[0]?.label.fallback }}</strong><p class="muted">{{ upgradeAction.execution.options[0]?.description.fallback }}</p></div><button class="btn primary" type="button" :disabled="disabled" @click="openConfirmation">Revisar mejora</button></div><p v-else class="muted">La caravana está bloqueada por el snapshot actual. Revisá deuda o esperá una nueva autorización.</p></section>
+      <section class="card actions-card" aria-labelledby="actions-title"><div class="row"><div><span class="eyebrow">Autorizaciones selladas</span><h2 id="actions-title">Acciones disponibles</h2></div><span v-if="!upgradeAction" class="tag">Sin mejoras habilitadas</span></div><div v-if="upgradeAction" class="upgrade-options"><div v-for="option in upgradeAction.execution.options" :key="option.optionId" class="upgrade-option"><div><strong>{{ option.label.fallback }}</strong><p class="muted">{{ option.description.fallback }}</p></div><button class="btn primary" type="button" :disabled="disabled" @click="openConfirmation(option, $event)">Revisar mejora</button></div></div><p v-else class="muted">La caravana está bloqueada por el snapshot actual. Revisá deuda o esperá una nueva autorización.</p></section>
     </template>
 
     <div v-if="confirmation" class="confirm-backdrop" role="presentation" @click.self="closeConfirmation"><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="upgrade-confirm-title" @keydown.esc="closeConfirmation"><h2 id="upgrade-confirm-title">{{ confirmation.option.label.fallback }}</h2><p>{{ confirmation.option.description.fallback }}</p><h3>Consecuencias publicadas</h3><ul><li v-for="consequence in confirmation.option.consequences" :key="consequence.text.key">{{ consequence.text.fallback }}</li><li v-if="!confirmation.option.consequences.length">La mejora se aplicará únicamente cuando el servidor publique una nueva revisión.</li></ul><div class="item-actions"><button ref="cancelButton" class="btn ghost" type="button" @click="closeConfirmation">Cancelar</button><button class="btn primary" type="button" @click="confirmUpgrade">Confirmar mejora</button></div></section></div>
@@ -38,14 +38,16 @@ const props = defineProps<{ game: GameView | null; loadState: string; operationS
 const emit = defineEmits<{ reload: []; retry: []; upgrade: [selection: CaravanSelection] }>()
 const confirmation = ref<({ revision: number; action: UpgradeCaravanAction; option: UpgradeCaravanAction['execution']['options'][number] }) | null>(null)
 const cancelButton = ref<HTMLButtonElement | null>(null)
+const content = ref<HTMLElement | null>(null)
+const confirmationTrigger = ref<HTMLButtonElement | null>(null)
 const disabled = computed(() => props.snapshotStale || props.operationState === 'pending' || props.operationState === 'uncertain')
 const upgradeAction = computed(() => props.game ? props.game.actions.find((action): action is UpgradeCaravanAction => action.action === 'upgrade_caravan' && action.enabled) ?? null : null)
 const operationLabel = computed(() => props.operationState === 'pending' ? 'Mejora enviada; esperando snapshot confirmado…' : props.unavailableReason ? `La acción está bloqueada: ${props.unavailableReason}.` : 'Revisá el estado publicado.')
 watch(() => [props.game?.revision, props.snapshotStale], () => { if (confirmation.value && (!props.game || props.game.revision !== confirmation.value.revision || !selectionForCaravanUpgrade(props.game, confirmation.value.option.optionId))) closeConfirmation() })
 watch(confirmation, async (value) => { if (value) { await nextTick(); cancelButton.value?.focus() } })
-function openConfirmation() { const action = upgradeAction.value; const option = action?.execution.options[0]; if (action && option && !disabled.value) confirmation.value = { revision: props.game!.revision, action, option } }
-function closeConfirmation() { confirmation.value = null }
-function confirmUpgrade() { if (!confirmation.value || !props.game || props.game.revision !== confirmation.value.revision) return closeConfirmation(); const selection = selectionForCaravanUpgrade(props.game, confirmation.value.option.optionId); closeConfirmation(); if (selection) emit('upgrade', selection) }
+function openConfirmation(option: UpgradeCaravanAction['execution']['options'][number], event: MouseEvent) { const action = upgradeAction.value; if (action && !disabled.value && action.execution.options.some((candidate) => candidate.optionId === option.optionId)) { confirmationTrigger.value = event.currentTarget as HTMLButtonElement; confirmation.value = { revision: props.game!.revision, action, option } } }
+async function closeConfirmation() { const trigger = confirmationTrigger.value; confirmation.value = null; confirmationTrigger.value = null; await nextTick(); if (trigger?.isConnected) trigger.focus(); else content.value?.focus() }
+async function confirmUpgrade() { if (!confirmation.value || !props.game || props.game.revision !== confirmation.value.revision) return closeConfirmation(); const selection = selectionForCaravanUpgrade(props.game, confirmation.value.option.optionId); await closeConfirmation(); if (selection) emit('upgrade', selection) }
 function formatDate(value: string) { return new Date(value).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) }
 function upgradeName(value: string) { return ({ visitor_quarters: 'Alojamiento', blacksmith: 'Herrería', enchanter: 'Encantamiento' } as Record<string, string>)[value] ?? value }
 function upgradeDescription(value: string) { return ({ visitor_quarters: 'Más espacio para visitantes.', blacksmith: 'Desbloquea el servicio del herrero.', enchanter: 'Desbloquea el servicio del encantador.' } as Record<string, string>)[value] ?? 'Mejora publicada por la caravana.' }
@@ -65,7 +67,8 @@ function upgradeDescription(value: string) { return ({ visitor_quarters: 'Más e
 .upgrade-card p { margin: 0; }
 .upgrade-track { background: #14120f; border: 1px solid var(--line); height: .55rem; overflow: hidden; }
 .upgrade-track span { background: var(--accent-2); display: block; height: 100%; }
-.upgrade-option { align-items: center; display: flex; gap: 1rem; justify-content: space-between; padding-top: .8rem; }
+.upgrade-options { display: grid; gap: .75rem; padding-top: .8rem; }
+.upgrade-option { align-items: center; border-top: 1px solid var(--line); display: flex; gap: 1rem; justify-content: space-between; padding-top: .8rem; }
 .upgrade-option p { margin: .25rem 0 0; }
 .state { display: grid; gap: .5rem; justify-items: start; }
 .state h2, .state p { margin: 0; }

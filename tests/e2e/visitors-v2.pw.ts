@@ -76,6 +76,17 @@ test('loads and mutates the authenticated V2 route with the exact command envelo
     expect(envelope.expectedRevision).toBe(game.revision)
     expect(Object.keys(envelope.payload).sort()).toEqual(['loanItemIds', 'optionId', 'visitorId'])
     expect(await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth)).toBe(true)
+
+    await page.goto('/equipment-v2')
+    await expect(page.getByRole('heading', { name: 'Equipo y servicios' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Inventario de la caravana' })).toBeVisible()
+    await page.goto('/caravan-v2')
+    await expect(page.getByRole('heading', { name: 'Caravana V2' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Mejoras de caravana' })).toBeVisible()
+    await page.goto('/chronicle-v2')
+    await expect(page.getByRole('heading', { name: 'Crónica V2' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Crónica histórica' })).toBeVisible()
+    expect(legacyRequests).toHaveLength(0)
   } finally {
     const user = await users.findOne({ email })
     if (user) await saves.deleteMany({ userId: String(user._id) })
