@@ -95,11 +95,11 @@ describe('CaravanV2', () => {
     document.body.append(host)
     const wrapper = mount(CaravanV2, { attachTo: host, props: { game, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false } })
     await wrapper.findAll('button').find((button) => button.text() === 'Revisar mejora')!.trigger('click')
-    expect(wrapper.get('.caravan-content').element.inert).toBe(true)
+    expect((wrapper.get('.caravan-content').element as HTMLElement).inert).toBe(true)
     expect(header.inert).toBe(true)
     await wrapper.setProps({ game: null })
     expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
-    expect(wrapper.get('.caravan-content').element.inert).toBe(false)
+    expect((wrapper.get('.caravan-content').element as HTMLElement).inert).toBe(false)
     expect(header.inert).toBe(false)
 
     await wrapper.setProps({ game })

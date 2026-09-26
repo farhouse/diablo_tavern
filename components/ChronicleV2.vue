@@ -22,20 +22,25 @@ function subjectLabel(entry: ChronicleEntry) { return `${entry.subject.kind === 
 </script>
 
 <style scoped>
-.chronicle { display: grid; gap: 1rem; }
+.chronicle, .timeline, .timeline-entry { max-width: 100%; min-width: 0; width: 100%; }
+.chronicle { display: grid; gap: 1rem; overflow-x: hidden; }
+.chronicle > * { max-width: 100%; min-width: 0; }
+.chronicle > .section-title { width: 100%; }
 .timeline { display: grid; gap: .75rem; list-style: none; margin: 0; padding: 0; }
 .timeline-entry { display: grid; gap: .45rem; position: relative; }
 .timeline-entry::before { background: var(--line); content: ''; height: 100%; left: 1.3rem; position: absolute; top: 1.5rem; width: 1px; }
 .timeline-entry:last-child::before { display: none; }
 .timeline-dot { background: var(--accent-2); border: 3px solid var(--panel); border-radius: 50%; height: .8rem; left: .9rem; position: absolute; top: 1.15rem; width: .8rem; z-index: 1; }
 .timeline-entry > *:not(.timeline-dot) { margin-left: 1.5rem; }
+.timeline-entry > * { max-width: 100%; overflow-wrap: anywhere; }
 .timeline-entry p { margin: 0; }
 .timeline-entry time { color: var(--muted); font-size: .85rem; }
 .provenance { color: var(--accent-2); font-size: .9rem; }
-.load-more { justify-self: center; min-width: 13rem; }
+.load-more { justify-self: center; min-width: 0; max-width: 100%; overflow-wrap: anywhere; white-space: normal; width: min(100%, 13rem); }
+.section-title .tag { max-width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
 .end-note { text-align: center; }
 .state { display: grid; gap: .5rem; justify-items: start; }
 .state h2, .state h3, .state p { margin: 0; }
-@media (max-width: 560px) { .timeline-entry .row { align-items: flex-start; flex-direction: column; } }
-@media (max-width: 200px) { .chronicle, .timeline-entry { min-width: 0; } .timeline-entry > *:not(.timeline-dot) { margin-left: 0.25rem; min-width: 0; } .load-more { min-width: 0; width: 100%; } }
+@media (max-width: 560px) { .chronicle > .section-title { display: grid; grid-template-columns: minmax(0, 1fr); } .timeline-entry .row { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 200px) { .timeline-entry > *:not(.timeline-dot) { margin-left: 0.25rem; min-width: 0; } .load-more { width: 100%; } }
 </style>

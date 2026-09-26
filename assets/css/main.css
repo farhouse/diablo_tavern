@@ -134,9 +134,26 @@ a {
   margin-bottom: 1rem;
 }
 
+.section-title > * {
+  min-width: 0;
+}
+
+.page > .section-title {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  width: 100%;
+}
+
 .section-title h1,
 .section-title h2 {
   margin: 0;
+}
+
+.page > .section-title .btn {
+  max-width: 100%;
+  min-height: 44px;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .muted {

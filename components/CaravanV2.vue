@@ -134,21 +134,25 @@ onBeforeUnmount(() => setOutsideInert(false))
 </script>
 
 <style scoped>
+.caravan-v2, .caravan-v2 section, .caravan-v2 article, .caravan-v2 .upgrade-option { min-width: 0; overflow-wrap: anywhere; }
+.caravan-content { max-width: 100%; min-width: 0; }
 .caravan-v2 { display: grid; gap: 1rem; }
 .caravan-hero { align-items: end; background: linear-gradient(125deg, rgba(75, 35, 26, .95), rgba(27, 25, 22, .94) 65%); display: flex; gap: 1rem; justify-content: space-between; min-height: 10rem; }
 .caravan-hero h2, .upgrade-card h3, .actions-card h2, .confirm-dialog h2, .confirm-dialog h3 { margin: 0; }
-.stats, .upgrade-grid { display: grid; gap: 1rem; grid-template-columns: repeat(3, 1fr); }
-.stat { background: var(--panel); border: 1px solid var(--line); display: grid; gap: .25rem; padding: 1rem; }
+.stats, .upgrade-grid { display: grid; gap: 1rem; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stat { background: var(--panel); border: 1px solid var(--line); display: grid; gap: .25rem; min-width: 0; padding: 1rem; }
+.stat > * { min-width: 0; overflow-wrap: anywhere; }
 .stat strong { color: var(--accent-2); font-size: 1.5rem; }
 .stat strong.ok { color: var(--ok); } .stat strong.debt, .debt-notice { color: var(--bad); }
 .debt-notice { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
-.upgrade-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.upgrade-grid { grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); }
 .upgrade-card { display: grid; gap: .75rem; }
 .upgrade-card p { margin: 0; }
 .upgrade-track { background: #14120f; border: 1px solid var(--line); height: .55rem; overflow: hidden; }
 .upgrade-track span { background: var(--accent-2); display: block; height: 100%; }
 .upgrade-options { display: grid; gap: .75rem; padding-top: .8rem; }
 .upgrade-option { align-items: center; border-top: 1px solid var(--line); display: flex; gap: 1rem; justify-content: space-between; padding-top: .8rem; }
+.upgrade-option > div { min-width: 0; }
 .upgrade-option p { margin: .25rem 0 0; }
 .state { display: grid; gap: .5rem; justify-items: start; }
 .state h2, .state p { margin: 0; }
