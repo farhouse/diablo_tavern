@@ -353,6 +353,44 @@ a {
     align-items: stretch;
     flex-direction: column;
   }
+
+  .section-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .page {
+    padding-inline: 0.5rem;
+  }
+
+  .card {
+    padding: 0.5rem;
+  }
+}
+
+@media (max-width: 200px) {
+  .topbar,
+  .page {
+    padding-inline: 0.25rem;
+  }
+
+  .nav,
+  .topbar-stats {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .nav a,
+  .topbar-stats .btn {
+    justify-content: center;
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .card {
+    padding: 0.25rem;
+  }
 }
 
 /* Expedition-specific styles */

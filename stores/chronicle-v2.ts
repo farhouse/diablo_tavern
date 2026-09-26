@@ -18,6 +18,7 @@ export const useChronicleV2Store = defineStore('chronicle-v2', {
     async load() {
       const epoch = this.requestEpoch
       const request = ++this.latestRequest
+      if (this.loadMoreState === 'loading') this.loadMoreState = 'idle'
       this.loadState = 'loading'
       this.errorMessage = ''
       try {
@@ -37,6 +38,7 @@ export const useChronicleV2Store = defineStore('chronicle-v2', {
       const epoch = this.requestEpoch
       const request = ++this.latestRequest
       const cursor = this.nextCursor
+      if (this.loadState === 'loading') this.loadState = 'idle'
       this.loadMoreState = 'loading'
       this.loadMoreError = ''
       try {

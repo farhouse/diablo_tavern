@@ -59,6 +59,46 @@ describe('chronicle V2 store', () => {
     expect(store.loadMoreError).toContain('siguen disponibles')
   })
 
+  it('does not leave load more stuck when a newer full load supersedes it', async () => {
+    let resolveMore!: (value: unknown) => void
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ entries: [first], nextCursor: 'next' })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveMore = resolve }))
+      .mockResolvedValueOnce({ entries: [second], nextCursor: null })
+    vi.stubGlobal('$fetch', fetchMock)
+    const store = useChronicleV2Store()
+    await store.load()
+    const more = store.loadMore()
+    expect(store.loadMoreState).toBe('loading')
+    const fresh = store.load()
+    expect(store.loadMoreState).toBe('idle')
+    await fresh
+    resolveMore({ entries: [first], nextCursor: 'stale' })
+    await more
+    expect(store.loadMoreState).toBe('idle')
+    expect(store.loadState).toBe('ready')
+  })
+
+  it('does not leave full load stuck when a newer incremental load supersedes it', async () => {
+    let resolveLoad!: (value: unknown) => void
+    const fetchMock = vi.fn()
+      .mockReturnValueOnce(new Promise((resolve) => { resolveLoad = resolve }))
+      .mockResolvedValueOnce({ entries: [first], nextCursor: null })
+    vi.stubGlobal('$fetch', fetchMock)
+    const store = useChronicleV2Store()
+    store.entries = [second]
+    store.nextCursor = 'next'
+    const load = store.load()
+    expect(store.loadState).toBe('loading')
+    const more = store.loadMore()
+    expect(store.loadState).toBe('idle')
+    await more
+    resolveLoad({ entries: [second], nextCursor: 'stale' })
+    await load
+    expect(store.loadState).toBe('idle')
+    expect(store.loadMoreState).toBe('idle')
+  })
+
   it('ignores an account A response after reset and account B load', async () => {
     let resolveA!: (value: unknown) => void
     const pendingA = new Promise((resolve) => { resolveA = resolve })

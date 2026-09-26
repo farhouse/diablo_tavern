@@ -37,4 +37,5 @@ function subjectLabel(entry: ChronicleEntry) { return `${entry.subject.kind === 
 .state { display: grid; gap: .5rem; justify-items: start; }
 .state h2, .state h3, .state p { margin: 0; }
 @media (max-width: 560px) { .timeline-entry .row { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 200px) { .chronicle, .timeline-entry { min-width: 0; } .timeline-entry > *:not(.timeline-dot) { margin-left: 0.25rem; min-width: 0; } .load-more { min-width: 0; width: 100%; } }
 </style>
