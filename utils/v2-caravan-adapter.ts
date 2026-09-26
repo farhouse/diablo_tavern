@@ -33,9 +33,9 @@ export function selectionForCaravanUpgrade(game: GameView, optionId: string): Ca
 export function invalidateCaravanSelection(game: GameView | null, selection: CaravanSelection | null): CaravanSelection | null {
   if (!game || !selection) return null
   try {
-    return selectionForCaravanUpgrade(game, selection.optionId)?.authorizationId === selection.authorizationId
-      ? selectionForCaravanUpgrade(game, selection.optionId)
-      : null
+    if (selection.revision !== game.revision) return null
+    const refreshed = selectionForCaravanUpgrade(game, selection.optionId)
+    return refreshed?.authorizationId === selection.authorizationId ? refreshed : null
   } catch {
     return null
   }

@@ -4,6 +4,8 @@ import { useAuthStore } from '~/stores/auth'
 
 export const useChronicleV2Store = defineStore('chronicle-v2', {
   state: () => ({
+    requestEpoch: Math.random(),
+    latestRequest: 0,
     entries: [] as ChronicleEntry[],
     nextCursor: null as string | null,
     loadState: 'idle' as 'idle' | 'loading' | 'ready' | 'error',
@@ -14,28 +16,37 @@ export const useChronicleV2Store = defineStore('chronicle-v2', {
   getters: { hasMore: (state) => Boolean(state.nextCursor) },
   actions: {
     async load() {
+      const epoch = this.requestEpoch
+      const request = ++this.latestRequest
       this.loadState = 'loading'
       this.errorMessage = ''
       try {
         const response = await this.request<ChronicleResponse>('/api/v2/chronicle?limit=30')
+        if (epoch !== this.requestEpoch || request < this.latestRequest) return
         this.entries = dedupe(response.entries)
         this.nextCursor = response.nextCursor
         this.loadState = 'ready'
       } catch {
+        if (epoch !== this.requestEpoch || request < this.latestRequest) return
         this.loadState = 'error'
         this.errorMessage = 'No se pudo cargar la crónica. Reintentá.'
       }
     },
     async loadMore() {
       if (!this.nextCursor || this.loadMoreState === 'loading') return
+      const epoch = this.requestEpoch
+      const request = ++this.latestRequest
+      const cursor = this.nextCursor
       this.loadMoreState = 'loading'
       this.loadMoreError = ''
       try {
-        const response = await this.request<ChronicleResponse>(`/api/v2/chronicle?limit=30&cursor=${encodeURIComponent(this.nextCursor)}`)
+        const response = await this.request<ChronicleResponse>(`/api/v2/chronicle?limit=30&cursor=${encodeURIComponent(cursor)}`)
+        if (epoch !== this.requestEpoch || request < this.latestRequest) return
         this.entries = dedupe([...this.entries, ...response.entries])
         this.nextCursor = response.nextCursor
         this.loadMoreState = 'idle'
       } catch {
+        if (epoch !== this.requestEpoch || request < this.latestRequest) return
         this.loadMoreState = 'error'
         this.loadMoreError = 'No se pudieron cargar más entradas. Tus entradas actuales siguen disponibles.'
       }
