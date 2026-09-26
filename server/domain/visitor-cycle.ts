@@ -1059,9 +1059,9 @@ function isRecovery(value: unknown): value is PersistedCycleRecovery {
     && isUtc(value.completesAt) && typeof value.succeeds === 'boolean' && value.resolvedAt === undefined
   if (!isUtc(value.resolvedAt)) return false
   if (value.state === 'abandoned') return hasOnlyKeys(value, [...common, 'resolvedAt'])
-  if (value.state === 'recovered' && (value.itemIds as string[]).length === 0) {
-    return hasOnlyKeys(value, [...common, 'resolvedAt', 'recoveredItemIds'])
-      && isStringArray(value.recoveredItemIds) && (value.recoveredItemIds as string[]).length === 0
+  if (value.state === 'recovered' && (value.itemIds as string[]).length === 0
+    && hasOnlyKeys(value, [...common, 'resolvedAt', 'recoveredItemIds'])) {
+    return isStringArray(value.recoveredItemIds) && (value.recoveredItemIds as string[]).length === 0
   }
   if (!hasOnlyKeys(value, [...assigned, 'resolvedAt', ...(value.state === 'recovered' ? ['recoveredItemIds'] : [])])) return false
   return value.state !== 'recovered' || (isStringArray(value.recoveredItemIds) && sameIds(value.recoveredItemIds, value.itemIds as string[]))

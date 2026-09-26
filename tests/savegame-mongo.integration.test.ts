@@ -11,7 +11,8 @@ let collection: Collection
 let repositoryCollection: Collection
 let chronicleCollection: Collection
 const prefix = `alta43-${process.pid}`
-const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`, `${prefix}-caravan-concurrent`, `${prefix}-outbox-cap`, `${prefix}-reservation-repair`, `${prefix}-upgrade-replay`, `${prefix}-retained-gold-absent`, `${prefix}-retained-gold-invalid`, `${prefix}-retained-reservation-corrupt`, `${prefix}-retained-orphan`, `${prefix}-death-no-loans`]
+const deathNoLoansUserId = `${prefix}-death-no-loans`
+const userIds = [`${prefix}-replay`, `${prefix}-reset`, `${prefix}-business`, `${prefix}-sell-loan`, `${prefix}-sell-dismantle`, `${prefix}-service-loan`, `${prefix}-transition-replay`, `${prefix}-custody`, `${prefix}-materials`, `${prefix}-uncertain`, `${prefix}-corrupt`, `${prefix}-commission-flow`, `${prefix}-service-roundtrip`, `${prefix}-retained-return`, `${prefix}-retained-missing-source`, `${prefix}-retained-malformed-source`, `${prefix}-retained-backfill-race`, `${prefix}-equipment-replay`, `${prefix}-equipment-uncertain`, `${prefix}-equipment-cas`, `${prefix}-equipment-job-tombstone`, `${prefix}-reward-replay`, `${prefix}-reward-cas`, `${prefix}-historical-reward-backfill`, `${prefix}-reward-enchanter`, `${prefix}-v2-cycle`, `${prefix}-settlement-race`, `${prefix}-double-advance`, `${prefix}-return-departure`, `${prefix}-recovery-abandon`, `${prefix}-caravan-concurrent`, `${prefix}-outbox-cap`, `${prefix}-reservation-repair`, `${prefix}-upgrade-replay`, `${prefix}-retained-gold-absent`, `${prefix}-retained-gold-invalid`, `${prefix}-retained-reservation-corrupt`, `${prefix}-retained-orphan`, deathNoLoansUserId]
 const foreignChronicleUserId = `${userIds[30]}-other`
 const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
 const ORIGINAL_NUXT_JWT_SECRET = process.env.NUXT_JWT_SECRET
@@ -139,7 +140,7 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic } = await import('../server/utils/savegame')
     const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
-    const initial = await getPersistedGameV3(userIds[39]!)
+    const initial = await getPersistedGameV3(deathNoLoansUserId)
     const visitorId = Object.keys(initial.visitorCycle.visitors)[0]!
     const optionId = initial.visitorCycle.visitors[visitorId]!.contractOptions[0]!.optionId
     const now = new Date(initial.createdAt)
@@ -156,13 +157,13 @@ suite('PersistedGameV3 against isolated real MongoDB', () => {
     const preview = applyVisitorCycleCommand(active, { action: 'reconcile_game' }, dependencies)
     const settlement = Object.values(preview.visitorCycle.settlements)[0]!
     const beforeGold = preview.gold
-    await collection.replaceOne({ userId: userIds[39] }, preview)
+    await collection.replaceOne({ userId: deathNoLoansUserId }, preview)
 
-    const response = await mutateVisitorCycleAtomic(userIds[39]!, 'death-no-loans-confirm', 0, {
+    const response = await mutateVisitorCycleAtomic(deathNoLoansUserId, 'death-no-loans-confirm', 0, {
       action: 'confirm_settlement', settlementId: settlement.settlementId,
       previewVersion: settlement.previewVersion, selectedOptionIds: []
     }, `settlement:${settlement.settlementId}`, mapPersistedGameToGameView, dependencies)
-    const stored = await getPersistedGameV3(userIds[39]!)
+    const stored = await getPersistedGameV3(deathNoLoansUserId)
 
     expect(response.game.visitors.find((visitor) => visitor.visitorId === visitorId)?.state).toBe('dead')
     expect(response.game.recoveries).toEqual([expect.objectContaining({

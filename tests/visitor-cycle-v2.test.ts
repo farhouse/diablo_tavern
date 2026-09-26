@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import fc from 'fast-check'
 import { createSaveGame } from '../utils/game-logic'
 import { buildPersistedFromPublic, hydratePersistedGame, isPersistedCanonical, type PersistenceDependencies, type PersistedGameV3 } from '../server/utils/savegame'
-import { applyVisitorCycleCommand, VisitorCycleError } from '../server/domain/visitor-cycle'
+import { applyVisitorCycleCommand, isVisitorCycle, VisitorCycleError } from '../server/domain/visitor-cycle'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
 import { validateGameView } from '../server/utils/game-view-validator'
 import { applyItemTransition } from '../server/domain/item-transitions'
@@ -265,6 +265,27 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(deadView.visitors.find((visitor) => visitor.visitorId === scenario.visitorId)?.actions.map((action) => action.action))
       .not.toEqual(expect.arrayContaining(['assign_recovery', 'abandon_recovery']))
     expect(isPersistedCanonical(dead)).toBe(true)
+  })
+
+  it('keeps historical empty recoveries with assignment metadata canonical', () => {
+    const scenario = activeScenario()
+    scenario.game.visitorCycle.expeditions[scenario.expeditionId]!.events = [event(scenario.now, 18)]
+    const preview = apply(scenario.game, { action: 'reconcile_game' }, scenario.dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    settlement.loanItemIds = []
+    const dead = apply(preview, {
+      action: 'confirm_settlement', settlementId: settlement.settlementId,
+      previewVersion: settlement.previewVersion, selectedOptionIds: []
+    }, scenario.dependencies)
+    const recovery = Object.values(dead.visitorCycle.recoveries)[0]!
+    Object.assign(recovery, {
+      assignedVisitorId: scenario.visitorId,
+      assignedAt: scenario.now.toISOString(),
+      completesAt: scenario.now.toISOString(),
+      succeeds: true
+    })
+
+    expect(isVisitorCycle(dead.visitorCycle)).toBe(true)
   })
 
   it('assigns and resolves recovery without capturing visitor-owned belongings', () => {
