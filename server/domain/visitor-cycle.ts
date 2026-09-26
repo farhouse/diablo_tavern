@@ -4,6 +4,7 @@ import type {
   ActionAvailability,
   ChoiceGroup,
   ContractOptionView,
+  ConfirmSettlementAction,
   ExpeditionOutcome,
   ExpeditionView,
   GameView,
@@ -800,14 +801,15 @@ function projectRecovery(
   return { ...base, state: recovery.state, resolvedAt: recovery.resolvedAt!, consequence, actions: [] }
 }
 
-function confirmAction(settlement: PersistedCycleSettlement, targetId: string): ActionAvailability {
-  return {
-    ...enabledAction('confirm_settlement', settlement.settlementId, {
+function confirmAction(settlement: PersistedCycleSettlement, targetId: string): ConfirmSettlementAction {
+  const action = enabledAction('confirm_settlement', settlement.settlementId, {
       settlementId: settlement.settlementId, previewVersion: settlement.previewVersion, expiresAt: settlement.expiresAt,
       groups: settlement.choiceGroups.map((group) => ({ groupId: group.groupId, eligibleOptionIds: group.options.map((option) => option.optionId) }))
-    }),
-    targetId
+    })
+  if (action.action !== 'confirm_settlement' || !action.enabled) {
+    throw new Error('Expected enabled confirm_settlement action')
   }
+  return { ...action, targetId }
 }
 
 function enabledAction(
