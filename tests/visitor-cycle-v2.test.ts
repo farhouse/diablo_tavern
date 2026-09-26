@@ -428,6 +428,30 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(action).toMatchObject({ enabled: true, execution: { visitorId: created.visitorId } })
     expect(JSON.stringify(view)).not.toMatch(/"events"|"damage"|"succeeds"|"departureResolution":"(stays|departs)"/)
   })
+
+  it('publishes an actionable reconcile reason when historical contract options expired', () => {
+    const created = baseGame()
+    const expiresAt = created.game.visitorCycle.visitors[created.visitorId]!.contractOptions[0]!.expiresAt
+    const afterExpiry = new Date(Date.parse(expiresAt) + 1)
+
+    const staleView = mapPersistedGameToGameView(created.game, afterExpiry)
+    const staleVisitor = staleView.visitors.find((visitor) => visitor.visitorId === created.visitorId)
+    expect(staleVisitor?.actions).toContainEqual(expect.objectContaining({
+      action: 'accept_contract',
+      enabled: false,
+      reason: 'OPTION_STALE',
+      reasonText: expect.objectContaining({ fallback: expect.stringContaining('Reconciliá') })
+    }))
+
+    created.dependencies.now = () => afterExpiry
+    const reconciled = apply(created.game, { action: 'reconcile_game' }, created.dependencies)
+    const refreshedView = mapPersistedGameToGameView(reconciled, afterExpiry)
+    const refreshedVisitor = refreshedView.visitors.find((visitor) => visitor.visitorId === created.visitorId)
+    expect(refreshedVisitor?.actions).toContainEqual(expect.objectContaining({
+      action: 'accept_contract',
+      enabled: true
+    }))
+  })
 })
 
 function activeScenario(): ReturnType<typeof baseGame> & { game: PersistedGameV3; expeditionId: string; loanItemId: string } {

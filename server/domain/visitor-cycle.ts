@@ -10,6 +10,7 @@ import type {
   RecoveryOptionView,
   RecoveryView,
   SettlementView,
+  UnavailableReason,
   VisitorView
 } from '~/shared/types/v2-game-view'
 import { V2DomainRuleError } from '~/shared/errors/v2-domain'
@@ -673,12 +674,22 @@ function projectVisitor(
   if (visitor.state === 'available') {
     const live = visitor.contractOptions.filter((option) => now.getTime() < Date.parse(option.expiresAt))
     const publicOptions = visitor.contractOptions.map(publicContractOption)
-    const actions: ActionAvailability[] = visitor.busyRecoveryId || live.length === 0 ? [] : [{
-      ...enabledAction('accept_contract', visitor.visitorId, {
-        visitorId: visitor.visitorId,
-        bindings: live.map((option) => ({ optionId: option.optionId, eligibleLoanItemIds: eligibleLoans, expiresAt: option.expiresAt }))
-      })
-    }]
+    const actions: ActionAvailability[] = visitor.busyRecoveryId
+      ? [disabledAction(
+          'accept_contract', visitor.visitorId, 'VISITOR_NOT_AVAILABLE',
+          'El visitante está ocupado con una recuperación.'
+        )]
+      : live.length === 0
+        ? [disabledAction(
+            'accept_contract', visitor.visitorId, 'OPTION_STALE',
+            'Los contratos vencieron. Reconciliá la partida para recibir nuevas propuestas.'
+          )]
+        : [{
+            ...enabledAction('accept_contract', visitor.visitorId, {
+              visitorId: visitor.visitorId,
+              bindings: live.map((option) => ({ optionId: option.optionId, eligibleLoanItemIds: eligibleLoans, expiresAt: option.expiresAt }))
+            })
+          }]
     return { ...base, state: 'available', departureSignal: visitor.departureSignal, contractOptions: publicOptions, actions }
   }
   if (visitor.state === 'negotiating') return {
@@ -807,6 +818,24 @@ function enabledAction(
     label: text(`action.${action}`, action.replaceAll('_', ' ')), consequences,
     ...(targetId ? { targetId } : {}), execution
   } as ActionAvailability
+}
+
+function disabledAction(
+  action: ActionAvailability['action'],
+  targetId: string,
+  reason: UnavailableReason,
+  fallback: string
+): ActionAvailability {
+  return {
+    authorizationId: `auth-${action}-${targetId}`,
+    action,
+    targetId,
+    enabled: false,
+    label: text(`action.${action}`, action.replaceAll('_', ' ')),
+    reason,
+    reasonText: text(`unavailable.${reason.toLowerCase()}`, fallback),
+    consequences: []
+  }
 }
 
 function contractOptions(visitorId: string, from: string, sequence: number): PersistedContractOption[] {

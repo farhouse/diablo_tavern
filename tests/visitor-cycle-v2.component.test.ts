@@ -41,6 +41,30 @@ describe('VisitorCycleV2', () => {
     expect(ready.text()).toContain('Rev. 10')
   })
 
+  it('shows the published next step for expired historical contracts', () => {
+    const game = fixture('integrated-contract')
+    const visitor = game.visitors[0]
+    if (!visitor) throw new Error('Expected visitor')
+    visitor.actions = [{
+      authorizationId: `auth-accept_contract-${visitor.visitorId}`,
+      action: 'accept_contract',
+      targetId: visitor.visitorId,
+      enabled: false,
+      label: { key: 'action.accept_contract', fallback: 'accept contract' },
+      reason: 'OPTION_STALE',
+      reasonText: {
+        key: 'unavailable.option_stale',
+        fallback: 'Los contratos vencieron. Reconciliá la partida para recibir nuevas propuestas.'
+      },
+      consequences: []
+    }]
+
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    const copy = wrapper.get('[data-testid="visitor-available"]').text()
+    expect(copy).toContain('Reconciliá la partida')
+    expect(copy).not.toContain('Acción no publicada en el snapshot')
+  })
+
   it('emits exact UI intentions for contract, expedition, settlement and recovery actions', async () => {
     const contract = mount(VisitorCycleV2, { props: { game: fixture('integrated-contract'), loadState: 'ready' } })
     await contract.get('button').trigger('click')
