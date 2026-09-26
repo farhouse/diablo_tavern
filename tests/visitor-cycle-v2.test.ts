@@ -4,6 +4,7 @@ import { createSaveGame } from '../utils/game-logic'
 import { buildPersistedFromPublic, hydratePersistedGame, isPersistedCanonical, type PersistenceDependencies, type PersistedGameV3 } from '../server/utils/savegame'
 import { applyVisitorCycleCommand, VisitorCycleError } from '../server/domain/visitor-cycle'
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
+import { validateGameView } from '../server/utils/game-view-validator'
 import { applyItemTransition } from '../server/domain/item-transitions'
 import { dismissVisitor } from '../utils/visitor-logic'
 import { confirmSettlementPayload } from '../utils/v2-visitor-adapter'
@@ -210,6 +211,17 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(recoveries[0]?.itemIds).toEqual([scenario.loanItemId])
     expect(dead.itemPlacements[scenario.loanItemId]).toMatchObject({ ownerKind: 'caravan', custodyKind: 'recovery' })
     expect(dead.visitorCycle.visitors[scenario.visitorId]).toMatchObject({ state: 'dead', recoveryId: recoveries[0]?.recoveryId })
+    const deadView = mapPersistedGameToGameView(dead, scenario.now)
+    validateGameView(deadView)
+    expect(deadView.recoveries[0]).toMatchObject({
+      itemIds: [scenario.loanItemId],
+      actions: expect.arrayContaining([
+        expect.objectContaining({
+          action: 'abandon_recovery',
+          consequences: [expect.objectContaining({ destroyedItemIds: [scenario.loanItemId] })]
+        })
+      ])
+    })
     expect(isPersistedCanonical(dead)).toBe(true)
 
     const abandoned = apply(dead, {
@@ -218,6 +230,37 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     }, scenario.dependencies)
     expect(abandoned.itemPlacements[scenario.loanItemId]).toMatchObject({ ownerKind: 'tombstone', custodyKind: 'tombstone' })
     expect(isPersistedCanonical(abandoned)).toBe(true)
+  })
+
+  it('keeps a loan-free death terminal after settlement without recovery actions', () => {
+    const scenario = baseGame()
+    const optionId = scenario.game.visitorCycle.visitors[scenario.visitorId]!.contractOptions[0]!.optionId
+    const contracted = apply(scenario.game, {
+      action: 'accept_contract', visitorId: scenario.visitorId, optionId, loanItemIds: []
+    }, scenario.dependencies)
+    const contract = Object.values(contracted.visitorCycle.contracts)[0]!
+    const expedition = apply(contracted, { action: 'start_expedition', contractId: contract.contractId }, scenario.dependencies)
+    expedition.visitorCycle.expeditions[contract.expeditionId]!.events = [event(scenario.now, 18, 100)]
+
+    const preview = apply(expedition, { action: 'reconcile_game' }, scenario.dependencies)
+    const settlement = Object.values(preview.visitorCycle.settlements)[0]!
+    const dead = apply(preview, {
+      action: 'confirm_settlement', settlementId: settlement.settlementId,
+      previewVersion: settlement.previewVersion, selectedOptionIds: []
+    }, scenario.dependencies)
+
+    expect(dead.gold).toBe(expedition.gold + settlement.caravanGold)
+    expect(dead.visitorCycle.settlements[settlement.settlementId]).toMatchObject({ state: 'settled', outcome: 'death' })
+    expect(dead.visitorCycle.visitors[scenario.visitorId]).toMatchObject({ state: 'dead' })
+    expect(Object.keys(dead.visitorCycle.recoveries)).toHaveLength(0)
+
+    const deadView = mapPersistedGameToGameView(dead, scenario.now)
+    validateGameView(deadView)
+    expect(deadView.recoveries).toEqual([])
+    expect(deadView.actions.map((action) => action.action)).not.toEqual(expect.arrayContaining(['assign_recovery', 'abandon_recovery']))
+    expect(deadView.visitors.find((visitor) => visitor.visitorId === scenario.visitorId)?.actions.map((action) => action.action))
+      .not.toEqual(expect.arrayContaining(['assign_recovery', 'abandon_recovery']))
+    expect(isPersistedCanonical(dead)).toBe(true)
   })
 
   it('assigns and resolves recovery without capturing visitor-owned belongings', () => {
