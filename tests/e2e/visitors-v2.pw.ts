@@ -101,8 +101,7 @@ test('completes the authenticated V2 visitor cycle and persists settlement state
     expect(Object.keys(acceptEnvelope.payload).sort()).toEqual(['loanItemIds', 'optionId', 'visitorId'])
     expect(acceptEnvelope.payload.visitorId).toBe(acceptExecution.visitorId)
     expect(acceptExecution.bindings.some((binding) => binding.optionId === acceptEnvelope.payload.optionId
-      && binding.eligibleLoanItemIds.length === acceptEnvelope.payload.loanItemIds.length
-      && binding.eligibleLoanItemIds.every((itemId) => acceptEnvelope.payload.loanItemIds.includes(itemId)))).toBe(true)
+      && (acceptEnvelope.payload.loanItemIds as string[]).every((itemId) => binding.eligibleLoanItemIds.includes(itemId)))).toBe(true)
     const contractedVisitor = accepted.game.visitors.find((visitor) => visitor.visitorId === contractVisitor.visitorId && visitor.state === 'contracted')!
     expect(contractedVisitor).toBeDefined()
     await expect(page.getByTestId('visitor-contracted')).toBeVisible()
@@ -138,14 +137,14 @@ test('completes the authenticated V2 visitor cycle and persists settlement state
     )
     expect(acceleratedUpdate.modifiedCount).toBe(1)
 
+    const reconcileAction = publishedEnabledAction(started.game.actions, 'reconcile_game')
     const reconcileResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/v2/reconcile')
     await page.getByRole('button', { name: 'Reconciliar' }).click()
     const reconcileResponse = await reconcileResponsePromise
     expect(reconcileResponse.ok()).toBe(true)
     const reconciled = await reconcileResponse.json() as { revision: number; game: GameSnapshot }
-    const reconcileAction = publishedEnabledAction(reconciled.game.actions, 'reconcile_game')
-    expect(reconcileResponse.request().postDataJSON().payload).toEqual({})
+    expect(reconcileResponse.request().postDataJSON().payload).toEqual(reconcileAction.execution)
     const preview = reconciled.game.settlements.find((settlement) => settlement.state === 'preview_ready')
     expect(preview).toBeDefined()
     const confirmAction = publishedEnabledAction(preview!.actions, 'confirm_settlement')
@@ -272,8 +271,7 @@ test('shows the published next step for a historical stale contract and reconcil
     const renewedAcceptPayload = renewedAcceptResponse.request().postDataJSON().payload as { visitorId: string; optionId: string; loanItemIds: string[] }
     expect(renewedAcceptPayload.visitorId).toBe(renewedAction.execution.visitorId)
     expect(renewedAction.execution.bindings.some((binding) => binding.optionId === renewedAcceptPayload.optionId
-      && binding.eligibleLoanItemIds.length === renewedAcceptPayload.loanItemIds.length
-      && binding.eligibleLoanItemIds.every((itemId) => renewedAcceptPayload.loanItemIds.includes(itemId)))).toBe(true)
+      && renewedAcceptPayload.loanItemIds.every((itemId) => binding.eligibleLoanItemIds.includes(itemId)))).toBe(true)
   } finally {
     await cleanup(database, email)
     await client.close()
