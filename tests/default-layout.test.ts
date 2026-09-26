@@ -6,13 +6,15 @@ import DefaultLayout from '../layouts/default.vue'
 const stores = vi.hoisted(() => ({
   auth: { loggedIn: true, logout: vi.fn(), hydrate: vi.fn() },
   legacy: { save: null, load: vi.fn(), $reset: vi.fn() },
-  v2: { $reset: vi.fn() }
+  v2: { $reset: vi.fn() },
+  chronicle: { $reset: vi.fn() }
 }))
 let routePath = '/tavern'
 
 vi.mock('../stores/auth', () => ({ useAuthStore: () => stores.auth }))
 vi.mock('../stores/game', () => ({ useGameStore: () => stores.legacy }))
 vi.mock('../stores/game-v2', () => ({ useGameV2Store: () => stores.v2 }))
+vi.mock('../stores/chronicle-v2', () => ({ useChronicleV2Store: () => stores.chronicle }))
 
 describe('default layout session isolation', () => {
   beforeEach(() => {
@@ -32,6 +34,7 @@ describe('default layout session isolation', () => {
     expect(stores.auth.logout).toHaveBeenCalledOnce()
     expect(stores.legacy.$reset).toHaveBeenCalledOnce()
     expect(stores.v2.$reset).toHaveBeenCalledOnce()
+    expect(stores.chronicle.$reset).toHaveBeenCalledOnce()
     expect(navigateTo).toHaveBeenCalledWith('/login')
   })
 

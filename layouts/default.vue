@@ -30,10 +30,12 @@ import { computed, onMounted, watch } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useGameStore } from '~/stores/game'
 import { useGameV2Store } from '~/stores/game-v2'
+import { useChronicleV2Store } from '~/stores/chronicle-v2'
 
 const auth = useAuthStore()
 const game = useGameStore()
 const gameV2 = useGameV2Store()
+const chronicleV2 = useChronicleV2Store()
 const route = useRoute()
 const isVisitorsV2 = computed(() => route.path.endsWith('-v2'))
 
@@ -56,6 +58,7 @@ function logout() {
   auth.logout()
   game.$reset()
   gameV2.$reset()
+  chronicleV2.$reset()
   navigateTo('/login')
 }
 </script>

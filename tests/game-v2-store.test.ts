@@ -4,6 +4,7 @@ import fixtures from '../contracts/v2-etapa0-4/fixtures.json'
 import type { GameView } from '../shared/types/v2-game-view'
 import { useGameV2Store } from '../stores/game-v2'
 import { selectionFor } from '../utils/v2-equipment-adapter'
+import { selectionForCaravanUpgrade } from '../utils/v2-caravan-adapter'
 
 const hydrate = vi.fn()
 const refresh = vi.fn()
@@ -72,6 +73,49 @@ describe('game V2 store', () => {
 
     expect(fetchMock.mock.calls[1]?.[1]?.body).toEqual(firstBody)
     expect(store.operationState).toBe('idle')
+  })
+
+  it('keeps a caravan upgrade uncertain when the response does not advance the revision', async () => {
+    const store = useGameV2Store()
+    const game = fixture('integrated-system')
+    const action = game.actions.find((candidate) => candidate.action === 'upgrade_caravan' && candidate.enabled)
+    if (!action || action.action !== 'upgrade_caravan') throw new Error('Expected caravan authorization')
+    const selection = selectionForCaravanUpgrade(game, action.execution.options[0]!.optionId)
+    if (!selection) throw new Error('Expected caravan selection')
+    store.applySnapshot(game)
+    const response = { requestId: 'same', revision: game.revision, game: structuredClone(game) }
+    const fetchMock = vi.fn().mockResolvedValue(response)
+    vi.stubGlobal('$fetch', fetchMock)
+
+    await store.upgradeCaravan(selection)
+
+    expect(store.operationState).toBe('uncertain')
+    expect(store.pendingOperation).toMatchObject({ name: 'upgrade_caravan', expectedRevision: game.revision })
+    expect(store.game).toEqual(game)
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toEqual({
+      requestId: expect.any(String), expectedRevision: game.revision, payload: { optionId: selection.optionId }
+    })
+  })
+
+  it('routes the shared uncertain retry to an equipment operation', async () => {
+    const store = useGameV2Store()
+    const game = fixture('integrated-destructive')
+    const item = game.items.find((entry) => entry.actions.some((candidate) => candidate.action === 'dismantle_item' && candidate.enabled))
+    const action = item?.actions.find((candidate) => candidate.action === 'dismantle_item' && candidate.enabled)
+    if (!item || !action || action.action !== 'dismantle_item' || !action.enabled) throw new Error('Expected equipment authorization')
+    const option = action.execution.options[0]
+    if (!option || !('acknowledgement' in option)) throw new Error('Expected acknowledgement')
+    const selection = selectionFor(game, item.itemId, action.action, option.optionId, option.acknowledgement.acknowledgementId)
+    if (!selection) throw new Error('Expected equipment selection')
+    store.applySnapshot(game)
+    const fetchMock = vi.fn().mockRejectedValueOnce(apiError({ code: 'uncertain', retryable: true, requestId: 'same' })).mockResolvedValueOnce(game)
+    vi.stubGlobal('$fetch', fetchMock)
+
+    await store.runEquipmentAction(selection)
+    await store.retryUncertain()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toEqual(fetchMock.mock.calls[0]?.[1]?.body)
   })
 
   it('blocks competing intentions while uncertain; only retry reuses the envelope', async () => {

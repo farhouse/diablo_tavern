@@ -4,5 +4,5 @@ import { onMounted } from 'vue'
 import ChronicleV2 from '~/components/ChronicleV2.vue'
 import { useChronicleV2Store } from '~/stores/chronicle-v2'
 const chronicle = useChronicleV2Store()
-onMounted(() => { if (chronicle.loadState === 'idle') void chronicle.load() })
+onMounted(() => { void chronicle.load() })
 </script>

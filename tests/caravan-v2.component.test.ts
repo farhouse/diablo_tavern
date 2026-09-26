@@ -53,4 +53,59 @@ describe('CaravanV2', () => {
     action.authorizationId = 'changed-authorization'
     expect(invalidateCaravanSelection(changed, selection)).toBeNull()
   })
+
+  it('closes a sealed review when authorization or option contents change', async () => {
+    const game = gameFixture()
+    const wrapper = mount(CaravanV2, { attachTo: document.body, props: { game, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false } })
+    await wrapper.findAll('button').find((button) => button.text() === 'Revisar mejora')!.trigger('click')
+    const changed = structuredClone(game)
+    const changedAction = changed.actions.find((candidate) => candidate.action === 'upgrade_caravan' && candidate.enabled)
+    if (!changedAction || changedAction.action !== 'upgrade_caravan') throw new Error('Expected changed upgrade action')
+    changedAction.authorizationId = 'changed-authorization'
+    changedAction.execution.options[0]!.description.fallback = 'Consecuencia cambiada'
+    await wrapper.setProps({ game: changed })
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
+    expect(wrapper.emitted('upgrade')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('closes and restores focus when the reviewed option is removed', async () => {
+    const game = gameFixture()
+    const wrapper = mount(CaravanV2, { attachTo: document.body, props: { game, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false } })
+    const trigger = wrapper.findAll('button').find((button) => button.text() === 'Revisar mejora')!
+    await trigger.trigger('click')
+    const action = game.actions.find((candidate) => candidate.action === 'upgrade_caravan' && candidate.enabled)
+    if (!action || action.action !== 'upgrade_caravan') throw new Error('Expected upgrade action')
+    const changed = structuredClone(game)
+    const changedAction = changed.actions.find((candidate) => candidate.action === 'upgrade_caravan' && candidate.enabled)
+    if (!changedAction || changedAction.action !== 'upgrade_caravan') throw new Error('Expected changed upgrade action')
+    changedAction.execution.options.splice(0, 1)
+    await wrapper.setProps({ game: changed })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(wrapper.get('.caravan-content').element)
+    wrapper.unmount()
+  })
+
+  it('closes the review when the snapshot is removed and restores inert state on unmount', async () => {
+    const game = gameFixture()
+    const host = document.createElement('div')
+    const header = document.createElement('header')
+    host.append(header)
+    document.body.append(host)
+    const wrapper = mount(CaravanV2, { attachTo: host, props: { game, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false } })
+    await wrapper.findAll('button').find((button) => button.text() === 'Revisar mejora')!.trigger('click')
+    expect((wrapper.get('.caravan-content').element as HTMLElement).inert).toBe(true)
+    expect(header.inert).toBe(true)
+    await wrapper.setProps({ game: null })
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false)
+    expect((wrapper.get('.caravan-content').element as HTMLElement).inert).toBe(false)
+    expect(header.inert).toBe(false)
+
+    await wrapper.setProps({ game })
+    await wrapper.findAll('button').find((button) => button.text() === 'Revisar mejora')!.trigger('click')
+    wrapper.unmount()
+    expect(header.inert).toBe(false)
+    host.remove()
+  })
 })

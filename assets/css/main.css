@@ -75,6 +75,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+  min-width: 0;
 }
 
 .nav a,
@@ -88,7 +89,7 @@ a {
   cursor: pointer;
   display: inline-flex;
   gap: 0.4rem;
-  min-height: 2.25rem;
+  min-height: 44px;
   padding: 0.5rem 0.8rem;
 }
 
@@ -96,6 +97,12 @@ a {
 .btn.primary {
   background: var(--accent);
   border-color: #ef7d56;
+}
+
+.nav a {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .btn.ghost,
@@ -127,9 +134,26 @@ a {
   margin-bottom: 1rem;
 }
 
+.section-title > * {
+  min-width: 0;
+}
+
+.page > .section-title {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  width: 100%;
+}
+
 .section-title h1,
 .section-title h2 {
   margin: 0;
+}
+
+.page > .section-title .btn {
+  max-width: 100%;
+  min-height: 44px;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .muted {
@@ -345,6 +369,44 @@ a {
   .page-alert {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .section-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .page {
+    padding-inline: 0.5rem;
+  }
+
+  .card {
+    padding: 0.5rem;
+  }
+}
+
+@media (max-width: 200px) {
+  .topbar,
+  .page {
+    padding-inline: 0.25rem;
+  }
+
+  .nav,
+  .topbar-stats {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .nav a,
+  .topbar-stats .btn {
+    justify-content: center;
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .card {
+    padding: 0.25rem;
   }
 }
 
