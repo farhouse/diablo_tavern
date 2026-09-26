@@ -1,6 +1,8 @@
 export * from './v2-game-view.generated'
 
-import type { ActionAvailability, ActionId } from './v2-game-view.generated'
+import type { ActionAvailability, ActionId, GameView as GeneratedGameView } from './v2-game-view.generated'
+
+export type GameView = GeneratedGameView
 
 export const ACTION_IDS = [
   'accept_contract',

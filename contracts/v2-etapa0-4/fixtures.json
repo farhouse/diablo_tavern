@@ -1,0 +1,5390 @@
+{
+  "contractVersion": "v2-etapa0-3",
+  "retainedPositiveCases": [
+    {
+      "id": "action-disabled",
+      "schema": "DisabledAction",
+      "value": {
+        "action": "identify_item",
+        "targetId": "i1",
+        "enabled": false,
+        "label": {
+          "key": "action.identify",
+          "fallback": "Identificar objeto"
+        },
+        "reason": "SERVICE_LOCKED",
+        "reasonText": {
+          "key": "reason.serviceLocked",
+          "fallback": "El servicio todavía no está disponible."
+        },
+        "consequences": [],
+        "authorizationId": "auth-disabled-example"
+      }
+    },
+    {
+      "id": "action-id-accept",
+      "schema": "ActionId",
+      "value": "accept_contract"
+    },
+    {
+      "id": "action-id-start",
+      "schema": "ActionId",
+      "value": "start_expedition"
+    },
+    {
+      "id": "action-id-reconcile",
+      "schema": "ActionId",
+      "value": "reconcile_game"
+    },
+    {
+      "id": "action-id-confirm",
+      "schema": "ActionId",
+      "value": "confirm_settlement"
+    },
+    {
+      "id": "action-id-assign-recovery",
+      "schema": "ActionId",
+      "value": "assign_recovery"
+    },
+    {
+      "id": "action-id-abandon-recovery",
+      "schema": "ActionId",
+      "value": "abandon_recovery"
+    },
+    {
+      "id": "action-id-sell",
+      "schema": "ActionId",
+      "value": "sell_item_to_visitor"
+    },
+    {
+      "id": "action-id-identify",
+      "schema": "ActionId",
+      "value": "identify_item"
+    },
+    {
+      "id": "action-id-blacksmith",
+      "schema": "ActionId",
+      "value": "queue_blacksmith_job"
+    },
+    {
+      "id": "action-id-enchanter",
+      "schema": "ActionId",
+      "value": "queue_enchanter_job"
+    },
+    {
+      "id": "action-id-dismantle",
+      "schema": "ActionId",
+      "value": "dismantle_item"
+    },
+    {
+      "id": "action-id-imprint",
+      "schema": "ActionId",
+      "value": "replace_boss_imprint"
+    },
+    {
+      "id": "action-id-upgrade",
+      "schema": "ActionId",
+      "value": "upgrade_caravan"
+    },
+    {
+      "id": "owner-caravan",
+      "schema": "CaravanOwner",
+      "value": {
+        "kind": "caravan"
+      }
+    },
+    {
+      "id": "owner-visitor",
+      "schema": "VisitorOwner",
+      "value": {
+        "kind": "visitor",
+        "visitorId": "v1"
+      }
+    },
+    {
+      "id": "custody-stash",
+      "schema": "StashCustody",
+      "value": {
+        "kind": "stash"
+      }
+    },
+    {
+      "id": "custody-visitor",
+      "schema": "VisitorCustody",
+      "value": {
+        "kind": "visitor",
+        "visitorId": "v1"
+      }
+    },
+    {
+      "id": "custody-expedition",
+      "schema": "ExpeditionCustody",
+      "value": {
+        "kind": "expedition",
+        "expeditionId": "e1",
+        "visitorId": "v1"
+      }
+    },
+    {
+      "id": "custody-recovery",
+      "schema": "RecoveryCustody",
+      "value": {
+        "kind": "recovery",
+        "recoveryId": "r1"
+      }
+    },
+    {
+      "id": "custody-settlement",
+      "schema": "SettlementCustody",
+      "value": {
+        "kind": "settlement",
+        "settlementId": "s1"
+      }
+    },
+    {
+      "id": "custody-service",
+      "schema": "ServiceCustody",
+      "value": {
+        "kind": "service",
+        "jobId": "j1"
+      }
+    },
+    {
+      "id": "consequence-lose",
+      "schema": "LoseItemConsequence",
+      "value": {
+        "kind": "lose_items",
+        "irreversible": true,
+        "itemIds": [
+          "i1"
+        ],
+        "text": {
+          "key": "consequence.lose",
+          "fallback": "Perderás Espada gastada."
+        }
+      }
+    },
+    {
+      "id": "consequence-destroy",
+      "schema": "DestroyItemConsequence",
+      "value": {
+        "kind": "destroy_items",
+        "irreversible": true,
+        "itemIds": [
+          "i1"
+        ],
+        "text": {
+          "key": "consequence.destroy",
+          "fallback": "Espada gastada será destruida definitivamente."
+        }
+      }
+    },
+    {
+      "id": "consequence-transfer",
+      "schema": "TransferItemConsequence",
+      "value": {
+        "kind": "transfer_items",
+        "irreversible": true,
+        "itemIds": [
+          "i1"
+        ],
+        "newOwner": {
+          "kind": "visitor",
+          "visitorId": "v1"
+        },
+        "text": {
+          "key": "consequence.transfer",
+          "fallback": "Espada gastada pasará a ser propiedad de Ada."
+        }
+      }
+    },
+    {
+      "id": "consequence-spend",
+      "schema": "SpendResourceConsequence",
+      "value": {
+        "kind": "spend_resource",
+        "irreversible": true,
+        "resourceId": "iron",
+        "amount": 3,
+        "text": {
+          "key": "consequence.spend",
+          "fallback": "Consumirás 3 unidades de hierro."
+        }
+      }
+    },
+    {
+      "id": "consequence-renounce",
+      "schema": "RenounceRewardConsequence",
+      "value": {
+        "kind": "renounce_reward",
+        "irreversible": true,
+        "rewardItemIds": [
+          "reward1"
+        ],
+        "text": {
+          "key": "consequence.renounce",
+          "fallback": "Renunciarás definitivamente al Amuleto antiguo."
+        }
+      }
+    },
+    {
+      "id": "consequence-imprint",
+      "schema": "ReplaceImprintConsequence",
+      "value": {
+        "kind": "replace_imprint",
+        "irreversible": true,
+        "itemId": "i1",
+        "replacedImprint": {
+          "key": "imprint.old",
+          "fallback": "Marca del Rey Esqueleto"
+        },
+        "text": {
+          "key": "consequence.imprint",
+          "fallback": "La Marca del Rey Esqueleto será reemplazada; sólo quedará en la historia."
+        }
+      }
+    },
+    {
+      "id": "consequence-depart",
+      "schema": "DepartVisitorConsequence",
+      "value": {
+        "kind": "depart_visitor",
+        "irreversible": true,
+        "visitorId": "v1",
+        "text": {
+          "key": "consequence.depart",
+          "fallback": "Ada partirá y dejará de aceptar expediciones."
+        }
+      }
+    },
+    {
+      "id": "consequence-recovery",
+      "schema": "FailRecoveryConsequence",
+      "value": {
+        "kind": "fail_recovery",
+        "irreversible": true,
+        "recoveryId": "r1",
+        "destroyedItemIds": [
+          "i1"
+        ],
+        "text": {
+          "key": "consequence.recovery",
+          "fallback": "Abandonar la recuperación destruirá Espada gastada definitivamente."
+        }
+      }
+    },
+    {
+      "id": "visitor-available",
+      "schema": "VisitorAvailable",
+      "value": {
+        "visitorId": "v1",
+        "name": {
+          "key": "visitor.v1",
+          "fallback": "Ada"
+        },
+        "state": "available",
+        "departureSignal": "possible",
+        "contractOptions": [
+          {
+            "optionId": "o1",
+            "label": {
+              "key": "contract.standard",
+              "fallback": "Reparto estándar"
+            },
+            "description": {
+              "key": "contract.standard.description",
+              "fallback": "La caravana recibe 25% del oro y elige botín primero."
+            },
+            "durationSeconds": 3600,
+            "caravanGoldShareBps": 2500,
+            "lootPriority": "caravan_first",
+            "retreatThreshold": 10,
+            "loanFeeGold": 0,
+            "consequences": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "visitor-negotiating",
+      "schema": "VisitorNegotiating",
+      "value": {
+        "visitorId": "v1",
+        "name": {
+          "key": "visitor.v1",
+          "fallback": "Ada"
+        },
+        "state": "negotiating",
+        "negotiationId": "n1",
+        "options": [
+          {
+            "optionId": "o1",
+            "label": {
+              "key": "contract.standard",
+              "fallback": "Reparto estándar"
+            },
+            "description": {
+              "key": "contract.standard.description",
+              "fallback": "La caravana recibe 25% del oro y elige botín primero."
+            },
+            "durationSeconds": 3600,
+            "caravanGoldShareBps": 2500,
+            "lootPriority": "caravan_first",
+            "retreatThreshold": null,
+            "loanFeeGold": 0,
+            "consequences": []
+          }
+        ],
+        "expiresAt": "2026-09-14T10:00:00Z",
+        "actions": []
+      }
+    },
+    {
+      "id": "visitor-contracted",
+      "schema": "VisitorContracted",
+      "value": {
+        "visitorId": "v1",
+        "name": {
+          "key": "visitor.v1",
+          "fallback": "Ada"
+        },
+        "state": "contracted",
+        "contractId": "c1",
+        "actions": []
+      }
+    },
+    {
+      "id": "visitor-away",
+      "schema": "VisitorAway",
+      "value": {
+        "visitorId": "v1",
+        "name": {
+          "key": "visitor.v1",
+          "fallback": "Ada"
+        },
+        "state": "away",
+        "contractId": "c1",
+        "expeditionId": "e1",
+        "actions": []
+      }
+    },
+    {
+      "id": "visitor-awaiting",
+      "schema": "VisitorAwaitingSettlement",
+      "value": {
+        "visitorId": "v1",
+        "name": {
+          "key": "visitor.v1",
+          "fallback": "Ada"
+        },
+        "state": "awaiting_settlement",
+        "expeditionId": "e1",
+        "settlementId": "s1",
+        "outcome": "returned",
+        "actions": []
+      }
+    },
+    {
+      "id": "visitor-departed",
+      "schema": "VisitorDeparted",
+      "value": {
+        "visitorId": "v1",
+        "name": {
+          "key": "visitor.v1",
+          "fallback": "Ada"
+        },
+        "state": "departed",
+        "departedAt": "2026-09-14T11:00:00Z",
+        "lastExpeditionId": "e1",
+        "actions": []
+      }
+    },
+    {
+      "id": "visitor-dead",
+      "schema": "VisitorDead",
+      "value": {
+        "visitorId": "v1",
+        "name": {
+          "key": "visitor.v1",
+          "fallback": "Ada"
+        },
+        "state": "dead",
+        "diedAt": "2026-09-14T11:00:00Z",
+        "expeditionId": "e1",
+        "recoveryId": "r1",
+        "actions": []
+      }
+    },
+    {
+      "id": "expedition-scheduled",
+      "schema": "ExpeditionScheduled",
+      "value": {
+        "expeditionId": "e1",
+        "visitorId": "v1",
+        "contractId": "c1",
+        "state": "scheduled",
+        "startsAt": "2026-09-14T10:00:00Z",
+        "actions": []
+      }
+    },
+    {
+      "id": "expedition-active",
+      "schema": "ExpeditionActive",
+      "value": {
+        "expeditionId": "e1",
+        "visitorId": "v1",
+        "contractId": "c1",
+        "state": "active",
+        "startedAt": "2026-09-14T10:00:00Z",
+        "nextEventAt": "2026-09-14T10:05:00Z",
+        "currentHp": 18,
+        "maxHp": 20,
+        "actions": []
+      }
+    },
+    {
+      "id": "expedition-awaiting",
+      "schema": "ExpeditionAwaiting",
+      "value": {
+        "expeditionId": "e1",
+        "visitorId": "v1",
+        "contractId": "c1",
+        "state": "awaiting_settlement",
+        "outcome": "retreated",
+        "resolvedAt": "2026-09-14T10:30:00Z",
+        "settlementId": "s1",
+        "actions": []
+      }
+    },
+    {
+      "id": "expedition-settled",
+      "schema": "ExpeditionSettled",
+      "value": {
+        "expeditionId": "e1",
+        "visitorId": "v1",
+        "contractId": "c1",
+        "state": "settled",
+        "outcome": "death",
+        "settledAt": "2026-09-14T11:00:00Z",
+        "settlementId": "s1",
+        "visitorResolution": "dead",
+        "actions": []
+      }
+    },
+    {
+      "id": "settlement-ready",
+      "schema": "SettlementReady",
+      "value": {
+        "settlementId": "s1",
+        "expeditionId": "e1",
+        "state": "preview_ready",
+        "previewVersion": 1,
+        "outcome": "returned",
+        "createdAt": "2026-09-14T10:30:00Z",
+        "expiresAt": "2026-09-15T10:30:00Z",
+        "gold": {
+          "gross": 100,
+          "caravan": 25,
+          "visitor": 75
+        },
+        "loans": [
+          {
+            "itemId": "i1",
+            "resolution": "return"
+          }
+        ],
+        "choiceGroups": [
+          {
+            "groupId": "g1",
+            "required": true,
+            "defaultOptionId": "renounce",
+            "label": {
+              "key": "settlement.loot",
+              "fallback": "Elegí qué hacer con el botín"
+            },
+            "options": [
+              {
+                "optionId": "renounce",
+                "label": {
+                  "key": "option.renounce",
+                  "fallback": "Renunciar al amuleto"
+                },
+                "itemIds": [],
+                "capacityDelta": 0,
+                "consequences": [
+                  {
+                    "kind": "renounce_reward",
+                    "irreversible": true,
+                    "rewardItemIds": [
+                      "reward1"
+                    ],
+                    "text": {
+                      "key": "consequence.renounce",
+                      "fallback": "Renunciarás definitivamente al Amuleto antiguo."
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "departureSignal": "possible",
+        "departureResolution": "stays",
+        "actions": []
+      }
+    },
+    {
+      "id": "settlement-expired",
+      "schema": "SettlementExpired",
+      "value": {
+        "settlementId": "s1",
+        "expeditionId": "e1",
+        "state": "preview_expired",
+        "previewVersion": 1,
+        "outcome": "death",
+        "createdAt": "2026-09-13T10:30:00Z",
+        "expiresAt": "2026-09-14T10:30:00Z",
+        "gold": {
+          "gross": 0,
+          "caravan": 0,
+          "visitor": 0
+        },
+        "loans": [
+          {
+            "itemId": "i1",
+            "resolution": "recovery"
+          }
+        ],
+        "choiceGroups": [],
+        "departureSignal": "likely",
+        "departureResolution": "dead",
+        "actions": []
+      }
+    },
+    {
+      "id": "settlement-settled",
+      "schema": "SettlementSettled",
+      "value": {
+        "settlementId": "s1",
+        "expeditionId": "e1",
+        "state": "settled",
+        "outcome": "returned",
+        "appliedAt": "2026-09-14T11:00:00Z",
+        "appliedBy": "confirmation",
+        "appliedChoices": [
+          {
+            "groupId": "g1",
+            "optionId": "take1",
+            "label": {
+              "key": "option.take",
+              "fallback": "Conservar el amuleto"
+            }
+          }
+        ],
+        "visitorResolution": "departs",
+        "actions": []
+      }
+    },
+    {
+      "id": "recovery-open",
+      "schema": "RecoveryOpen",
+      "value": {
+        "recoveryId": "r1",
+        "sourceExpeditionId": "e1",
+        "itemIds": [
+          "i1"
+        ],
+        "state": "open",
+        "expiresAt": "2026-09-21T11:00:00Z",
+        "options": [
+          {
+            "optionId": "ro1",
+            "label": {
+              "key": "recovery.cautious",
+              "fallback": "Recuperación cauta"
+            },
+            "description": {
+              "key": "recovery.cautious.description",
+              "fallback": "Intento lento con riesgo de perder el equipo."
+            },
+            "durationSeconds": 3600,
+            "consequences": [
+              {
+                "kind": "fail_recovery",
+                "irreversible": true,
+                "recoveryId": "r1",
+                "destroyedItemIds": [
+                  "i1"
+                ],
+                "text": {
+                  "key": "recovery.risk",
+                  "fallback": "Si falla, Espada gastada será destruida."
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "recovery-assigned",
+      "schema": "RecoveryAssigned",
+      "value": {
+        "recoveryId": "r1",
+        "sourceExpeditionId": "e1",
+        "itemIds": [
+          "i1"
+        ],
+        "state": "assigned",
+        "assignedVisitorId": "v2",
+        "assignedAt": "2026-09-15T10:00:00Z",
+        "completesAt": "2026-09-15T11:00:00Z",
+        "actions": []
+      }
+    },
+    {
+      "id": "recovery-recovered",
+      "schema": "RecoveryRecovered",
+      "value": {
+        "recoveryId": "r1",
+        "sourceExpeditionId": "e1",
+        "itemIds": [
+          "i1"
+        ],
+        "state": "recovered",
+        "resolvedAt": "2026-09-15T11:00:00Z",
+        "recoveredItemIds": [
+          "i1"
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "recovery-failed",
+      "schema": "RecoveryFailed",
+      "value": {
+        "recoveryId": "r1",
+        "sourceExpeditionId": "e1",
+        "itemIds": [
+          "i1"
+        ],
+        "state": "failed",
+        "resolvedAt": "2026-09-15T11:00:00Z",
+        "consequence": {
+          "kind": "fail_recovery",
+          "irreversible": true,
+          "recoveryId": "r1",
+          "destroyedItemIds": [
+            "i1"
+          ],
+          "text": {
+            "key": "recovery.failed",
+            "fallback": "La recuperación falló y Espada gastada fue destruida."
+          }
+        },
+        "actions": []
+      }
+    },
+    {
+      "id": "recovery-abandoned",
+      "schema": "RecoveryAbandoned",
+      "value": {
+        "recoveryId": "r1",
+        "sourceExpeditionId": "e1",
+        "itemIds": [
+          "i1"
+        ],
+        "state": "abandoned",
+        "resolvedAt": "2026-09-15T11:00:00Z",
+        "consequence": {
+          "kind": "fail_recovery",
+          "irreversible": true,
+          "recoveryId": "r1",
+          "destroyedItemIds": [
+            "i1"
+          ],
+          "text": {
+            "key": "recovery.abandoned",
+            "fallback": "Abandonaste la recuperación y Espada gastada fue destruida."
+          }
+        },
+        "actions": []
+      }
+    },
+    {
+      "id": "service-queued",
+      "schema": "ServiceQueued",
+      "value": {
+        "jobId": "j1",
+        "itemId": "i1",
+        "service": "blacksmith",
+        "state": "queued",
+        "label": {
+          "key": "job.upgrade",
+          "fallback": "Mejorar Espada gastada"
+        },
+        "queuedAt": "2026-09-14T10:00:00Z",
+        "startsAt": "2026-09-14T10:05:00Z",
+        "actions": []
+      }
+    },
+    {
+      "id": "service-active",
+      "schema": "ServiceActive",
+      "value": {
+        "jobId": "j1",
+        "itemId": "i1",
+        "service": "enchanter",
+        "state": "active",
+        "label": {
+          "key": "job.enchant",
+          "fallback": "Encantar Espada gastada"
+        },
+        "startedAt": "2026-09-14T10:05:00Z",
+        "completesAt": "2026-09-14T10:10:00Z",
+        "actions": []
+      }
+    },
+    {
+      "id": "service-completed",
+      "schema": "ServiceCompleted",
+      "value": {
+        "jobId": "j1",
+        "itemId": "i1",
+        "service": "blacksmith",
+        "state": "completed",
+        "label": {
+          "key": "job.upgrade",
+          "fallback": "Mejorar Espada gastada"
+        },
+        "completedAt": "2026-09-14T10:10:00Z",
+        "resultText": {
+          "key": "job.upgrade.done",
+          "fallback": "Espada gastada alcanzó nivel 2."
+        },
+        "actions": []
+      }
+    },
+    {
+      "id": "service-failed",
+      "schema": "ServiceFailed",
+      "value": {
+        "jobId": "j1",
+        "itemId": "i1",
+        "service": "enchanter",
+        "state": "failed",
+        "label": {
+          "key": "job.enchant",
+          "fallback": "Encantar Espada gastada"
+        },
+        "failedAt": "2026-09-14T10:10:00Z",
+        "reasonText": {
+          "key": "job.enchant.failed",
+          "fallback": "El encantamiento no produjo un afijo."
+        },
+        "consequences": [
+          {
+            "kind": "spend_resource",
+            "irreversible": true,
+            "resourceId": "essence",
+            "amount": 2,
+            "text": {
+              "key": "job.cost",
+              "fallback": "Se consumieron 2 esencias."
+            }
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "service-cancelled",
+      "schema": "ServiceCancelled",
+      "value": {
+        "jobId": "j1",
+        "itemId": "i1",
+        "service": "blacksmith",
+        "state": "cancelled",
+        "label": {
+          "key": "job.upgrade",
+          "fallback": "Mejorar Espada gastada"
+        },
+        "cancelledAt": "2026-09-14T10:02:00Z",
+        "consequences": [],
+        "actions": []
+      }
+    },
+    {
+      "id": "item-unidentified",
+      "schema": "UnidentifiedItemView",
+      "value": {
+        "itemId": "i1",
+        "name": {
+          "key": "item.unknownSword",
+          "fallback": "Espada sin identificar"
+        },
+        "slot": "weapon",
+        "rarity": "rare",
+        "level": 1,
+        "owner": {
+          "kind": "caravan"
+        },
+        "custody": {
+          "kind": "stash"
+        },
+        "identification": "unidentified",
+        "actions": []
+      }
+    },
+    {
+      "id": "item-identified",
+      "schema": "IdentifiedItemView",
+      "value": {
+        "itemId": "i2",
+        "name": {
+          "key": "item.boneSword",
+          "fallback": "Espada de hueso"
+        },
+        "slot": "weapon",
+        "rarity": "legendary",
+        "level": 2,
+        "owner": {
+          "kind": "visitor",
+          "visitorId": "v1"
+        },
+        "custody": {
+          "kind": "visitor",
+          "visitorId": "v1"
+        },
+        "identification": "identified",
+        "affixes": [
+          {
+            "affixId": "a1",
+            "name": {
+              "key": "affix.fire",
+              "fallback": "Ígnea"
+            },
+            "valueText": {
+              "key": "affix.fire.value",
+              "fallback": "+4 de daño de fuego"
+            }
+          }
+        ],
+        "activeImprint": null,
+        "actions": []
+      }
+    },
+    {
+      "id": "item-loaned",
+      "schema": "IdentifiedItemView",
+      "value": {
+        "itemId": "i3",
+        "name": {
+          "key": "item.loanSword",
+          "fallback": "Espada prestada"
+        },
+        "slot": "weapon",
+        "rarity": "magic",
+        "level": 1,
+        "owner": {
+          "kind": "caravan"
+        },
+        "custody": {
+          "kind": "expedition",
+          "expeditionId": "e1",
+          "visitorId": "v1"
+        },
+        "identification": "identified",
+        "affixes": [],
+        "activeImprint": null,
+        "actions": []
+      }
+    },
+    {
+      "id": "item-in-recovery",
+      "schema": "IdentifiedItemView",
+      "value": {
+        "itemId": "i4",
+        "name": {
+          "key": "item.recoveryArmor",
+          "fallback": "Armadura perdida"
+        },
+        "slot": "armor",
+        "rarity": "rare",
+        "level": 2,
+        "owner": {
+          "kind": "caravan"
+        },
+        "custody": {
+          "kind": "recovery",
+          "recoveryId": "r1"
+        },
+        "identification": "identified",
+        "affixes": [],
+        "activeImprint": null,
+        "actions": []
+      }
+    },
+    {
+      "id": "item-in-settlement",
+      "schema": "UnidentifiedItemView",
+      "value": {
+        "itemId": "i5",
+        "name": {
+          "key": "item.pending",
+          "fallback": "Amuleto pendiente"
+        },
+        "slot": "accessory",
+        "rarity": "rare",
+        "level": 1,
+        "owner": {
+          "kind": "caravan"
+        },
+        "custody": {
+          "kind": "settlement",
+          "settlementId": "s1"
+        },
+        "identification": "unidentified",
+        "actions": []
+      }
+    },
+    {
+      "id": "item-in-service",
+      "schema": "IdentifiedItemView",
+      "value": {
+        "itemId": "i6",
+        "name": {
+          "key": "item.service",
+          "fallback": "Armadura en mejora"
+        },
+        "slot": "armor",
+        "rarity": "common",
+        "level": 1,
+        "owner": {
+          "kind": "caravan"
+        },
+        "custody": {
+          "kind": "service",
+          "jobId": "j1"
+        },
+        "identification": "identified",
+        "affixes": [],
+        "activeImprint": null,
+        "actions": []
+      }
+    }
+  ],
+  "integratedPositiveCases": [
+    {
+      "id": "integrated-contract",
+      "schema": "GameView",
+      "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-accept_contract-v1",
+                "action": "accept_contract",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.accept_contract",
+                  "fallback": "accept contract"
+                },
+                "consequences": [],
+                "execution": {
+                  "visitorId": "v1",
+                  "bindings": [
+                    {
+                      "optionId": "o1",
+                      "eligibleLoanItemIds": [
+                        "i1"
+                      ],
+                      "expiresAt": "2026-09-15T10:30:00Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "integrated-expedition",
+      "schema": "GameView",
+      "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "contracted",
+            "contractId": "c1",
+            "actions": [
+              {
+                "authorizationId": "auth-start_expedition-v1",
+                "action": "start_expedition",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.start_expedition",
+                  "fallback": "start expedition"
+                },
+                "consequences": [],
+                "execution": {
+                  "contractId": "c1"
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [],
+        "actions": []
+      }
+    },
+    {
+      "id": "integrated-system",
+      "schema": "GameView",
+      "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [],
+        "actions": [
+          {
+            "authorizationId": "auth-reconcile_game-game",
+            "action": "reconcile_game",
+            "enabled": true,
+            "label": {
+              "key": "action.reconcile_game",
+              "fallback": "reconcile game"
+            },
+            "consequences": [],
+            "execution": {}
+          },
+          {
+            "authorizationId": "auth-upgrade_caravan-game",
+            "action": "upgrade_caravan",
+            "enabled": true,
+            "label": {
+              "key": "action.upgrade_caravan",
+              "fallback": "upgrade caravan"
+            },
+            "consequences": [],
+            "execution": {
+              "options": [
+                {
+                  "optionId": "upgrade-1",
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "label": {
+                    "key": "option.upgrade-1",
+                    "fallback": "Ampliar alojamiento"
+                  },
+                  "description": {
+                    "key": "option.upgrade-1.description",
+                    "fallback": "Ampliar alojamiento: condiciones selladas por el servidor."
+                  },
+                  "consequences": []
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "integrated-settlement",
+      "schema": "GameView",
+      "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "awaiting_settlement",
+            "expeditionId": "e1",
+            "settlementId": "s1",
+            "outcome": "returned",
+            "actions": [
+              {
+                "authorizationId": "auth-confirm_settlement-s1",
+                "action": "confirm_settlement",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.confirm_settlement",
+                  "fallback": "confirm settlement"
+                },
+                "consequences": [],
+                "execution": {
+                  "settlementId": "s1",
+                  "previewVersion": 1,
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "groups": [
+                    {
+                      "groupId": "g1",
+                      "eligibleOptionIds": [
+                        "renounce"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [
+          {
+            "expeditionId": "e1",
+            "visitorId": "v1",
+            "contractId": "c1",
+            "state": "awaiting_settlement",
+            "outcome": "retreated",
+            "resolvedAt": "2026-09-14T10:30:00Z",
+            "settlementId": "s1",
+            "actions": []
+          }
+        ],
+        "settlements": [
+          {
+            "settlementId": "s1",
+            "expeditionId": "e1",
+            "state": "preview_ready",
+            "previewVersion": 1,
+            "outcome": "returned",
+            "createdAt": "2026-09-14T10:30:00Z",
+            "expiresAt": "2026-09-15T10:30:00Z",
+            "gold": {
+              "gross": 100,
+              "caravan": 25,
+              "visitor": 75
+            },
+            "loans": [
+              {
+                "itemId": "i1",
+                "resolution": "return"
+              }
+            ],
+            "choiceGroups": [
+              {
+                "groupId": "g1",
+                "required": true,
+                "defaultOptionId": "renounce",
+                "label": {
+                  "key": "settlement.loot",
+                  "fallback": "Elegí qué hacer con el botín"
+                },
+                "options": [
+                  {
+                    "optionId": "renounce",
+                    "label": {
+                      "key": "option.renounce",
+                      "fallback": "Renunciar al amuleto"
+                    },
+                    "itemIds": [],
+                    "capacityDelta": 0,
+                    "consequences": [
+                      {
+                        "kind": "renounce_reward",
+                        "irreversible": true,
+                        "rewardItemIds": [
+                          "reward1"
+                        ],
+                        "text": {
+                          "key": "consequence.renounce",
+                          "fallback": "Renunciarás definitivamente al Amuleto antiguo."
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "departureSignal": "possible",
+            "departureResolution": "stays",
+            "actions": [
+              {
+                "authorizationId": "auth-confirm_settlement-s1",
+                "action": "confirm_settlement",
+                "targetId": "s1",
+                "enabled": true,
+                "label": {
+                  "key": "action.confirm_settlement",
+                  "fallback": "confirm settlement"
+                },
+                "consequences": [],
+                "execution": {
+                  "settlementId": "s1",
+                  "previewVersion": 1,
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "groups": [
+                    {
+                      "groupId": "g1",
+                      "eligibleOptionIds": [
+                        "renounce"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i3",
+            "name": {
+              "key": "item.loanSword",
+              "fallback": "Espada prestada"
+            },
+            "slot": "weapon",
+            "rarity": "magic",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "expedition",
+              "expeditionId": "e1",
+              "visitorId": "v1"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "integrated-recovery",
+      "schema": "GameView",
+      "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v2",
+            "name": {
+              "key": "visitor.v2",
+              "fallback": "Borin"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [
+          {
+            "recoveryId": "r1",
+            "sourceExpeditionId": "e1",
+            "itemIds": [
+              "i1"
+            ],
+            "state": "open",
+            "expiresAt": "2026-09-21T11:00:00Z",
+            "options": [
+              {
+                "optionId": "ro1",
+                "label": {
+                  "key": "recovery.cautious",
+                  "fallback": "Recuperación cauta"
+                },
+                "description": {
+                  "key": "recovery.cautious.description",
+                  "fallback": "Intento lento con riesgo de perder el equipo."
+                },
+                "durationSeconds": 3600,
+                "consequences": [
+                  {
+                    "kind": "fail_recovery",
+                    "irreversible": true,
+                    "recoveryId": "r1",
+                    "destroyedItemIds": [
+                      "i1"
+                    ],
+                    "text": {
+                      "key": "recovery.risk",
+                      "fallback": "Si falla, Espada gastada será destruida."
+                    }
+                  }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-assign_recovery-r1",
+                "action": "assign_recovery",
+                "targetId": "r1",
+                "enabled": true,
+                "label": {
+                  "key": "action.assign_recovery",
+                  "fallback": "assign recovery"
+                },
+                "consequences": [],
+                "execution": {
+                  "recoveryId": "r1",
+                  "bindings": [
+                    {
+                      "optionId": "ro1",
+                      "visitorId": "v2",
+                      "eligibleLoanItemIds": [],
+                      "expiresAt": "2026-09-15T10:30:00Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-abandon_recovery-r1",
+                "action": "abandon_recovery",
+                "targetId": "r1",
+                "enabled": true,
+                "label": {
+                  "key": "action.abandon_recovery",
+                  "fallback": "abandon recovery"
+                },
+                "consequences": [
+                  {
+                    "kind": "fail_recovery",
+                    "irreversible": true,
+                    "recoveryId": "r1",
+                    "destroyedItemIds": [
+                      "i1"
+                    ],
+                    "text": {
+                      "key": "recovery.risk",
+                      "fallback": "Si falla, Espada gastada será destruida."
+                    }
+                  }
+                ],
+                "execution": {
+                  "recoveryId": "r1",
+                  "acknowledgement": {
+                    "acknowledgementId": "ack-r1",
+                    "expiresAt": "2026-09-15T10:30:00Z",
+                    "text": {
+                      "key": "ack.abandon",
+                      "fallback": "Entiendo que el equipo se perderá."
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i4",
+            "name": {
+              "key": "item.recoveryArmor",
+              "fallback": "Armadura perdida"
+            },
+            "slot": "armor",
+            "rarity": "rare",
+            "level": 2,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "recovery",
+              "recoveryId": "r1"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "integrated-trade",
+      "schema": "GameView",
+      "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": [
+              {
+                "authorizationId": "auth-sell_item_to_visitor-i1",
+                "action": "sell_item_to_visitor",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.sell_item_to_visitor",
+                  "fallback": "sell item to visitor"
+                },
+                "consequences": [
+                  {
+                    "kind": "transfer_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i1"
+                    ],
+                    "newOwner": {
+                      "kind": "visitor",
+                      "visitorId": "v1"
+                    },
+                    "text": {
+                      "key": "consequence.sell",
+                      "fallback": "El objeto pasará a ser de Ada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i1",
+                  "offers": [
+                    {
+                      "offerId": "offer-1",
+                      "visitorId": "v1",
+                      "itemId": "i1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "offer.sell",
+                        "fallback": "Vender a Ada"
+                      },
+                      "description": {
+                        "key": "offer.sell.description",
+                        "fallback": "Ada ofrece 40 de oro."
+                      },
+                      "consequences": [
+                        {
+                          "kind": "transfer_items",
+                          "irreversible": true,
+                          "itemIds": [
+                            "i1"
+                          ],
+                          "newOwner": {
+                            "kind": "visitor",
+                            "visitorId": "v1"
+                          },
+                          "text": {
+                            "key": "consequence.sell",
+                            "fallback": "El objeto pasará a ser de Ada."
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "integrated-services",
+      "schema": "GameView",
+      "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": [
+              {
+                "authorizationId": "auth-identify_item-i1",
+                "action": "identify_item",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.identify_item",
+                  "fallback": "identify item"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "i1",
+                  "options": [
+                    {
+                      "optionId": "identify-basic",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.identify-basic",
+                        "fallback": "Identificación básica"
+                      },
+                      "description": {
+                        "key": "option.identify-basic.description",
+                        "fallback": "Identificación básica: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-queue_blacksmith_job-i1",
+                "action": "queue_blacksmith_job",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.queue_blacksmith_job",
+                  "fallback": "queue blacksmith job"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "i1",
+                  "options": [
+                    {
+                      "optionId": "smith-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.smith-1",
+                        "fallback": "Mejorar al nivel 2"
+                      },
+                      "description": {
+                        "key": "option.smith-1.description",
+                        "fallback": "Mejorar al nivel 2: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-queue_enchanter_job-i1",
+                "action": "queue_enchanter_job",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.queue_enchanter_job",
+                  "fallback": "queue enchanter job"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "i1",
+                  "options": [
+                    {
+                      "optionId": "enchant-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.enchant-1",
+                        "fallback": "Intentar un afijo"
+                      },
+                      "description": {
+                        "key": "option.enchant-1.description",
+                        "fallback": "Intentar un afijo: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "integrated-destructive",
+      "schema": "GameView",
+      "value": {
+        "caravan": { "visitorCapacity": { "used": 0, "limit": 2 }, "upgrades": [{ "upgradeId": "visitor_quarters", "level": 0, "maxLevel": 2 }, { "upgradeId": "blacksmith", "level": 0, "maxLevel": 1 }, { "upgradeId": "enchanter", "level": 0, "maxLevel": 1 }], "maintenance": { "periodKey": "2026-W38", "nextDueAt": "2026-09-21T00:00:00.000Z", "status": "current", "debtPeriods": 0, "debtGold": 0 } },
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i4",
+            "name": {
+              "key": "item.service",
+              "fallback": "Armadura en mejora"
+            },
+            "slot": "armor",
+            "rarity": "common",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": [
+              {
+                "authorizationId": "auth-dismantle_item-i4",
+                "action": "dismantle_item",
+                "targetId": "i4",
+                "enabled": true,
+                "label": {
+                  "key": "action.dismantle_item",
+                  "fallback": "dismantle item"
+                },
+                "consequences": [
+                  {
+                    "kind": "destroy_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i4"
+                    ],
+                    "text": {
+                      "key": "consequence.destroy",
+                      "fallback": "El objeto será destruido."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i4",
+                  "options": [
+                    {
+                      "optionId": "dismantle-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.dismantle-1",
+                        "fallback": "Desmantelar"
+                      },
+                      "description": {
+                        "key": "option.dismantle-1.description",
+                        "fallback": "Desmantelar: condiciones selladas por el servidor."
+                      },
+                      "consequences": [],
+                      "acknowledgement": {
+                        "acknowledgementId": "ack-dismantle",
+                        "expiresAt": "2026-09-15T10:30:00Z",
+                        "text": {
+                          "key": "ack.ack-dismantle",
+                          "fallback": "Entiendo que el objeto será destruido."
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-replace_boss_imprint-i4",
+                "action": "replace_boss_imprint",
+                "targetId": "i4",
+                "enabled": true,
+                "label": {
+                  "key": "action.replace_boss_imprint",
+                  "fallback": "replace boss imprint"
+                },
+                "consequences": [
+                  {
+                    "kind": "replace_imprint",
+                    "irreversible": true,
+                    "itemId": "i4",
+                    "replacedImprint": {
+                      "key": "imprint.old",
+                      "fallback": "Impronta anterior"
+                    },
+                    "text": {
+                      "key": "consequence.imprint",
+                      "fallback": "La impronta anterior será reemplazada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i4",
+                  "options": [
+                    {
+                      "optionId": "imprint-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.imprint-1",
+                        "fallback": "Aplicar nueva impronta"
+                      },
+                      "description": {
+                        "key": "option.imprint-1.description",
+                        "fallback": "Aplicar nueva impronta: condiciones selladas por el servidor."
+                      },
+                      "consequences": [],
+                      "acknowledgement": {
+                        "acknowledgementId": "ack-imprint",
+                        "expiresAt": "2026-09-15T10:30:00Z",
+                        "text": {
+                          "key": "ack.ack-imprint",
+                          "fallback": "Entiendo que se reemplazará la impronta."
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    }
+  ],
+  "negativeCases": [
+    {
+      "id": "missing-option-token",
+      "schema": "GameView",
+      "expectedError": "SCHEMA_INVALID",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": [
+              {
+                "authorizationId": "auth-identify_item-i1",
+                "action": "identify_item",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.identify_item",
+                  "fallback": "identify item"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "i1",
+                  "options": [
+                    {
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.identify-basic",
+                        "fallback": "Identificación básica"
+                      },
+                      "description": {
+                        "key": "option.identify-basic.description",
+                        "fallback": "Identificación básica: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-queue_blacksmith_job-i1",
+                "action": "queue_blacksmith_job",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.queue_blacksmith_job",
+                  "fallback": "queue blacksmith job"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "i1",
+                  "options": [
+                    {
+                      "optionId": "smith-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.smith-1",
+                        "fallback": "Mejorar al nivel 2"
+                      },
+                      "description": {
+                        "key": "option.smith-1.description",
+                        "fallback": "Mejorar al nivel 2: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-queue_enchanter_job-i1",
+                "action": "queue_enchanter_job",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.queue_enchanter_job",
+                  "fallback": "queue enchanter job"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "i1",
+                  "options": [
+                    {
+                      "optionId": "enchant-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.enchant-1",
+                        "fallback": "Intentar un afijo"
+                      },
+                      "description": {
+                        "key": "option.enchant-1.description",
+                        "fallback": "Intentar un afijo: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "missing-acknowledgement-token",
+      "schema": "GameView",
+      "expectedError": "SCHEMA_INVALID",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i4",
+            "name": {
+              "key": "item.service",
+              "fallback": "Armadura en mejora"
+            },
+            "slot": "armor",
+            "rarity": "common",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": [
+              {
+                "authorizationId": "auth-dismantle_item-i4",
+                "action": "dismantle_item",
+                "targetId": "i4",
+                "enabled": true,
+                "label": {
+                  "key": "action.dismantle_item",
+                  "fallback": "dismantle item"
+                },
+                "consequences": [
+                  {
+                    "kind": "destroy_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i4"
+                    ],
+                    "text": {
+                      "key": "consequence.destroy",
+                      "fallback": "El objeto será destruido."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i4",
+                  "options": [
+                    {
+                      "optionId": "dismantle-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.dismantle-1",
+                        "fallback": "Desmantelar"
+                      },
+                      "description": {
+                        "key": "option.dismantle-1.description",
+                        "fallback": "Desmantelar: condiciones selladas por el servidor."
+                      },
+                      "consequences": [],
+                      "acknowledgement": {
+                        "expiresAt": "2026-09-15T10:30:00Z",
+                        "text": {
+                          "key": "ack.ack-dismantle",
+                          "fallback": "Entiendo que el objeto será destruido."
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-replace_boss_imprint-i4",
+                "action": "replace_boss_imprint",
+                "targetId": "i4",
+                "enabled": true,
+                "label": {
+                  "key": "action.replace_boss_imprint",
+                  "fallback": "replace boss imprint"
+                },
+                "consequences": [
+                  {
+                    "kind": "replace_imprint",
+                    "irreversible": true,
+                    "itemId": "i4",
+                    "replacedImprint": {
+                      "key": "imprint.old",
+                      "fallback": "Impronta anterior"
+                    },
+                    "text": {
+                      "key": "consequence.imprint",
+                      "fallback": "La impronta anterior será reemplazada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i4",
+                  "options": [
+                    {
+                      "optionId": "imprint-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.imprint-1",
+                        "fallback": "Aplicar nueva impronta"
+                      },
+                      "description": {
+                        "key": "option.imprint-1.description",
+                        "fallback": "Aplicar nueva impronta: condiciones selladas por el servidor."
+                      },
+                      "consequences": [],
+                      "acknowledgement": {
+                        "acknowledgementId": "ack-imprint",
+                        "expiresAt": "2026-09-15T10:30:00Z",
+                        "text": {
+                          "key": "ack.ack-imprint",
+                          "fallback": "Entiendo que se reemplazará la impronta."
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "missing-offer-token",
+      "schema": "GameView",
+      "expectedError": "SCHEMA_INVALID",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": [
+              {
+                "authorizationId": "auth-sell_item_to_visitor-i1",
+                "action": "sell_item_to_visitor",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.sell_item_to_visitor",
+                  "fallback": "sell item to visitor"
+                },
+                "consequences": [
+                  {
+                    "kind": "transfer_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i1"
+                    ],
+                    "newOwner": {
+                      "kind": "visitor",
+                      "visitorId": "v1"
+                    },
+                    "text": {
+                      "key": "consequence.sell",
+                      "fallback": "El objeto pasará a ser de Ada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i1",
+                  "offers": [
+                    {
+                      "visitorId": "v1",
+                      "itemId": "i1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "offer.sell",
+                        "fallback": "Vender a Ada"
+                      },
+                      "description": {
+                        "key": "offer.sell.description",
+                        "fallback": "Ada ofrece 40 de oro."
+                      },
+                      "consequences": [
+                        {
+                          "kind": "transfer_items",
+                          "irreversible": true,
+                          "itemIds": [
+                            "i1"
+                          ],
+                          "newOwner": {
+                            "kind": "visitor",
+                            "visitorId": "v1"
+                          },
+                          "text": {
+                            "key": "consequence.sell",
+                            "fallback": "El objeto pasará a ser de Ada."
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "missing-eligibility-set",
+      "schema": "GameView",
+      "expectedError": "SCHEMA_INVALID",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-accept_contract-v1",
+                "action": "accept_contract",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.accept_contract",
+                  "fallback": "accept contract"
+                },
+                "consequences": [],
+                "execution": {
+                  "visitorId": "v1",
+                  "bindings": [
+                    {
+                      "optionId": "o1",
+                      "expiresAt": "2026-09-15T10:30:00Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "foreign-contract-option",
+      "schema": "GameView",
+      "expectedError": "TOKEN_FOREIGN",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-accept_contract-v1",
+                "action": "accept_contract",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.accept_contract",
+                  "fallback": "accept contract"
+                },
+                "consequences": [],
+                "execution": {
+                  "visitorId": "v1",
+                  "bindings": [
+                    {
+                      "optionId": "o-foreign",
+                      "eligibleLoanItemIds": [
+                        "i1"
+                      ],
+                      "expiresAt": "2026-09-15T10:30:00Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "expired-contract-binding",
+      "schema": "GameView",
+      "expectedError": "TOKEN_EXPIRED",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-accept_contract-v1",
+                "action": "accept_contract",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.accept_contract",
+                  "fallback": "accept contract"
+                },
+                "consequences": [],
+                "execution": {
+                  "visitorId": "v1",
+                  "bindings": [
+                    {
+                      "optionId": "o1",
+                      "eligibleLoanItemIds": [
+                        "i1"
+                      ],
+                      "expiresAt": "2026-09-14T10:30:00Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "foreign-loan-item",
+      "schema": "GameView",
+      "expectedError": "ELIGIBILITY_FOREIGN",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-accept_contract-v1",
+                "action": "accept_contract",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.accept_contract",
+                  "fallback": "accept contract"
+                },
+                "consequences": [],
+                "execution": {
+                  "visitorId": "v1",
+                  "bindings": [
+                    {
+                      "optionId": "o1",
+                      "eligibleLoanItemIds": [
+                        "i-foreign"
+                      ],
+                      "expiresAt": "2026-09-15T10:30:00Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "impossible-action-execution",
+      "schema": "GameView",
+      "expectedError": "SCHEMA_INVALID",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": [
+              {
+                "authorizationId": "auth-identify_item-i1",
+                "action": "upgrade_caravan",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.identify_item",
+                  "fallback": "identify item"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "i1",
+                  "options": [
+                    {
+                      "optionId": "identify-basic",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.identify-basic",
+                        "fallback": "Identificación básica"
+                      },
+                      "description": {
+                        "key": "option.identify-basic.description",
+                        "fallback": "Identificación básica: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-queue_blacksmith_job-i1",
+                "action": "queue_blacksmith_job",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.queue_blacksmith_job",
+                  "fallback": "queue blacksmith job"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "i1",
+                  "options": [
+                    {
+                      "optionId": "smith-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.smith-1",
+                        "fallback": "Mejorar al nivel 2"
+                      },
+                      "description": {
+                        "key": "option.smith-1.description",
+                        "fallback": "Mejorar al nivel 2: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-queue_enchanter_job-i1",
+                "action": "queue_enchanter_job",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.queue_enchanter_job",
+                  "fallback": "queue enchanter job"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "i1",
+                  "options": [
+                    {
+                      "optionId": "enchant-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.enchant-1",
+                        "fallback": "Intentar un afijo"
+                      },
+                      "description": {
+                        "key": "option.enchant-1.description",
+                        "fallback": "Intentar un afijo: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "foreign-sell-offer-target",
+      "schema": "GameView",
+      "expectedError": "TOKEN_FOREIGN",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": [
+              {
+                "authorizationId": "auth-sell_item_to_visitor-i1",
+                "action": "sell_item_to_visitor",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.sell_item_to_visitor",
+                  "fallback": "sell item to visitor"
+                },
+                "consequences": [
+                  {
+                    "kind": "transfer_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i1"
+                    ],
+                    "newOwner": {
+                      "kind": "visitor",
+                      "visitorId": "v1"
+                    },
+                    "text": {
+                      "key": "consequence.sell",
+                      "fallback": "El objeto pasará a ser de Ada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i1",
+                  "offers": [
+                    {
+                      "offerId": "offer-1",
+                      "visitorId": "v1",
+                      "itemId": "i-other",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "offer.sell",
+                        "fallback": "Vender a Ada"
+                      },
+                      "description": {
+                        "key": "offer.sell.description",
+                        "fallback": "Ada ofrece 40 de oro."
+                      },
+                      "consequences": [
+                        {
+                          "kind": "transfer_items",
+                          "irreversible": true,
+                          "itemIds": [
+                            "i1"
+                          ],
+                          "newOwner": {
+                            "kind": "visitor",
+                            "visitorId": "v1"
+                          },
+                          "text": {
+                            "key": "consequence.sell",
+                            "fallback": "El objeto pasará a ser de Ada."
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "expired-acknowledgement",
+      "schema": "GameView",
+      "expectedError": "TOKEN_EXPIRED",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i4",
+            "name": {
+              "key": "item.service",
+              "fallback": "Armadura en mejora"
+            },
+            "slot": "armor",
+            "rarity": "common",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": [
+              {
+                "authorizationId": "auth-dismantle_item-i4",
+                "action": "dismantle_item",
+                "targetId": "i4",
+                "enabled": true,
+                "label": {
+                  "key": "action.dismantle_item",
+                  "fallback": "dismantle item"
+                },
+                "consequences": [
+                  {
+                    "kind": "destroy_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i4"
+                    ],
+                    "text": {
+                      "key": "consequence.destroy",
+                      "fallback": "El objeto será destruido."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i4",
+                  "options": [
+                    {
+                      "optionId": "dismantle-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.dismantle-1",
+                        "fallback": "Desmantelar"
+                      },
+                      "description": {
+                        "key": "option.dismantle-1.description",
+                        "fallback": "Desmantelar: condiciones selladas por el servidor."
+                      },
+                      "consequences": [],
+                      "acknowledgement": {
+                        "acknowledgementId": "ack-dismantle",
+                        "expiresAt": "2026-09-14T10:29:59Z",
+                        "text": {
+                          "key": "ack.ack-dismantle",
+                          "fallback": "Entiendo que el objeto será destruido."
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-replace_boss_imprint-i4",
+                "action": "replace_boss_imprint",
+                "targetId": "i4",
+                "enabled": true,
+                "label": {
+                  "key": "action.replace_boss_imprint",
+                  "fallback": "replace boss imprint"
+                },
+                "consequences": [
+                  {
+                    "kind": "replace_imprint",
+                    "irreversible": true,
+                    "itemId": "i4",
+                    "replacedImprint": {
+                      "key": "imprint.old",
+                      "fallback": "Impronta anterior"
+                    },
+                    "text": {
+                      "key": "consequence.imprint",
+                      "fallback": "La impronta anterior será reemplazada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i4",
+                  "options": [
+                    {
+                      "optionId": "imprint-1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.imprint-1",
+                        "fallback": "Aplicar nueva impronta"
+                      },
+                      "description": {
+                        "key": "option.imprint-1.description",
+                        "fallback": "Aplicar nueva impronta: condiciones selladas por el servidor."
+                      },
+                      "consequences": [],
+                      "acknowledgement": {
+                        "acknowledgementId": "ack-imprint",
+                        "expiresAt": "2026-09-15T10:30:00Z",
+                        "text": {
+                          "key": "ack.ack-imprint",
+                          "fallback": "Entiendo que se reemplazará la impronta."
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "foreign-recovery-visitor",
+      "schema": "GameView",
+      "expectedError": "ELIGIBILITY_FOREIGN",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v2",
+            "name": {
+              "key": "visitor.v2",
+              "fallback": "Borin"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [
+          {
+            "recoveryId": "r1",
+            "sourceExpeditionId": "e1",
+            "itemIds": [
+              "i1"
+            ],
+            "state": "open",
+            "expiresAt": "2026-09-21T11:00:00Z",
+            "options": [
+              {
+                "optionId": "ro1",
+                "label": {
+                  "key": "recovery.cautious",
+                  "fallback": "Recuperación cauta"
+                },
+                "description": {
+                  "key": "recovery.cautious.description",
+                  "fallback": "Intento lento con riesgo de perder el equipo."
+                },
+                "durationSeconds": 3600,
+                "consequences": [
+                  {
+                    "kind": "fail_recovery",
+                    "irreversible": true,
+                    "recoveryId": "r1",
+                    "destroyedItemIds": [
+                      "i1"
+                    ],
+                    "text": {
+                      "key": "recovery.risk",
+                      "fallback": "Si falla, Espada gastada será destruida."
+                    }
+                  }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-assign_recovery-r1",
+                "action": "assign_recovery",
+                "targetId": "r1",
+                "enabled": true,
+                "label": {
+                  "key": "action.assign_recovery",
+                  "fallback": "assign recovery"
+                },
+                "consequences": [],
+                "execution": {
+                  "recoveryId": "r1",
+                  "bindings": [
+                    {
+                      "optionId": "ro1",
+                      "visitorId": "v-foreign",
+                      "eligibleLoanItemIds": [],
+                      "expiresAt": "2026-09-15T10:30:00Z"
+                    }
+                  ]
+                }
+              },
+              {
+                "authorizationId": "auth-abandon_recovery-r1",
+                "action": "abandon_recovery",
+                "targetId": "r1",
+                "enabled": true,
+                "label": {
+                  "key": "action.abandon_recovery",
+                  "fallback": "abandon recovery"
+                },
+                "consequences": [
+                  {
+                    "kind": "fail_recovery",
+                    "irreversible": true,
+                    "recoveryId": "r1",
+                    "destroyedItemIds": [
+                      "i1"
+                    ],
+                    "text": {
+                      "key": "recovery.risk",
+                      "fallback": "Si falla, Espada gastada será destruida."
+                    }
+                  }
+                ],
+                "execution": {
+                  "recoveryId": "r1",
+                  "acknowledgement": {
+                    "acknowledgementId": "ack-r1",
+                    "expiresAt": "2026-09-15T10:30:00Z",
+                    "text": {
+                      "key": "ack.abandon",
+                      "fallback": "Entiendo que el equipo se perderá."
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i4",
+            "name": {
+              "key": "item.recoveryArmor",
+              "fallback": "Armadura perdida"
+            },
+            "slot": "armor",
+            "rarity": "rare",
+            "level": 2,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "recovery",
+              "recoveryId": "r1"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "settlement-preview-mismatch",
+      "schema": "GameView",
+      "expectedError": "TOKEN_FOREIGN",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "awaiting_settlement",
+            "expeditionId": "e1",
+            "settlementId": "s1",
+            "outcome": "returned",
+            "actions": [
+              {
+                "authorizationId": "auth-confirm_settlement-s1",
+                "action": "confirm_settlement",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.confirm_settlement",
+                  "fallback": "confirm settlement"
+                },
+                "consequences": [],
+                "execution": {
+                  "settlementId": "s1",
+                  "previewVersion": 1,
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "groups": [
+                    {
+                      "groupId": "g1",
+                      "eligibleOptionIds": [
+                        "renounce"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [
+          {
+            "expeditionId": "e1",
+            "visitorId": "v1",
+            "contractId": "c1",
+            "state": "awaiting_settlement",
+            "outcome": "retreated",
+            "resolvedAt": "2026-09-14T10:30:00Z",
+            "settlementId": "s1",
+            "actions": []
+          }
+        ],
+        "settlements": [
+          {
+            "settlementId": "s1",
+            "expeditionId": "e1",
+            "state": "preview_ready",
+            "previewVersion": 1,
+            "outcome": "returned",
+            "createdAt": "2026-09-14T10:30:00Z",
+            "expiresAt": "2026-09-15T10:30:00Z",
+            "gold": {
+              "gross": 100,
+              "caravan": 25,
+              "visitor": 75
+            },
+            "loans": [
+              {
+                "itemId": "i1",
+                "resolution": "return"
+              }
+            ],
+            "choiceGroups": [
+              {
+                "groupId": "g1",
+                "required": true,
+                "defaultOptionId": "renounce",
+                "label": {
+                  "key": "settlement.loot",
+                  "fallback": "Elegí qué hacer con el botín"
+                },
+                "options": [
+                  {
+                    "optionId": "renounce",
+                    "label": {
+                      "key": "option.renounce",
+                      "fallback": "Renunciar al amuleto"
+                    },
+                    "itemIds": [],
+                    "capacityDelta": 0,
+                    "consequences": [
+                      {
+                        "kind": "renounce_reward",
+                        "irreversible": true,
+                        "rewardItemIds": [
+                          "reward1"
+                        ],
+                        "text": {
+                          "key": "consequence.renounce",
+                          "fallback": "Renunciarás definitivamente al Amuleto antiguo."
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "departureSignal": "possible",
+            "departureResolution": "stays",
+            "actions": [
+              {
+                "authorizationId": "auth-confirm_settlement-s1",
+                "action": "confirm_settlement",
+                "targetId": "s1",
+                "enabled": true,
+                "label": {
+                  "key": "action.confirm_settlement",
+                  "fallback": "confirm settlement"
+                },
+                "consequences": [],
+                "execution": {
+                  "settlementId": "s1",
+                  "previewVersion": 2,
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "groups": [
+                    {
+                      "groupId": "g1",
+                      "eligibleOptionIds": [
+                        "renounce"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i3",
+            "name": {
+              "key": "item.loanSword",
+              "fallback": "Espada prestada"
+            },
+            "slot": "weapon",
+            "rarity": "magic",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "expedition",
+              "expeditionId": "e1",
+              "visitorId": "v1"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "foreign-settlement-option",
+      "schema": "GameView",
+      "expectedError": "ELIGIBILITY_FOREIGN",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "awaiting_settlement",
+            "expeditionId": "e1",
+            "settlementId": "s1",
+            "outcome": "returned",
+            "actions": [
+              {
+                "authorizationId": "auth-confirm_settlement-s1",
+                "action": "confirm_settlement",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.confirm_settlement",
+                  "fallback": "confirm settlement"
+                },
+                "consequences": [],
+                "execution": {
+                  "settlementId": "s1",
+                  "previewVersion": 1,
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "groups": [
+                    {
+                      "groupId": "g1",
+                      "eligibleOptionIds": [
+                        "renounce"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [
+          {
+            "expeditionId": "e1",
+            "visitorId": "v1",
+            "contractId": "c1",
+            "state": "awaiting_settlement",
+            "outcome": "retreated",
+            "resolvedAt": "2026-09-14T10:30:00Z",
+            "settlementId": "s1",
+            "actions": []
+          }
+        ],
+        "settlements": [
+          {
+            "settlementId": "s1",
+            "expeditionId": "e1",
+            "state": "preview_ready",
+            "previewVersion": 1,
+            "outcome": "returned",
+            "createdAt": "2026-09-14T10:30:00Z",
+            "expiresAt": "2026-09-15T10:30:00Z",
+            "gold": {
+              "gross": 100,
+              "caravan": 25,
+              "visitor": 75
+            },
+            "loans": [
+              {
+                "itemId": "i1",
+                "resolution": "return"
+              }
+            ],
+            "choiceGroups": [
+              {
+                "groupId": "g1",
+                "required": true,
+                "defaultOptionId": "renounce",
+                "label": {
+                  "key": "settlement.loot",
+                  "fallback": "Elegí qué hacer con el botín"
+                },
+                "options": [
+                  {
+                    "optionId": "renounce",
+                    "label": {
+                      "key": "option.renounce",
+                      "fallback": "Renunciar al amuleto"
+                    },
+                    "itemIds": [],
+                    "capacityDelta": 0,
+                    "consequences": [
+                      {
+                        "kind": "renounce_reward",
+                        "irreversible": true,
+                        "rewardItemIds": [
+                          "reward1"
+                        ],
+                        "text": {
+                          "key": "consequence.renounce",
+                          "fallback": "Renunciarás definitivamente al Amuleto antiguo."
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "departureSignal": "possible",
+            "departureResolution": "stays",
+            "actions": [
+              {
+                "authorizationId": "auth-confirm_settlement-s1",
+                "action": "confirm_settlement",
+                "targetId": "s1",
+                "enabled": true,
+                "label": {
+                  "key": "action.confirm_settlement",
+                  "fallback": "confirm settlement"
+                },
+                "consequences": [],
+                "execution": {
+                  "settlementId": "s1",
+                  "previewVersion": 1,
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "groups": [
+                    {
+                      "groupId": "g1",
+                      "eligibleOptionIds": [
+                        "keep-foreign"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i3",
+            "name": {
+              "key": "item.loanSword",
+              "fallback": "Espada prestada"
+            },
+            "slot": "weapon",
+            "rarity": "magic",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "expedition",
+              "expeditionId": "e1",
+              "visitorId": "v1"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "impossible-action-location",
+      "schema": "GameView",
+      "expectedError": "ACTION_LOCATION_INVALID",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v2",
+            "name": {
+              "key": "visitor.v2",
+              "fallback": "Borin"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [
+          {
+            "recoveryId": "r1",
+            "sourceExpeditionId": "e1",
+            "itemIds": [
+              "i1"
+            ],
+            "state": "open",
+            "expiresAt": "2026-09-21T11:00:00Z",
+            "options": [
+              {
+                "optionId": "ro1",
+                "label": {
+                  "key": "recovery.cautious",
+                  "fallback": "Recuperación cauta"
+                },
+                "description": {
+                  "key": "recovery.cautious.description",
+                  "fallback": "Intento lento con riesgo de perder el equipo."
+                },
+                "durationSeconds": 3600,
+                "consequences": [
+                  {
+                    "kind": "fail_recovery",
+                    "irreversible": true,
+                    "recoveryId": "r1",
+                    "destroyedItemIds": [
+                      "i1"
+                    ],
+                    "text": {
+                      "key": "recovery.risk",
+                      "fallback": "Si falla, Espada gastada será destruida."
+                    }
+                  }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-identify_item-r1",
+                "action": "identify_item",
+                "targetId": "r1",
+                "enabled": true,
+                "label": {
+                  "key": "action.identify_item",
+                  "fallback": "identify item"
+                },
+                "consequences": [],
+                "execution": {
+                  "itemId": "r1",
+                  "options": [
+                    {
+                      "optionId": "identify-wrong",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "option.identify-wrong",
+                        "fallback": "Opción imposible"
+                      },
+                      "description": {
+                        "key": "option.identify-wrong.description",
+                        "fallback": "Opción imposible: condiciones selladas por el servidor."
+                      },
+                      "consequences": []
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i4",
+            "name": {
+              "key": "item.recoveryArmor",
+              "fallback": "Armadura perdida"
+            },
+            "slot": "armor",
+            "rarity": "rare",
+            "level": 2,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "recovery",
+              "recoveryId": "r1"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "duplicate-offer-token",
+      "schema": "GameView",
+      "expectedError": "TOKEN_AMBIGUOUS",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": [
+              {
+                "authorizationId": "auth-sell_item_to_visitor-i1",
+                "action": "sell_item_to_visitor",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.sell_item_to_visitor",
+                  "fallback": "sell item to visitor"
+                },
+                "consequences": [
+                  {
+                    "kind": "transfer_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i1"
+                    ],
+                    "newOwner": {
+                      "kind": "visitor",
+                      "visitorId": "v1"
+                    },
+                    "text": {
+                      "key": "consequence.sell",
+                      "fallback": "El objeto pasará a ser de Ada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i1",
+                  "offers": [
+                    {
+                      "offerId": "offer-1",
+                      "visitorId": "v1",
+                      "itemId": "i1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "offer.sell",
+                        "fallback": "Vender a Ada"
+                      },
+                      "description": {
+                        "key": "offer.sell.description",
+                        "fallback": "Ada ofrece 40 de oro."
+                      },
+                      "consequences": [
+                        {
+                          "kind": "transfer_items",
+                          "irreversible": true,
+                          "itemIds": [
+                            "i1"
+                          ],
+                          "newOwner": {
+                            "kind": "visitor",
+                            "visitorId": "v1"
+                          },
+                          "text": {
+                            "key": "consequence.sell",
+                            "fallback": "El objeto pasará a ser de Ada."
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "offerId": "offer-1",
+                      "visitorId": "v1",
+                      "itemId": "i1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "offer.sell",
+                        "fallback": "Vender a Ada"
+                      },
+                      "description": {
+                        "key": "offer.sell.description",
+                        "fallback": "Ada ofrece 40 de oro."
+                      },
+                      "consequences": [
+                        {
+                          "kind": "transfer_items",
+                          "irreversible": true,
+                          "itemIds": [
+                            "i1"
+                          ],
+                          "newOwner": {
+                            "kind": "visitor",
+                            "visitorId": "v1"
+                          },
+                          "text": {
+                            "key": "consequence.sell",
+                            "fallback": "El objeto pasará a ser de Ada."
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "duplicate-settlement-group",
+      "schema": "GameView",
+      "expectedError": "TOKEN_AMBIGUOUS",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "awaiting_settlement",
+            "expeditionId": "e1",
+            "settlementId": "s1",
+            "outcome": "returned",
+            "actions": []
+          }
+        ],
+        "expeditions": [
+          {
+            "expeditionId": "e1",
+            "visitorId": "v1",
+            "contractId": "c1",
+            "state": "awaiting_settlement",
+            "outcome": "retreated",
+            "resolvedAt": "2026-09-14T10:30:00Z",
+            "settlementId": "s1",
+            "actions": []
+          }
+        ],
+        "settlements": [
+          {
+            "settlementId": "s1",
+            "expeditionId": "e1",
+            "state": "preview_ready",
+            "previewVersion": 1,
+            "outcome": "returned",
+            "createdAt": "2026-09-14T10:30:00Z",
+            "expiresAt": "2026-09-15T10:30:00Z",
+            "gold": {
+              "gross": 100,
+              "caravan": 25,
+              "visitor": 75
+            },
+            "loans": [
+              {
+                "itemId": "i1",
+                "resolution": "return"
+              }
+            ],
+            "choiceGroups": [
+              {
+                "groupId": "g1",
+                "required": true,
+                "defaultOptionId": "renounce",
+                "label": {
+                  "key": "settlement.loot",
+                  "fallback": "Elegí qué hacer con el botín"
+                },
+                "options": [
+                  {
+                    "optionId": "renounce",
+                    "label": {
+                      "key": "option.renounce",
+                      "fallback": "Renunciar al amuleto"
+                    },
+                    "itemIds": [],
+                    "capacityDelta": 0,
+                    "consequences": [
+                      {
+                        "kind": "renounce_reward",
+                        "irreversible": true,
+                        "rewardItemIds": [
+                          "reward1"
+                        ],
+                        "text": {
+                          "key": "consequence.renounce",
+                          "fallback": "Renunciarás definitivamente al Amuleto antiguo."
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "groupId": "g2",
+                "required": true,
+                "defaultOptionId": "renounce-2",
+                "label": {
+                  "key": "settlement.loot",
+                  "fallback": "Elegí qué hacer con el botín"
+                },
+                "options": [
+                  {
+                    "optionId": "renounce-2",
+                    "label": {
+                      "key": "option.renounce",
+                      "fallback": "Renunciar al amuleto"
+                    },
+                    "itemIds": [],
+                    "capacityDelta": 0,
+                    "consequences": [
+                      {
+                        "kind": "renounce_reward",
+                        "irreversible": true,
+                        "rewardItemIds": [
+                          "reward1"
+                        ],
+                        "text": {
+                          "key": "consequence.renounce",
+                          "fallback": "Renunciarás definitivamente al Amuleto antiguo."
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "departureSignal": "possible",
+            "departureResolution": "stays",
+            "actions": [
+              {
+                "authorizationId": "auth-confirm_settlement-s1",
+                "action": "confirm_settlement",
+                "targetId": "s1",
+                "enabled": true,
+                "label": {
+                  "key": "action.confirm_settlement",
+                  "fallback": "confirm settlement"
+                },
+                "consequences": [],
+                "execution": {
+                  "settlementId": "s1",
+                  "previewVersion": 1,
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "groups": [
+                    {
+                      "groupId": "g1",
+                      "eligibleOptionIds": [
+                        "renounce"
+                      ]
+                    },
+                    {
+                      "groupId": "g1",
+                      "eligibleOptionIds": [
+                        "renounce"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i3",
+            "name": {
+              "key": "item.loanSword",
+              "fallback": "Espada prestada"
+            },
+            "slot": "weapon",
+            "rarity": "magic",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "expedition",
+              "expeditionId": "e1",
+              "visitorId": "v1"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "mismatched-mirrored-execution",
+      "schema": "GameView",
+      "expectedError": "PROJECTION_MISMATCH",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-sell_item_to_visitor-i1",
+                "action": "sell_item_to_visitor",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.sell_item_to_visitor",
+                  "fallback": "sell item to visitor"
+                },
+                "consequences": [
+                  {
+                    "kind": "transfer_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i1"
+                    ],
+                    "newOwner": {
+                      "kind": "visitor",
+                      "visitorId": "v1"
+                    },
+                    "text": {
+                      "key": "consequence.sell",
+                      "fallback": "El objeto pasará a ser de Ada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i1",
+                  "offers": [
+                    {
+                      "offerId": "offer-1",
+                      "visitorId": "v1",
+                      "itemId": "i1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "offer.sell",
+                        "fallback": "Vender a Ada"
+                      },
+                      "description": {
+                        "key": "offer.sell.description",
+                        "fallback": "La misma oferta fue publicada con otro contenido."
+                      },
+                      "consequences": [
+                        {
+                          "kind": "transfer_items",
+                          "irreversible": true,
+                          "itemIds": [
+                            "i1"
+                          ],
+                          "newOwner": {
+                            "kind": "visitor",
+                            "visitorId": "v1"
+                          },
+                          "text": {
+                            "key": "consequence.sell",
+                            "fallback": "El objeto pasará a ser de Ada."
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": [
+              {
+                "authorizationId": "auth-sell_item_to_visitor-i1",
+                "action": "sell_item_to_visitor",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.sell_item_to_visitor",
+                  "fallback": "sell item to visitor"
+                },
+                "consequences": [
+                  {
+                    "kind": "transfer_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i1"
+                    ],
+                    "newOwner": {
+                      "kind": "visitor",
+                      "visitorId": "v1"
+                    },
+                    "text": {
+                      "key": "consequence.sell",
+                      "fallback": "El objeto pasará a ser de Ada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i1",
+                  "offers": [
+                    {
+                      "offerId": "offer-1",
+                      "visitorId": "v1",
+                      "itemId": "i1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "offer.sell",
+                        "fallback": "Vender a Ada"
+                      },
+                      "description": {
+                        "key": "offer.sell.description",
+                        "fallback": "Ada ofrece 40 de oro."
+                      },
+                      "consequences": [
+                        {
+                          "kind": "transfer_items",
+                          "irreversible": true,
+                          "itemIds": [
+                            "i1"
+                          ],
+                          "newOwner": {
+                            "kind": "visitor",
+                            "visitorId": "v1"
+                          },
+                          "text": {
+                            "key": "consequence.sell",
+                            "fallback": "El objeto pasará a ser de Ada."
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "duplicate-action-in-container",
+      "schema": "GameView",
+      "expectedError": "TOKEN_AMBIGUOUS",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [],
+        "actions": [
+          {
+            "authorizationId": "auth-reconcile_game-game",
+            "action": "reconcile_game",
+            "enabled": true,
+            "label": {
+              "key": "action.reconcile_game",
+              "fallback": "reconcile game"
+            },
+            "consequences": [],
+            "execution": {}
+          },
+          {
+            "authorizationId": "auth-upgrade_caravan-game",
+            "action": "upgrade_caravan",
+            "enabled": true,
+            "label": {
+              "key": "action.upgrade_caravan",
+              "fallback": "upgrade caravan"
+            },
+            "consequences": [],
+            "execution": {
+              "options": [
+                {
+                  "optionId": "upgrade-1",
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "label": {
+                    "key": "option.upgrade-1",
+                    "fallback": "Ampliar alojamiento"
+                  },
+                  "description": {
+                    "key": "option.upgrade-1.description",
+                    "fallback": "Ampliar alojamiento: condiciones selladas por el servidor."
+                  },
+                  "consequences": []
+                }
+              ]
+            }
+          },
+          {
+            "authorizationId": "auth-reconcile_game-game",
+            "action": "reconcile_game",
+            "enabled": true,
+            "label": {
+              "key": "action.reconcile_game",
+              "fallback": "reconcile game"
+            },
+            "consequences": [],
+            "execution": {}
+          }
+        ]
+      }
+    },
+    {
+      "id": "action-in-wrong-state",
+      "schema": "GameView",
+      "expectedError": "ACTION_LOCATION_INVALID",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "contracted",
+            "contractId": "c1",
+            "actions": [
+              {
+                "authorizationId": "auth-invalid-state",
+                "action": "sell_item_to_visitor",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.sell_item_to_visitor",
+                  "fallback": "sell item to visitor"
+                },
+                "consequences": [
+                  {
+                    "kind": "transfer_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i1"
+                    ],
+                    "newOwner": {
+                      "kind": "visitor",
+                      "visitorId": "v1"
+                    },
+                    "text": {
+                      "key": "consequence.sell",
+                      "fallback": "El objeto pasará a ser de Ada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i1",
+                  "offers": [
+                    {
+                      "offerId": "offer-1",
+                      "visitorId": "v1",
+                      "itemId": "i1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "offer.sell",
+                        "fallback": "Vender a Ada"
+                      },
+                      "description": {
+                        "key": "offer.sell.description",
+                        "fallback": "Ada ofrece 40 de oro."
+                      },
+                      "consequences": [
+                        {
+                          "kind": "transfer_items",
+                          "irreversible": true,
+                          "itemIds": [
+                            "i1"
+                          ],
+                          "newOwner": {
+                            "kind": "visitor",
+                            "visitorId": "v1"
+                          },
+                          "text": {
+                            "key": "consequence.sell",
+                            "fallback": "El objeto pasará a ser de Ada."
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": [
+              {
+                "authorizationId": "auth-sell_item_to_visitor-i1",
+                "action": "sell_item_to_visitor",
+                "targetId": "i1",
+                "enabled": true,
+                "label": {
+                  "key": "action.sell_item_to_visitor",
+                  "fallback": "sell item to visitor"
+                },
+                "consequences": [
+                  {
+                    "kind": "transfer_items",
+                    "irreversible": true,
+                    "itemIds": [
+                      "i1"
+                    ],
+                    "newOwner": {
+                      "kind": "visitor",
+                      "visitorId": "v1"
+                    },
+                    "text": {
+                      "key": "consequence.sell",
+                      "fallback": "El objeto pasará a ser de Ada."
+                    }
+                  }
+                ],
+                "execution": {
+                  "itemId": "i1",
+                  "offers": [
+                    {
+                      "offerId": "offer-1",
+                      "visitorId": "v1",
+                      "itemId": "i1",
+                      "expiresAt": "2026-09-15T10:30:00Z",
+                      "label": {
+                        "key": "offer.sell",
+                        "fallback": "Vender a Ada"
+                      },
+                      "description": {
+                        "key": "offer.sell.description",
+                        "fallback": "Ada ofrece 40 de oro."
+                      },
+                      "consequences": [
+                        {
+                          "kind": "transfer_items",
+                          "irreversible": true,
+                          "itemIds": [
+                            "i1"
+                          ],
+                          "newOwner": {
+                            "kind": "visitor",
+                            "visitorId": "v1"
+                          },
+                          "text": {
+                            "key": "consequence.sell",
+                            "fallback": "El objeto pasará a ser de Ada."
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "disabled-action-in-wrong-location",
+      "schema": "GameView",
+      "expectedError": "ACTION_LOCATION_INVALID",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v2",
+            "name": {
+              "key": "visitor.v2",
+              "fallback": "Borin"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": []
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [
+          {
+            "recoveryId": "r1",
+            "sourceExpeditionId": "e1",
+            "itemIds": [
+              "i1"
+            ],
+            "state": "open",
+            "expiresAt": "2026-09-21T11:00:00Z",
+            "options": [
+              {
+                "optionId": "ro1",
+                "label": {
+                  "key": "recovery.cautious",
+                  "fallback": "Recuperación cauta"
+                },
+                "description": {
+                  "key": "recovery.cautious.description",
+                  "fallback": "Intento lento con riesgo de perder el equipo."
+                },
+                "durationSeconds": 3600,
+                "consequences": [
+                  {
+                    "kind": "fail_recovery",
+                    "irreversible": true,
+                    "recoveryId": "r1",
+                    "destroyedItemIds": [
+                      "i1"
+                    ],
+                    "text": {
+                      "key": "recovery.risk",
+                      "fallback": "Si falla, Espada gastada será destruida."
+                    }
+                  }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-disabled-wrong",
+                "action": "identify_item",
+                "targetId": "r1",
+                "enabled": false,
+                "label": {
+                  "key": "action.identify",
+                  "fallback": "Identificar"
+                },
+                "reason": "SERVICE_LOCKED",
+                "reasonText": {
+                  "key": "reason.locked",
+                  "fallback": "El servicio está bloqueado."
+                },
+                "consequences": []
+              }
+            ]
+          }
+        ],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i4",
+            "name": {
+              "key": "item.recoveryArmor",
+              "fallback": "Armadura perdida"
+            },
+            "slot": "armor",
+            "rarity": "rare",
+            "level": 2,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "recovery",
+              "recoveryId": "r1"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "duplicate-source-entity-id",
+      "schema": "GameView",
+      "expectedError": "TOKEN_AMBIGUOUS",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-accept_contract-v1",
+                "action": "accept_contract",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.accept_contract",
+                  "fallback": "accept contract"
+                },
+                "consequences": [],
+                "execution": {
+                  "visitorId": "v1",
+                  "bindings": [
+                    {
+                      "optionId": "o1",
+                      "eligibleLoanItemIds": [
+                        "i1"
+                      ],
+                      "expiresAt": "2026-09-15T10:30:00Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-accept_contract-v1",
+                "action": "accept_contract",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.accept_contract",
+                  "fallback": "accept contract"
+                },
+                "consequences": [],
+                "execution": {
+                  "visitorId": "v1",
+                  "bindings": [
+                    {
+                      "optionId": "o1",
+                      "eligibleLoanItemIds": [
+                        "i1"
+                      ],
+                      "expiresAt": "2026-09-15T10:30:00Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "duplicate-source-option-id",
+      "schema": "GameView",
+      "expectedError": "TOKEN_AMBIGUOUS",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "available",
+            "departureSignal": "possible",
+            "contractOptions": [
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "La caravana recibe 25% del oro y elige botín primero."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              },
+              {
+                "optionId": "o1",
+                "label": {
+                  "key": "contract.standard",
+                  "fallback": "Reparto estándar"
+                },
+                "description": {
+                  "key": "contract.standard.description",
+                  "fallback": "Condiciones divergentes para el mismo token."
+                },
+                "durationSeconds": 3600,
+                "caravanGoldShareBps": 2500,
+                "lootPriority": "caravan_first",
+                "retreatThreshold": 10,
+                "loanFeeGold": 0,
+                "consequences": []
+              }
+            ],
+            "actions": [
+              {
+                "authorizationId": "auth-accept_contract-v1",
+                "action": "accept_contract",
+                "targetId": "v1",
+                "enabled": true,
+                "label": {
+                  "key": "action.accept_contract",
+                  "fallback": "accept contract"
+                },
+                "consequences": [],
+                "execution": {
+                  "visitorId": "v1",
+                  "bindings": [
+                    {
+                      "optionId": "o1",
+                      "eligibleLoanItemIds": [
+                        "i1"
+                      ],
+                      "expiresAt": "2026-09-15T10:30:00Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "expeditions": [],
+        "settlements": [],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i1",
+            "name": {
+              "key": "item.unknownSword",
+              "fallback": "Espada sin identificar"
+            },
+            "slot": "weapon",
+            "rarity": "rare",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "stash"
+            },
+            "identification": "unidentified",
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    },
+    {
+      "id": "enabled-disabled-projection-mismatch",
+      "schema": "GameView",
+      "expectedError": "PROJECTION_MISMATCH",
+      "value": {
+        "contractVersion": "v2-etapa0-3",
+        "labelCatalogVersion": "es-AR-v1",
+        "revision": 10,
+        "serverNow": "2026-09-14T10:30:00Z",
+        "nextTransitionAt": "2026-09-15T10:30:00Z",
+        "resources": {
+          "gold": 100,
+          "materials": {}
+        },
+        "capacity": {
+          "used": 1,
+          "limit": 10,
+          "reserved": 0,
+          "blockers": []
+        },
+        "visitors": [
+          {
+            "visitorId": "v1",
+            "name": {
+              "key": "visitor.v1",
+              "fallback": "Ada"
+            },
+            "state": "awaiting_settlement",
+            "expeditionId": "e1",
+            "settlementId": "s1",
+            "outcome": "returned",
+            "actions": [
+              {
+                "authorizationId": "auth-confirm_settlement-s1",
+                "action": "confirm_settlement",
+                "targetId": "v1",
+                "enabled": false,
+                "label": {
+                  "key": "action.confirm_settlement",
+                  "fallback": "confirm settlement"
+                },
+                "reason": "OPTION_STALE",
+                "reasonText": {
+                  "key": "reason.stale",
+                  "fallback": "La opción ya no está vigente."
+                },
+                "consequences": []
+              }
+            ]
+          }
+        ],
+        "expeditions": [
+          {
+            "expeditionId": "e1",
+            "visitorId": "v1",
+            "contractId": "c1",
+            "state": "awaiting_settlement",
+            "outcome": "retreated",
+            "resolvedAt": "2026-09-14T10:30:00Z",
+            "settlementId": "s1",
+            "actions": []
+          }
+        ],
+        "settlements": [
+          {
+            "settlementId": "s1",
+            "expeditionId": "e1",
+            "state": "preview_ready",
+            "previewVersion": 1,
+            "outcome": "returned",
+            "createdAt": "2026-09-14T10:30:00Z",
+            "expiresAt": "2026-09-15T10:30:00Z",
+            "gold": {
+              "gross": 100,
+              "caravan": 25,
+              "visitor": 75
+            },
+            "loans": [
+              {
+                "itemId": "i1",
+                "resolution": "return"
+              }
+            ],
+            "choiceGroups": [
+              {
+                "groupId": "g1",
+                "required": true,
+                "defaultOptionId": "renounce",
+                "label": {
+                  "key": "settlement.loot",
+                  "fallback": "Elegí qué hacer con el botín"
+                },
+                "options": [
+                  {
+                    "optionId": "renounce",
+                    "label": {
+                      "key": "option.renounce",
+                      "fallback": "Renunciar al amuleto"
+                    },
+                    "itemIds": [],
+                    "capacityDelta": 0,
+                    "consequences": [
+                      {
+                        "kind": "renounce_reward",
+                        "irreversible": true,
+                        "rewardItemIds": [
+                          "reward1"
+                        ],
+                        "text": {
+                          "key": "consequence.renounce",
+                          "fallback": "Renunciarás definitivamente al Amuleto antiguo."
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "departureSignal": "possible",
+            "departureResolution": "stays",
+            "actions": [
+              {
+                "authorizationId": "auth-confirm_settlement-s1",
+                "action": "confirm_settlement",
+                "targetId": "s1",
+                "enabled": true,
+                "label": {
+                  "key": "action.confirm_settlement",
+                  "fallback": "confirm settlement"
+                },
+                "consequences": [],
+                "execution": {
+                  "settlementId": "s1",
+                  "previewVersion": 1,
+                  "expiresAt": "2026-09-15T10:30:00Z",
+                  "groups": [
+                    {
+                      "groupId": "g1",
+                      "eligibleOptionIds": [
+                        "renounce"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "recoveries": [],
+        "serviceJobs": [],
+        "items": [
+          {
+            "itemId": "i3",
+            "name": {
+              "key": "item.loanSword",
+              "fallback": "Espada prestada"
+            },
+            "slot": "weapon",
+            "rarity": "magic",
+            "level": 1,
+            "owner": {
+              "kind": "caravan"
+            },
+            "custody": {
+              "kind": "expedition",
+              "expeditionId": "e1",
+              "visitorId": "v1"
+            },
+            "identification": "identified",
+            "affixes": [],
+            "activeImprint": null,
+            "actions": []
+          }
+        ],
+        "actions": []
+      }
+    }
+  ]
+}

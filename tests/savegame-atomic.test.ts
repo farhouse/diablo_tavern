@@ -721,6 +721,17 @@ describe('atomic persisted-game mutation', () => {
     await expect(getSaveGame('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
   })
 
+  it.each(['visitorCycle', 'caravanV2', 'chronicleOutbox'] as const)('does not repair corrupt %s while repairing reservations', async (field) => {
+    const { getPersistedGameV3, getSaveGame, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const initial = await getPersistedGameV3('atomic-user')
+    const corrupt = structuredClone(initial) as PersistedGameV3 & Record<string, unknown>
+    ;(corrupt as Record<string, unknown>)[field] = field === 'chronicleOutbox' ? { lost: 'events' } : null
+    document = corrupt
+
+    await expect(getSaveGame('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(document).toEqual(corrupt)
+  })
+
   it('applies V2 identification through the persisted aggregate without rerolling sealed affixes', async () => {
     const { getPersistedGameV3, mutateEquipmentV2Atomic } = await import('../server/utils/savegame')
     const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
@@ -865,6 +876,108 @@ describe('atomic persisted-game mutation', () => {
     expect(collection.replaceOne).toHaveBeenCalledTimes(2)
   })
 
+  it('backfills the visitor cycle without changing populated historical state', async () => {
+    const { getPersistedGameV3, isPersistedCanonical, mutateSaveGameAtomic } = await import('../server/utils/savegame')
+    const { createVisitorCycle } = await import('../server/domain/visitor-cycle')
+    const { assignVisitorCommission, refreshVisitRound } = await import('../utils/visitor-logic')
+    const startedAt = new Date('2026-09-15T12:00:00.000Z')
+    let id = 0
+    let roll = 0
+    const dependencies = {
+      now: () => startedAt,
+      uuid: () => `historical-${++id}`,
+      random: () => ((++roll * 37) % 100) / 100
+    }
+    await mutateSaveGameAtomic('atomic-user', 'historical-state', 'historical:state', 0, {}, (save) => {
+      save.gold += 17
+      for (const visitor of save.visitRound.slots.flatMap((slot) => slot.visitor ? [slot.visitor] : [])) {
+        visitor.state = 'traded'
+        assignVisitorCommission(save, visitor.id, 'safe', dependencies.random, startedAt)
+      }
+    }, dependencies)
+    const active = document as PersistedGameV3
+    const finishesAt = active.visitRound.slots.flatMap((slot) => slot.visitor?.commission ? [slot.visitor.commission.finishesAt] : [])
+      .sort().at(-1)
+    if (!finishesAt) throw new Error('Expected active historical commissions')
+    await mutateSaveGameAtomic('atomic-user', 'historical-settlement', 'historical:settlement', 1, {}, (save) => {
+      refreshVisitRound(save, new Date(finishesAt), dependencies.random)
+    }, { ...dependencies, now: () => new Date(finishesAt) })
+    const legacyV3 = structuredClone(document as PersistedGameV3)
+    legacyV3.materials.scrap = 23
+    const firstExpeditionId = Object.keys(legacyV3.expeditionsById)[0]
+    if (!firstExpeditionId) throw new Error('Expected a historical expedition')
+    legacyV3.recoveriesById['historical-recovery'] = {
+      id: 'historical-recovery', itemIds: [],
+      projection: { kind: 'recovery', sourceExpeditionId: firstExpeditionId, resolvedAt: legacyV3.updatedAt }
+    }
+    const historicalRound = structuredClone(legacyV3.visitRound)
+    historicalRound.id = 'historical-round'
+    historicalRound.number = Math.max(0, legacyV3.visitRound.number - 1)
+    const historicalSlot = historicalRound.slots.find((slot) => slot.visitor)
+    if (!historicalSlot?.visitor) throw new Error('Expected a historical visitor')
+    for (const slot of historicalRound.slots) {
+      if (slot !== historicalSlot) delete slot.visitor
+    }
+    const currentHistoricalSlot = legacyV3.visitRound.slots.find((slot) => slot.visitor?.id === historicalSlot.visitor?.id)
+    if (!currentHistoricalSlot) throw new Error('Expected the current historical visitor slot')
+    delete currentHistoricalSlot.visitor
+    legacyV3.visitHistory.push(historicalRound)
+    legacyV3.visitorCycle = createVisitorCycle(legacyV3)
+    expect(isPersistedCanonical(legacyV3)).toBe(true)
+    const expectedVisitorIds = legacyV3.visitRound.slots
+      .concat(...legacyV3.visitHistory.map((round) => round.slots))
+      .flatMap((slot) => slot.visitor ? [slot.visitor.id] : [])
+      .sort()
+    const before = structuredClone(legacyV3)
+    expect(before.materials.scrap).toBe(23)
+    expect(before.stash.length).toBeGreaterThan(0)
+    expect(before.visitHistory.length).toBeGreaterThan(0)
+    expect(Object.keys(before.expeditionsById).length).toBeGreaterThan(0)
+    expect(Object.keys(before.recoveriesById).length).toBeGreaterThan(0)
+    expect(Object.keys(before.settlementsById).length).toBeGreaterThan(0)
+    expect(before.requestRecords.length).toBeGreaterThan(0)
+    expect(Object.keys(before.businessKeys).length).toBeGreaterThan(0)
+    expect(before.ledger.length).toBeGreaterThan(0)
+    delete (legacyV3 as Partial<PersistedGameV3>).visitorCycle
+    document = legacyV3
+    vi.clearAllMocks()
+
+    const backfilled = await getPersistedGameV3('atomic-user')
+
+    expect(isPersistedCanonical(backfilled)).toBe(true)
+    expect(Object.keys(backfilled.visitorCycle.visitors).sort()).toEqual(expectedVisitorIds)
+    expect(backfilled.revision).toBe(before.revision)
+    expect(backfilled.gold).toBe(before.gold)
+    expect(backfilled.materials).toEqual(before.materials)
+    expect(backfilled.stash).toEqual(before.stash)
+    expect(backfilled.itemsById).toEqual(before.itemsById)
+    expect(backfilled.itemPlacements).toEqual(before.itemPlacements)
+    expect(backfilled.visitRound).toEqual(before.visitRound)
+    expect(backfilled.visitHistory).toEqual(before.visitHistory)
+    expect(backfilled.expeditionsById).toEqual(before.expeditionsById)
+    expect(backfilled.recoveriesById).toEqual(before.recoveriesById)
+    expect(backfilled.settlementsById).toEqual(before.settlementsById)
+    expect(backfilled.requestRecords).toEqual(before.requestRecords)
+    expect(backfilled.businessKeys).toEqual(before.businessKeys)
+    expect(backfilled.ledger).toEqual(before.ledger)
+    expect(collection.replaceOne).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['missing visitRound', (corrupt: Record<string, unknown>) => { delete corrupt.visitRound }],
+    ['malformed visitRound', (corrupt: Record<string, unknown>) => { corrupt.visitRound = { slots: [] } }],
+    ['malformed visitHistory', (corrupt: Record<string, unknown>) => { corrupt.visitHistory = [{ slots: [] }] }]
+  ])('rejects a missing visitor cycle with %s without writing', async (_label, corrupt) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const legacy = structuredClone(document as PersistedGameV3) as unknown as Record<string, unknown>
+    delete legacy.visitorCycle
+    corrupt(legacy)
+    document = legacy as unknown as PersistedGameV3
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(collection.replaceOne).not.toHaveBeenCalled()
+  })
+
   it('backfills historical claimed commission rewards without moving or recreating them', async () => {
     const { getPersistedGameV3, hydratePersistedGame, isPersistedCanonical } = await import('../server/utils/savegame')
     const legacyV3 = historicalClaimedRewardFixture()
@@ -882,12 +995,18 @@ describe('atomic persisted-game mutation', () => {
     expect(backfilled.revision).toBe(before.revision)
     expect(backfilled.gold).toBe(before.gold)
     expect(backfilled.materials).toEqual(before.materials)
+    expect(backfilled.stash).toEqual(before.stash)
     expect(backfilled.itemsById).toEqual(before.itemsById)
+    expect(backfilled.itemPlacements).toEqual(before.itemPlacements)
     expect(backfilled.visitRound).toEqual(before.visitRound)
     expect(backfilled.visitHistory).toEqual(before.visitHistory)
+    expect(backfilled.expeditionsById).toEqual(before.expeditionsById)
+    expect(backfilled.recoveriesById).toEqual(before.recoveriesById)
+    expect(backfilled.settlementsById).toEqual(before.settlementsById)
     expect(backfilled.ledger).toEqual(before.ledger)
     expect(backfilled.requestRecords).toEqual(before.requestRecords)
     expect(backfilled.businessKeys).toEqual(before.businessKeys)
+    expect(backfilled.caravanV2).toEqual(before.caravanV2)
     expect(backfilled.itemPlacements[movedRewardId]).toEqual(before.itemPlacements[movedRewardId])
     expect(backfilled.itemPlacements[soldRewardId]).toEqual(before.itemPlacements[soldRewardId])
     expect(backfilled.stash).not.toContain(movedRewardId)

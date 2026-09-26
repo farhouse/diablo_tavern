@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import fixtures from '../contracts/v2-etapa0-3/fixtures.json'
+import fixtures from '../contracts/v2-etapa0-4/fixtures.json'
 import type { GameView } from '../shared/types/v2-game-view'
 import { useGameV2Store } from '../stores/game-v2'
 
@@ -11,7 +11,7 @@ vi.mock('../stores/auth', () => ({
   useAuthStore: () => ({ accessToken: 'token', hydrate, refresh })
 }))
 
-const cases = fixtures.integratedPositiveCases as Array<{ id: string, value: GameView }>
+const cases = fixtures.integratedPositiveCases.map((candidate) => ({ id: candidate.id, value: candidate.value as GameView }))
 
 function fixture(id: string): GameView {
   const match = cases.find((candidate) => candidate.id === id)

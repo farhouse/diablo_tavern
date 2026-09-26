@@ -1,5 +1,5 @@
 import type { UnavailableReason } from './v2-game-view.generated'
-import type { GameView } from './v2-game-view.generated'
+import type { GameView } from './v2-game-view'
 
 export interface CommandEnvelope<T> {
   requestId: string

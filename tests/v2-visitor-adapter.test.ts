@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import fixtures from '../contracts/v2-etapa0-3/fixtures.json'
+import fixtures from '../contracts/v2-etapa0-4/fixtures.json'
 import type { GameView } from '../shared/types/v2-game-view'
 import {
   abandonRecoveryPayload,
@@ -13,8 +13,11 @@ import {
 } from '../utils/v2-visitor-adapter'
 import type { VisitorV2Selection } from '../utils/v2-visitor-adapter'
 
-const cases = fixtures.integratedPositiveCases as Array<{ id: string, value: GameView }>
-const negativeCases = fixtures.negativeCases as Array<{ id: string, value: GameView }>
+const cases = fixtures.integratedPositiveCases.map((candidate) => ({ id: candidate.id, value: candidate.value as GameView }))
+const negativeCases = fixtures.negativeCases.map((candidate) => ({
+  id: candidate.id,
+  value: { ...candidate.value, contractVersion: 'v2-etapa0-4', caravan: { visitorCapacity: { used: 0, limit: 2 }, upgrades: [], maintenance: { periodKey: '2026-W38', nextDueAt: '2026-09-21T00:00:00.000Z', status: 'current', debtPeriods: 0, debtGold: 0 } } } as GameView
+}))
 
 function fixture(id: string): GameView {
   const match = cases.find((candidate) => candidate.id === id)

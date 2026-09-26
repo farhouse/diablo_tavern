@@ -45,7 +45,7 @@ describe('PersistedGameV3 invariants', () => {
   it('never exposes persistence bookkeeping through the contractual GameView', () => {
     const persisted = buildPersistedFromPublic(createSaveGame('projection-user'))
     const view = mapPersistedGameToGameView(persisted, new Date('2026-09-13T12:00:00.000Z'))
-    expect(view.contractVersion).toBe('v2-etapa0-3')
+    expect(view.contractVersion).toBe('v2-etapa0-4')
     expect(view.capacity.used).toBe(effectiveCapacityUsed(persisted))
     expect(view.visitors).toHaveLength(2)
     expect(view.visitors.every((visitor) => visitor.state === 'available')).toBe(true)
@@ -382,6 +382,7 @@ describe('PersistedGameV3 invariants', () => {
     cycleExpedition.settledAt = save.updatedAt
     cycleExpedition.visitorResolution = 'departs'
     cycleSettlement.state = 'settled'
+    delete claimed.caravanV2.capacityReservations[`settlement:${cycleSettlement.settlementId}`]
     cycleSettlement.appliedAt = save.updatedAt
     cycleSettlement.appliedBy = 'confirmation'
     cycleSettlement.appliedChoices = cycleSettlement.choiceGroups.map((group) => {

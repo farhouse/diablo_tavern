@@ -74,6 +74,11 @@ export function authorizeEquipmentV2Command(
   dependencies: PersistenceDependencies
 ): void {
   if (command.action === 'complete_service_job') return
+  if (command.action === 'queue_blacksmith_job' || command.action === 'queue_enchanter_job') {
+    const service = command.action === 'queue_blacksmith_job' ? 'blacksmith' : 'enchanter'
+    if (game.caravanV2.maintenance.debts.length) throw domainError('Maintenance debt blocks equipment services')
+    if (game.caravanV2.upgrades[service] < 1) throw domainError('Equipment service is locked')
+  }
   validateOption(game, requireItemId(command), command.action, requireOption(command), command.acknowledgementId, dependencies)
 }
 

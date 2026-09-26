@@ -41,6 +41,7 @@ import {
   sealEquipmentActionToken,
   type EquipmentV2Action
 } from '~/server/domain/equipment-v2'
+import { CARAVAN_V2_UPGRADES, caravanUpgradeToken, maintenancePeriodKey, nextMaintenancePeriodStart, reservedCapacity, visitorCapacityLimit, type CaravanV2UpgradeId } from '~/server/domain/caravan-v2'
 
 export async function getGameView(userId: string, now = new Date()): Promise<GameView> {
   await getSaveGame(userId, { now: () => now, random: Math.random, uuid: crypto.randomUUID })
@@ -83,8 +84,14 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     }
     return []
   })
+  const activeVisitors = visitors.filter((visitor) => visitor.state !== 'departed' && visitor.state !== 'dead').length
+  const caravanV2 = game.caravanV2
+  const currentPeriodKey = maintenancePeriodKey(now)
+  const maintenance = caravanV2.maintenance
+  const debtGold = maintenance.debts.reduce((sum, debt) => sum + debt.gold, 0)
+  const upgradeActions = projectCaravanUpgradeAction(game, now)
   const view: GameView = {
-    contractVersion: 'v2-etapa0-3',
+    contractVersion: 'v2-etapa0-4',
     labelCatalogVersion: 'es-AR-v1',
     revision: game.revision,
     serverNow: now.toISOString(),
@@ -93,8 +100,19 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     capacity: {
       used: Object.values(game.itemPlacements).filter((placement) => placement.ownerKind === 'caravan').length,
       limit: game.stashLimit,
-      reserved: 0,
+      reserved: reservedCapacity(caravanV2),
       blockers: []
+    },
+    caravan: {
+      visitorCapacity: { used: activeVisitors, limit: visitorCapacityLimit(caravanV2.upgrades.visitor_quarters) },
+      upgrades: (Object.keys(CARAVAN_V2_UPGRADES) as CaravanV2UpgradeId[]).map((upgradeId) => ({ upgradeId, level: caravanV2.upgrades[upgradeId], maxLevel: CARAVAN_V2_UPGRADES[upgradeId].maxLevel })),
+      maintenance: {
+        periodKey: currentPeriodKey,
+        nextDueAt: nextMaintenancePeriodStart(currentPeriodKey),
+        status: maintenance.debts.length ? 'debt' : 'current',
+        debtPeriods: maintenance.debts.length,
+        debtGold
+      }
     },
     visitors,
     expeditions,
@@ -102,11 +120,33 @@ export function mapPersistedGameToGameView(game: PersistedGameV3, now = new Date
     recoveries,
     serviceJobs,
     items,
-    actions: cycle.actions
+    actions: [...cycle.actions, upgradeActions]
   }
   validateGameView(view)
   validateSemanticGameView(view)
   return view
+}
+
+function projectCaravanUpgradeAction(game: PersistedGameV3, now: Date): ActionAvailability {
+  const expiresAt = new Date(now.getTime() + 5 * 60_000).toISOString()
+  const options = (Object.keys(CARAVAN_V2_UPGRADES) as CaravanV2UpgradeId[]).flatMap((upgradeId) => {
+    const level = game.caravanV2.upgrades[upgradeId]
+    const targetLevel = level + 1
+    const catalog = CARAVAN_V2_UPGRADES[upgradeId]
+    const cost = catalog.costs[level]
+    if (!cost) return []
+    return [{
+      optionId: caravanUpgradeToken(game, upgradeId, targetLevel, expiresAt), expiresAt,
+      label: text(`caravan.${upgradeId}`, upgradeId.replaceAll('_', ' ')),
+      description: text(`caravan.${upgradeId}.level.${targetLevel}`, `Desbloquea el nivel ${targetLevel}`),
+      consequences: [spendGold(cost.gold), { kind: 'spend_resource', irreversible: true, resourceId: 'scrap', amount: cost.scrap, text: text('resource.scrap.spend', `${cost.scrap} scrap`) }]
+    }]
+  })
+  if (game.caravanV2.maintenance.debts.length) {
+    return { action: 'upgrade_caravan', enabled: false, authorizationId: `auth-upgrade-caravan-${game.revision}`, label: text('action.upgrade_caravan', 'upgrade caravan'), reason: 'MAINTENANCE_DEBT', reasonText: text('maintenance.debt', 'La manutención pendiente bloquea las mejoras'), consequences: [] } as ActionAvailability
+  }
+  if (!options.length) return { action: 'upgrade_caravan', enabled: false, authorizationId: `auth-upgrade-caravan-${game.revision}`, label: text('action.upgrade_caravan', 'upgrade caravan'), reason: 'SERVICE_LOCKED', reasonText: text('caravan.maxed', 'La caravana alcanzó su máximo'), consequences: [] } as ActionAvailability
+  return { action: 'upgrade_caravan', enabled: true, authorizationId: `auth-upgrade-caravan-${game.revision}`, label: text('action.upgrade_caravan', 'upgrade caravan'), consequences: [], execution: { options } } as unknown as ActionAvailability
 }
 
 export function validateSemanticGameView(view: GameView): void {
@@ -156,7 +196,7 @@ export function validateSemanticGameView(view: GameView): void {
     }
     itemIds.add(item.itemId)
   }
-  if (view.capacity.used > view.capacity.limit) throw new Error('Owned item capacity exceeds its limit')
+  if (view.capacity.used + view.capacity.reserved > view.capacity.limit) throw new Error('Owned and reserved item capacity exceeds its limit')
 }
 
 function hasPublicCustodyTarget(
@@ -225,7 +265,9 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
   }
 
   const blacksmith = getBlacksmithOption(item, state)
-  actions.push(sealedAction(game, 'queue_blacksmith_job', item.id, 'Herrero', [{
+  actions.push(game.caravanV2.upgrades.blacksmith < 1 || game.caravanV2.maintenance.debts.length
+    ? disabledEquipmentAction('queue_blacksmith_job', item.id, 'Herrero', game.caravanV2.maintenance.debts.length ? 'MAINTENANCE_DEBT' : 'SERVICE_LOCKED')
+    : sealedAction(game, 'queue_blacksmith_job', item.id, 'Herrero', [{
     optionId: sealEquipmentActionToken(game, item.id, 'queue_blacksmith_job', blacksmith.optionId, 'option', expiresAt), expiresAt,
     label: text('blacksmith.label', 'Mejorar en herrero'),
     description: text('blacksmith.description', `Cuesta ${blacksmith.gold} oro`),
@@ -233,7 +275,9 @@ function itemActions(item: Item, placement: PersistedItemPlacement, game: Persis
   }]))
 
   const enchanter = getEnchanterOption(item, state)
-  actions.push(sealedAction(game, 'queue_enchanter_job', item.id, 'Encantador', [{
+  actions.push(game.caravanV2.upgrades.enchanter < 1 || game.caravanV2.maintenance.debts.length
+    ? disabledEquipmentAction('queue_enchanter_job', item.id, 'Encantador', game.caravanV2.maintenance.debts.length ? 'MAINTENANCE_DEBT' : 'SERVICE_LOCKED')
+    : sealedAction(game, 'queue_enchanter_job', item.id, 'Encantador', [{
     optionId: sealEquipmentActionToken(game, item.id, 'queue_enchanter_job', enchanter.optionId, 'option', expiresAt), expiresAt,
     label: text('enchanter.label', 'Encantar'),
     description: text('enchanter.description', `Cuesta ${enchanter.gold} oro`),
@@ -273,6 +317,19 @@ function sealedAction(game: PersistedGameV3, action: EquipmentV2Action, itemId: 
     targetId: itemId,
     execution: { itemId, options }
   } as ActionAvailability
+}
+
+function disabledEquipmentAction(action: 'queue_blacksmith_job' | 'queue_enchanter_job', itemId: string, label: string, reason: 'MAINTENANCE_DEBT' | 'SERVICE_LOCKED'): ActionAvailability {
+  return {
+    action,
+    targetId: itemId,
+    enabled: false,
+    authorizationId: `auth-${action}-${itemId}`,
+    label: text(`${action}.label`, label),
+    reason,
+    reasonText: text(reason === 'MAINTENANCE_DEBT' ? 'maintenance.debt' : 'service.locked', reason === 'MAINTENANCE_DEBT' ? 'La manutención pendiente bloquea el servicio' : 'El servicio aún no está desbloqueado'),
+    consequences: []
+  }
 }
 
 function getActionExpiresAt(options: unknown[]): string {

@@ -356,7 +356,7 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     failed.visitorCycle.recoveries[recovery.recoveryId]!.succeeds = false
     expect(mapPersistedGameToGameView(apply(failed, { action: 'reconcile_game' }, deathScenario.dependencies), deathScenario.dependencies.now())
       .recoveries[0]).toMatchObject({ state: 'failed', actions: [] })
-    expect(mapPersistedGameToGameView(dead, deathScenario.now).actions.map((action) => action.action)).toEqual(['reconcile_game'])
+    expect(mapPersistedGameToGameView(dead, deathScenario.now).actions.map((action) => action.action)).toEqual(['reconcile_game', 'upgrade_caravan'])
   })
 
   it('accepts only the canonical pre-departure return window', () => {

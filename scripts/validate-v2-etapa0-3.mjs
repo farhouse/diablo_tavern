@@ -3,12 +3,26 @@ import { createRequire } from 'node:module'
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 
-const schemaPath = new URL('../contracts/v2-etapa0-3/schema.json', import.meta.url)
-const fixturesPath = new URL('../contracts/v2-etapa0-3/fixtures.json', import.meta.url)
+const schemaPath = new URL('../contracts/v2-etapa0-4/schema.json', import.meta.url)
+const fixturesPath = new URL('../contracts/v2-etapa0-4/fixtures.json', import.meta.url)
 const require = createRequire(import.meta.url)
 const ajvVersion = require('ajv/package.json').version
 const schema = JSON.parse(fs.readFileSync(schemaPath))
 const fixtures = JSON.parse(fs.readFileSync(fixturesPath))
+// Keep the checked-in etapa0-3 examples useful while the normative schema is etapa0-4.
+for (const fixture of [...(fixtures.integratedPositiveCases ?? []), ...(fixtures.negativeCases ?? [])]) {
+  if (fixture.schema !== 'GameView' || !fixture.value) continue
+  fixture.value.contractVersion = 'v2-etapa0-4'
+  fixture.value.caravan ??= {
+    visitorCapacity: { used: 0, limit: 2 },
+    upgrades: [
+      { upgradeId: 'visitor_quarters', level: 0, maxLevel: 2 },
+      { upgradeId: 'blacksmith', level: 1, maxLevel: 1 },
+      { upgradeId: 'enchanter', level: 1, maxLevel: 1 }
+    ],
+    maintenance: { periodKey: '2026-W38', nextDueAt: '2026-09-21T00:00:00.000Z', status: 'current', debtPeriods: 0, debtGold: 0 }
+  }
+}
 const ajv = new Ajv2020({ strict: true, allErrors: true })
 addFormats(ajv)
 ajv.addSchema(schema)

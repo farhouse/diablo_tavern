@@ -3,11 +3,12 @@ import { ObjectId, type Filter } from 'mongodb'
 import { createAccessToken, createRefreshToken, hashRefreshToken, publicUser, serializeUser, verifyRefreshTokenHash } from '~/server/utils/auth'
 import { type DbUser, usersCollection } from '~/server/utils/db'
 import { readRequiredBody, requireString } from '~/server/utils/body'
+import { resolveServerRuntimeConfig } from '~/server/utils/runtime-config'
 
 export default defineEventHandler(async (event) => {
   const body = await readRequiredBody(event)
   const refreshToken = requireString(body.refreshToken, 'refreshToken')
-  const config = useRuntimeConfig()
+  const config = resolveServerRuntimeConfig(useRuntimeConfig())
 
   let userId = ''
   try {
