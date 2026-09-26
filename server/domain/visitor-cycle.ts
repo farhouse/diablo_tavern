@@ -801,10 +801,13 @@ function projectRecovery(
 }
 
 function confirmAction(settlement: PersistedCycleSettlement, targetId: string): ActionAvailability {
-  return enabledAction('confirm_settlement', targetId, {
-    settlementId: settlement.settlementId, previewVersion: settlement.previewVersion, expiresAt: settlement.expiresAt,
-    groups: settlement.choiceGroups.map((group) => ({ groupId: group.groupId, eligibleOptionIds: group.options.map((option) => option.optionId) }))
-  })
+  return {
+    ...enabledAction('confirm_settlement', settlement.settlementId, {
+      settlementId: settlement.settlementId, previewVersion: settlement.previewVersion, expiresAt: settlement.expiresAt,
+      groups: settlement.choiceGroups.map((group) => ({ groupId: group.groupId, eligibleOptionIds: group.options.map((option) => option.optionId) }))
+    }),
+    targetId
+  }
 }
 
 function enabledAction(

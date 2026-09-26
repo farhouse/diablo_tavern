@@ -6,6 +6,7 @@ import { applyVisitorCycleCommand, VisitorCycleError } from '../server/domain/vi
 import { mapPersistedGameToGameView } from '../server/domain/game-view'
 import { applyItemTransition } from '../server/domain/item-transitions'
 import { dismissVisitor } from '../utils/visitor-logic'
+import { confirmSettlementPayload } from '../utils/v2-visitor-adapter'
 
 const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET
 const ORIGINAL_NUXT_JWT_SECRET = process.env.NUXT_JWT_SECRET
@@ -158,6 +159,38 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(preview.itemPlacements[scenario.loanItemId]).toMatchObject({ custodyKind: 'expedition' })
     expect(mapPersistedGameToGameView(preview, materializedAt).settlements[0]).toMatchObject({
       state: 'preview_ready', actions: [{ action: 'confirm_settlement', enabled: true }]
+    })
+  })
+
+  it('projects one shared settlement authorization across visitor and settlement containers', () => {
+    const scenario = activeScenario()
+    scenario.game.visitorCycle.expeditions[scenario.expeditionId]!.events = [event(scenario.now, 1)]
+    const preview = apply(scenario.game, { action: 'reconcile_game' }, scenario.dependencies)
+    const view = mapPersistedGameToGameView(preview, scenario.now)
+    const settlement = view.settlements[0]
+    const visitor = view.visitors.find((candidate) => candidate.visitorId === scenario.visitorId)
+    const settlementAction = settlement?.actions.find((candidate) => candidate.action === 'confirm_settlement' && candidate.enabled)
+    const visitorAction = visitor?.actions.find((candidate) => candidate.action === 'confirm_settlement' && candidate.enabled)
+
+    if (!settlement || settlement.state !== 'preview_ready'
+      || !visitor || visitor.state !== 'awaiting_settlement'
+      || !settlementAction || settlementAction.action !== 'confirm_settlement' || !settlementAction.enabled
+      || !visitorAction || visitorAction.action !== 'confirm_settlement' || !visitorAction.enabled) {
+      throw new Error('Expected projected settlement actions')
+    }
+
+    expect(visitorAction.authorizationId).toBe(settlementAction.authorizationId)
+    expect(visitorAction.targetId).toBe(visitor.visitorId)
+    expect(settlementAction.targetId).toBe(settlement.settlementId)
+    expect(visitorAction.execution).toEqual(settlementAction.execution)
+
+    const selectedOptionIds = Object.fromEntries(settlement.choiceGroups.map((group) => [group.groupId, group.options[0]!.optionId]))
+    expect(confirmSettlementPayload(view, {
+      kind: 'settlement', settlementId: settlement.settlementId, selectedOptionIds
+    })).toEqual({
+      settlementId: settlement.settlementId,
+      previewVersion: settlement.previewVersion,
+      selectedOptionIds: settlement.choiceGroups.map((group) => selectedOptionIds[group.groupId]!)
     })
   })
 
