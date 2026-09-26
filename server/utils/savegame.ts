@@ -1761,7 +1761,9 @@ function isCaravan(value: unknown): value is SaveGame['caravan'] {
   if (!isPlainRecord(value.services) || !hasOnlyKeys(value.services, ['appraiserQueue']) || !Array.isArray(value.services.appraiserQueue)) return false
   return value.services.appraiserQueue.every((job) => isPlainRecord(job)
     && hasOnlyKeys(job, ['id', 'itemId', 'startedAt', 'finishesAt'])
-    && ['id', 'itemId', 'startedAt', 'finishesAt'].every((key) => typeof job[key] === 'string' && Boolean(job[key])))
+    && typeof job.id === 'string' && Boolean(job.id)
+    && typeof job.itemId === 'string' && Boolean(job.itemId)
+    && isPersistedTimestamp(job.startedAt) && isPersistedTimestamp(job.finishesAt))
 }
 
 function isPersistedRound(value: unknown): value is PersistedVisitRound {
@@ -1782,7 +1784,8 @@ function isPersistedVisitor(value: unknown): value is PersistedVisitor {
     'acceptedItemTypes', 'interestedItemTypes', 'offers', 'buyQuotes', 'trades', 'power',
     'commissionOptions', 'commission', 'arrivedAt', 'departedAt'
   ])) return false
-  if (!['id', 'name', 'origin', 'arrivedAt'].every((key) => typeof value[key] === 'string' && Boolean(value[key]))) return false
+  if (!['id', 'name', 'origin'].every((key) => typeof value[key] === 'string' && Boolean(value[key]))) return false
+  if (!isPersistedTimestamp(value.arrivedAt)) return false
   if (!['barbarian', 'sorceress', 'paladin', 'necromancer'].includes(String(value.class))) return false
   if (!['open', 'traded', 'commissioned', 'returned', 'departed'].includes(String(value.state))) return false
   if (!['level', 'budget', 'initialBudget', 'power'].every((key) => Number.isInteger(value[key]) && Number(value[key]) >= 0)) return false
@@ -1795,7 +1798,9 @@ function isPersistedVisitor(value: unknown): value is PersistedVisitor {
   if (!isPlainRecord(value.buyQuotes) || !Object.values(value.buyQuotes).every((quote) => Number.isInteger(quote) && Number(quote) >= 0)) return false
   if (!Array.isArray(value.trades) || !value.trades.every((trade) => isPlainRecord(trade)
     && hasOnlyKeys(trade, ['requestId', 'kind', 'itemId', 'price', 'createdAt'])
-    && ['requestId', 'itemId', 'createdAt'].every((key) => typeof trade[key] === 'string' && Boolean(trade[key]))
+    && typeof trade.requestId === 'string' && Boolean(trade.requestId)
+    && typeof trade.itemId === 'string' && Boolean(trade.itemId)
+    && isPersistedTimestamp(trade.createdAt)
     && ['player_bought', 'player_sold'].includes(String(trade.kind)) && Number.isInteger(trade.price))) return false
   if (!Array.isArray(value.commissionOptions) || !value.commissionOptions.every(isCommissionOption)) return false
   if (value.commission !== undefined && !isPersistedCommission(value.commission)) return false

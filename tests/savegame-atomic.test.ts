@@ -1089,10 +1089,34 @@ describe('atomic persisted-game mutation', () => {
       partial.updatedAt = 2026
     }],
     ['BSON Date', (partial: Record<string, unknown>) => {
-      const commission = (partial.visitRound as PersistedGameV3['visitRound']).slots[0]!.visitor!.commission!
-      commission.finishesAt = new Date('2026-09-15T12:00:00.000Z') as unknown as string
+      partial.createdAt = new Date('2026-09-15T12:00:00.000Z')
     }]
   ])('rejects historical V2 map absence paired with a parseable but non-string %s timestamp without writing', async (_label, corrupt) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const partial = historicalClaimedRewardFixture() as unknown as Record<string, unknown>
+    corrupt(partial)
+    document = partial as unknown as PersistedGameV3
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(collection.replaceOne).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['appraiser queue startedAt', (partial: Record<string, unknown>) => {
+      const persisted = partial as unknown as PersistedGameV3
+      persisted.caravan.services.appraiserQueue.push({
+        id: 'historical-appraiser', itemId: persisted.stash[0]!, startedAt: 'not-a-date', finishesAt: persisted.updatedAt
+      })
+    }],
+    ['visitor arrivedAt', (partial: Record<string, unknown>) => {
+      const visitor = (partial.visitRound as PersistedGameV3['visitRound']).slots[0]!.visitor!
+      visitor.arrivedAt = 'not-a-date'
+    }],
+    ['trade createdAt', (partial: Record<string, unknown>) => {
+      const visitor = (partial.visitRound as PersistedGameV3['visitRound']).slots[1]!.visitor!
+      visitor.trades[0]!.createdAt = 'not-a-date'
+    }],
+  ])('rejects historical V2 map absence paired with an unparseable %s timestamp without writing', async (_label, corrupt) => {
     const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
     const partial = historicalClaimedRewardFixture() as unknown as Record<string, unknown>
     corrupt(partial)
@@ -1132,8 +1156,10 @@ describe('atomic persisted-game mutation', () => {
     const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
     document = historicalClaimedRewardFixture() as unknown as PersistedGameV3
     const backfilled = await getPersistedGameV3('atomic-user')
-    const rewardItemId = backfilled.visitRound.slots[0]!.visitor!.commission!.rewardItemId!
-    backfilled.itemV2ById[rewardItemId]!.provenance!.droppedAt = droppedAt as unknown as string
+    const unrelatedItemId = backfilled.stash[0]!
+    backfilled.itemV2ById[unrelatedItemId] = {
+      provenance: { zoneId: 'blood-moor', droppedAt: droppedAt as unknown as string }
+    }
     document = backfilled
     vi.clearAllMocks()
 
