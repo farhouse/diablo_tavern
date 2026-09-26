@@ -261,9 +261,14 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(deadView.recoveries).toEqual([expect.objectContaining({
       state: 'recovered', itemIds: [], recoveredItemIds: [], actions: []
     })])
-    expect(deadView.actions.map((action) => action.action)).not.toEqual(expect.arrayContaining(['assign_recovery', 'abandon_recovery']))
-    expect(deadView.visitors.find((visitor) => visitor.visitorId === scenario.visitorId)?.actions.map((action) => action.action))
-      .not.toEqual(expect.arrayContaining(['assign_recovery', 'abandon_recovery']))
+    const gameActionNames = deadView.actions.map((action) => action.action)
+    expect(gameActionNames).not.toContain('assign_recovery')
+    expect(gameActionNames).not.toContain('abandon_recovery')
+    const deadVisitor = deadView.visitors.find((visitor) => visitor.visitorId === scenario.visitorId)
+    expect(deadVisitor).toBeDefined()
+    const visitorActionNames = deadVisitor!.actions.map((action) => action.action)
+    expect(visitorActionNames).not.toContain('assign_recovery')
+    expect(visitorActionNames).not.toContain('abandon_recovery')
     expect(isPersistedCanonical(dead)).toBe(true)
   })
 
