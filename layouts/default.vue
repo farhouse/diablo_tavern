@@ -6,6 +6,8 @@
         <NuxtLink to="/tavern">Tavern</NuxtLink>
         <NuxtLink to="/visitors-v2">Visitantes V2</NuxtLink>
         <NuxtLink to="/equipment-v2">Equipo V2</NuxtLink>
+        <NuxtLink to="/caravan-v2">Caravana V2</NuxtLink>
+        <NuxtLink to="/chronicle-v2">Crónica V2</NuxtLink>
         <NuxtLink to="/stash">Stash</NuxtLink>
         <NuxtLink to="/caravan">Caravan</NuxtLink>
       </nav>
@@ -33,7 +35,7 @@ const auth = useAuthStore()
 const game = useGameStore()
 const gameV2 = useGameV2Store()
 const route = useRoute()
-const isVisitorsV2 = computed(() => route.path === '/visitors-v2' || route.path === '/equipment-v2')
+const isVisitorsV2 = computed(() => route.path.endsWith('-v2'))
 
 const visitorCount = computed(() => game.save?.visitRound.slots.filter((slot) => Boolean(slot.visitor)).length ?? 0)
 const stashCount = computed(() => game.save?.stash.length ?? 0)
