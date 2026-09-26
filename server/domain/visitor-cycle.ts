@@ -482,11 +482,16 @@ function applySettlement(
   let recoveryId: string | undefined
   if (settlement.outcome === 'death') {
     recoveryId = `recovery-${deps.uuid()}`
-    const recovery: PersistedCycleRecovery = {
-      recoveryId, sourceExpeditionId: expedition.expeditionId, itemIds: [...settlement.loanItemIds], state: 'open',
-      expiresAt: new Date(now.getTime() + RECOVERY_TTL_MS).toISOString(), options: recoveryOptions(recoveryId, settlement.loanItemIds),
-      supportLoanItemIds: []
-    }
+    const recovery: PersistedCycleRecovery = settlement.loanItemIds.length
+      ? {
+          recoveryId, sourceExpeditionId: expedition.expeditionId, itemIds: [...settlement.loanItemIds], state: 'open',
+          expiresAt: new Date(now.getTime() + RECOVERY_TTL_MS).toISOString(), options: recoveryOptions(recoveryId, settlement.loanItemIds),
+          supportLoanItemIds: []
+        }
+      : {
+          recoveryId, sourceExpeditionId: expedition.expeditionId, itemIds: [], state: 'recovered',
+          expiresAt: now.toISOString(), options: [], supportLoanItemIds: [], resolvedAt: now.toISOString(), recoveredItemIds: []
+        }
     game.visitorCycle.recoveries[recoveryId] = recovery
     game.recoveriesById[recoveryId] = {
       id: recoveryId, itemIds: [], projection: { kind: 'recovery', sourceExpeditionId: expedition.expeditionId, resolvedAt: now.toISOString() }
@@ -1054,6 +1059,10 @@ function isRecovery(value: unknown): value is PersistedCycleRecovery {
     && isUtc(value.completesAt) && typeof value.succeeds === 'boolean' && value.resolvedAt === undefined
   if (!isUtc(value.resolvedAt)) return false
   if (value.state === 'abandoned') return hasOnlyKeys(value, [...common, 'resolvedAt'])
+  if (value.state === 'recovered' && (value.itemIds as string[]).length === 0) {
+    return hasOnlyKeys(value, [...common, 'resolvedAt', 'recoveredItemIds'])
+      && isStringArray(value.recoveredItemIds) && (value.recoveredItemIds as string[]).length === 0
+  }
   if (!hasOnlyKeys(value, [...assigned, 'resolvedAt', ...(value.state === 'recovered' ? ['recoveredItemIds'] : [])])) return false
   return value.state !== 'recovered' || (isStringArray(value.recoveredItemIds) && sameIds(value.recoveredItemIds, value.itemIds as string[]))
 }
