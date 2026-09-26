@@ -1101,13 +1101,29 @@ describe('atomic persisted-game mutation', () => {
     expect(collection.replaceOne).not.toHaveBeenCalled()
   })
 
+  it.each(['startedAt', 'finishesAt'] as const)('rejects historical V2 map absence paired with an unparseable appraiser queue %s timestamp without writing', async (timestamp) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const partial = historicalClaimedRewardFixture() as unknown as Record<string, unknown>
+    const persisted = partial as unknown as PersistedGameV3
+    const itemId = persisted.stash[0]!
+    const jobId = 'historical-appraiser'
+    persisted.stash = persisted.stash.filter((candidate) => candidate !== itemId)
+    persisted.itemPlacements[itemId] = { ownerKind: 'caravan', custodyKind: 'service', custodyId: jobId }
+    persisted.serviceJobsById[jobId] = { id: jobId, itemIds: [itemId], projection: { kind: 'legacy_appraiser' } }
+    persisted.caravan.services.appraiserQueue.push({
+      id: jobId,
+      itemId,
+      startedAt: persisted.updatedAt,
+      finishesAt: persisted.updatedAt
+    })
+    persisted.caravan.services.appraiserQueue[0]![timestamp] = 'not-a-date'
+    document = partial as unknown as PersistedGameV3
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(collection.replaceOne).not.toHaveBeenCalled()
+  })
+
   it.each([
-    ['appraiser queue startedAt', (partial: Record<string, unknown>) => {
-      const persisted = partial as unknown as PersistedGameV3
-      persisted.caravan.services.appraiserQueue.push({
-        id: 'historical-appraiser', itemId: persisted.stash[0]!, startedAt: 'not-a-date', finishesAt: persisted.updatedAt
-      })
-    }],
     ['visitor arrivedAt', (partial: Record<string, unknown>) => {
       const visitor = (partial.visitRound as PersistedGameV3['visitRound']).slots[0]!.visitor!
       visitor.arrivedAt = 'not-a-date'
