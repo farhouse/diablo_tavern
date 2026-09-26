@@ -170,8 +170,9 @@ export const useGameV2Store = defineStore('game-v2', {
       return await this.postEquipmentPending(operation)
     },
     async retryUncertain() {
-      if (!this.pendingOperation || this.operationState !== 'uncertain') return
-      await this.postPending(this.pendingOperation)
+      if (this.operationState !== 'uncertain') return
+      if (this.pendingOperation) await this.postPending(this.pendingOperation)
+      else if (this.pendingEquipmentOperation) await this.postEquipmentPending(this.pendingEquipmentOperation)
     },
     async reconcileDueTransition(nowMs = Date.now(), visible = typeof document === 'undefined' || document.visibilityState === 'visible') {
       if (!this.game?.nextTransitionAt || !visible) return
@@ -207,6 +208,11 @@ export const useGameV2Store = defineStore('game-v2', {
             payload: operation.payload
           } satisfies CommandEnvelope<Record<string, unknown>>
         })
+        if (operation.name === 'upgrade_caravan' && response.game.revision <= operation.expectedRevision) {
+          this.operationState = 'uncertain'
+          this.errorMessage = 'La orden no publicó una revisión nueva. Reintentá la misma orden.'
+          return false
+        }
         this.applySnapshot(response.game)
         this.operationState = 'idle'
         this.pendingOperation = null
@@ -296,8 +302,7 @@ export const useGameV2Store = defineStore('game-v2', {
       }
     },
     async retryEquipmentUncertain() {
-      if (!this.pendingEquipmentOperation || this.operationState !== 'uncertain') return
-      await this.postEquipmentPending(this.pendingEquipmentOperation)
+      await this.retryUncertain()
     },
     markTerminal() {
       this.operationState = 'terminal'
