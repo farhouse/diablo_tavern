@@ -27,13 +27,16 @@ function publishedEnabledAction<ActionId extends EnabledAction['action']>(
 
 async function register(page: Page, email: string): Promise<void> {
   await page.goto('/login')
-  await page.getByRole('button', { name: 'Register instead' }).click()
+  await page.getByRole('button', { name: 'Crear una cuenta' }).click()
   await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill('visitors-v2-password')
-  await page.getByLabel('Invite Code').fill('e2e')
-  await page.getByRole('button', { name: 'Create account' }).click()
-  await page.waitForURL('**/tavern')
+  await page.getByLabel('Contraseña').fill('visitors-v2-password')
+  await page.getByLabel('Código de invitación').fill('e2e')
+  await page.getByRole('button', { name: 'Crear cuenta' }).click()
+  await page.waitForURL('**/juego')
   await page.waitForLoadState('networkidle')
+  await expect(page.getByRole('heading', { name: '¿Qué hago ahora?' })).toBeVisible()
+  await expect(page.getByRole('navigation').getByText('Visitantes', { exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation').getByText(/V2/)).toHaveCount(0)
 }
 
 async function cleanup(database: ReturnType<MongoClient['db']>, email: string): Promise<void> {
@@ -78,6 +81,7 @@ test('completes the authenticated V2 visitor cycle and persists settlement state
     expect(gameResponse.ok()).toBe(true)
     expect(gameResponse.request().headers().authorization).toMatch(/^Bearer /)
     expect(legacyRequests).toHaveLength(0)
+    await expect(page.locator('img[src^="/images/game/heroes/"]')).toHaveCount(game.visitors.length)
 
     const contractVisitorIndex = game.visitors.findIndex((visitor) => visitor.state === 'available'
       && visitor.actions.some((action) => action.action === 'accept_contract' && action.enabled))
@@ -140,7 +144,7 @@ test('completes the authenticated V2 visitor cycle and persists settlement state
     const reconcileAction = publishedEnabledAction(started.game.actions, 'reconcile_game')
     const reconcileResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/v2/reconcile')
-    await page.getByRole('button', { name: 'Reconciliar' }).click()
+    await page.getByRole('button', { name: 'Actualizar sucesos' }).click()
     const reconcileResponse = await reconcileResponsePromise
     expect(reconcileResponse.ok()).toBe(true)
     const reconciled = await reconcileResponse.json() as { revision: number; game: GameSnapshot }
@@ -152,7 +156,7 @@ test('completes the authenticated V2 visitor cycle and persists settlement state
 
     const confirmResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/v2/settlements/confirm')
-    await page.getByRole('button', { name: 'Confirmar preview' }).click()
+    await page.getByRole('button', { name: 'Confirmar resultado' }).click()
     const confirmResponse = await confirmResponsePromise
     expect(confirmResponse.ok()).toBe(true)
     const confirmed = await confirmResponse.json() as { revision: number; game: GameSnapshot }
@@ -189,11 +193,11 @@ test('completes the authenticated V2 visitor cycle and persists settlement state
     await expect(page.getByRole('heading', { name: 'Equipo y servicios' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Inventario de la caravana' })).toBeVisible()
     await page.goto('/caravan-v2')
-    await expect(page.getByRole('heading', { name: 'Caravana V2' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Caravana' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Mejoras de caravana' })).toBeVisible()
     await page.goto('/chronicle-v2')
-    await expect(page.getByRole('heading', { name: 'Crónica V2' })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Crónica histórica' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Crónica' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Historial' })).toBeVisible()
     expect(legacyRequests).toHaveLength(0)
   } finally {
     await cleanup(database, email)
@@ -246,7 +250,7 @@ test('shows the published next step for a historical stale contract and reconcil
 
     const reconcileResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/v2/reconcile')
-    await page.getByRole('button', { name: 'Reconciliar' }).click()
+    await page.getByRole('button', { name: 'Actualizar sucesos' }).click()
     const reconcileResponse = await reconcileResponsePromise
     expect(reconcileResponse.ok()).toBe(true)
     const reconciled = await reconcileResponse.json() as { game: GameSnapshot }

@@ -34,3 +34,19 @@ export const heroClassLabel = {
   paladin: 'Paladin',
   necromancer: 'Necromancer'
 } satisfies Record<HeroClass, string>
+
+const heroClasses = Object.keys(heroSpriteByClass) as HeroClass[]
+
+export function heroClassForVisitor(visitorId: string): HeroClass {
+  let hash = 0
+  for (const character of visitorId) hash = ((hash * 31) + character.charCodeAt(0)) >>> 0
+  return heroClasses[hash % heroClasses.length]!
+}
+
+export function itemTypeForSlot(slot: 'weapon' | 'armor' | 'accessory'): ItemType {
+  return slot === 'accessory' ? 'ring' : slot
+}
+
+export function caravanSpriteForV2Upgrade(upgradeId: 'visitor_quarters' | 'blacksmith' | 'enchanter'): CaravanSpriteId {
+  return ({ visitor_quarters: 'wagons', blacksmith: 'stashWagon', enchanter: 'appraiser' } as const)[upgradeId]
+}

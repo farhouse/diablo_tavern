@@ -61,7 +61,7 @@ export const useGameV2Store = defineStore('game-v2', {
       const pendingRevision = this.pendingOperation?.expectedRevision ?? this.pendingEquipmentOperation?.expectedRevision
       if (this.snapshotStale && pendingRevision !== undefined && game.revision <= pendingRevision) {
         this.loadState = this.game ? 'ready' : 'empty'
-        this.errorMessage = 'La partida cambió. El snapshot aún no refleja una revisión nueva. Reintentá la carga.'
+        this.errorMessage = 'La partida cambió y todavía no terminó de actualizarse. Reintentá la carga.'
         return
       }
       this.game = game
@@ -235,7 +235,7 @@ export const useGameV2Store = defineStore('game-v2', {
             if (!this.snapshotStale) this.errorMessage = 'La partida cambió. Revisá las opciones disponibles.'
           } catch (reloadError) {
             this.loadState = this.game ? 'ready' : 'empty'
-            this.errorMessage = `La partida cambió, pero no se pudo actualizar el snapshot. ${publicErrorMessage(reloadError)}`
+            this.errorMessage = `La partida cambió, pero no se pudo actualizar. ${publicErrorMessage(reloadError)}`
           }
           return false
         }
@@ -306,7 +306,7 @@ export const useGameV2Store = defineStore('game-v2', {
     },
     markTerminal() {
       this.operationState = 'terminal'
-      this.errorMessage = 'No hay snapshot V2 confirmado.'
+      this.errorMessage = 'No hay una partida confirmada.'
     },
     async api<T>(url: string, options: Record<string, unknown> = {}): Promise<T> {
       const auth = useAuthStore()

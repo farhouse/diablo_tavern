@@ -67,6 +67,7 @@ describe('/visitors-v2', () => {
 
   it('is linked from authenticated navigation', () => {
     const layout = readFileSync(join(process.cwd(), 'layouts/default.vue'), 'utf8')
-    expect(layout).toContain('<NuxtLink to="/visitors-v2">Visitantes V2</NuxtLink>')
+    expect(layout).toContain('<NuxtLink to="/visitors-v2">Visitantes</NuxtLink>')
+    expect(layout).not.toContain('Visitantes V2')
   })
 })

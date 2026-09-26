@@ -1,6 +1,6 @@
 <template>
   <main class="page equipment-page">
-    <header class="section-title"><div><span class="eyebrow">Diablo Tavern · V2</span><h1>Equipo y servicios</h1><p class="muted">Inspeccioná el stash y enviá trabajos usando sólo autorizaciones del snapshot.</p></div><button class="btn ghost" type="button" :disabled="gameV2.loadState === 'loading'" @click="reload">{{ gameV2.loadState === 'loading' ? 'Actualizando…' : 'Actualizar' }}</button></header>
+    <header class="section-title"><div><span class="eyebrow">Preparación</span><h1>Equipo y servicios</h1><p class="muted">Revisá tus objetos e iniciá los trabajos disponibles.</p></div><button class="btn ghost" type="button" :disabled="gameV2.loadState === 'loading'" @click="reload">{{ gameV2.loadState === 'loading' ? 'Actualizando…' : 'Actualizar' }}</button></header>
     <EquipmentV2 :game="gameV2.game" :load-state="gameV2.loadState" :operation-state="gameV2.operationState" :error-message="gameV2.errorMessage" :unavailable-reason="gameV2.unavailableReason" :snapshot-stale="gameV2.snapshotStale" @reload="reload" @retry="gameV2.retryEquipmentUncertain" @action="gameV2.runEquipmentAction" />
   </main>
 </template>

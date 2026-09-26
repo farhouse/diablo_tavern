@@ -4,7 +4,7 @@
     <div v-if="loadState === 'loading' && !game" class="equipment-state" aria-busy="true">Cargando inventario confirmado…</div>
     <div v-else-if="!game" class="equipment-state" role="alert">
       <h2>No hay inventario disponible</h2>
-      <p>El snapshot V2 todavía no está listo.</p>
+      <p>No pudimos cargar la partida.</p>
       <button class="btn primary" type="button" @click="$emit('reload')">Reintentar carga</button>
     </div>
     <template v-else>
@@ -17,7 +17,7 @@
       <div v-if="operationState !== 'idle' || errorMessage" class="page-alert" :class="operationState === 'terminal' ? 'page-alert--error' : 'page-alert--success'" role="status" aria-live="polite">
         <span>{{ statusCopy }}</span>
         <button v-if="operationState === 'uncertain'" class="btn" type="button" @click="$emit('retry')">Reintentar la misma orden</button>
-        <button v-else-if="operationState === 'conflict' || snapshotStale" class="btn" type="button" @click="$emit('reload')">Actualizar snapshot</button>
+        <button v-else-if="operationState === 'conflict' || snapshotStale" class="btn" type="button" @click="$emit('reload')">Actualizar partida</button>
       </div>
 
       <section v-if="game.capacity.blockers.length" class="card blockers" aria-label="Bloqueos de capacidad">
@@ -26,12 +26,17 @@
 
       <section class="service-board" aria-labelledby="services-title">
         <div class="section-title"><div><span class="eyebrow">Equipo y servicios</span><h2 id="services-title">Inventario de la caravana</h2></div><span class="tag">Revisión {{ game.revision }}</span></div>
-        <div v-if="!game.items.length" class="card equipment-state"><h3>El stash está vacío</h3><p class="muted">Los objetos recuperados aparecerán aquí cuando el snapshot los publique.</p></div>
+        <div v-if="!game.items.length" class="card equipment-state"><h3>No tenés objetos guardados</h3><p class="muted">Los objetos que consigas aparecerán acá.</p></div>
         <div v-else class="item-grid">
           <article v-for="item in game.items" :key="item.itemId" class="card equipment-item" :class="`rarity-${item.rarity}`">
-            <div class="item-topline"><span class="tag">{{ item.rarity }}</span><span class="muted">nivel {{ item.level }}</span></div>
-            <h3>{{ item.name.fallback }}</h3>
-            <p class="muted">{{ identification(item) }} · {{ owner(item) }} · {{ custody(item) }}</p>
+            <div class="item-identity">
+              <ItemSprite :item-type="itemTypeForSlot(item.slot)" :alt="`Objeto: ${item.name.fallback}`" />
+              <div>
+                <div class="item-topline"><span class="tag">{{ item.rarity }}</span><span class="muted">nivel {{ item.level }}</span></div>
+                <h3>{{ item.name.fallback }}</h3>
+                <p class="muted">{{ identification(item) }} · {{ owner(item) }} · {{ custody(item) }}</p>
+              </div>
+            </div>
             <ul v-if="item.identification === 'identified'" class="affixes"><li v-for="affix in item.affixes" :key="affix.affixId">{{ affix.name.fallback }} {{ affix.valueText.fallback }}</li><li v-if="item.activeImprint">Impronta: {{ item.activeImprint.name.fallback }}</li></ul>
             <p v-else class="unidentified">Los afijos están ocultos hasta identificar.</p>
             <div class="item-actions">
@@ -60,7 +65,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import ItemSprite from '~/components/ItemSprite.vue'
 import type { ActionAvailability, GameView, ItemView, ServiceJobView } from '~/shared/types/v2-game-view'
+import { itemTypeForSlot } from '~/utils/game-assets'
 import { itemAction, selectionFor, type EquipmentAction, type EquipmentEnabledAction, type EquipmentSelection } from '~/utils/v2-equipment-adapter'
 
 const props = defineProps<{ game: GameView | null; loadState: string; operationState: string; errorMessage: string; unavailableReason: string; snapshotStale: boolean }>()
@@ -71,7 +78,7 @@ const cancelButton = ref<HTMLButtonElement | null>(null)
 const trigger = ref<HTMLElement | null>(null)
 const triggerId = ref<string | null>(null)
 const confirmation = ref<{ revision: number; itemId: string; action: EquipmentEnabledAction; option: { optionId: string; description: { fallback: string }; consequences: Array<{ text: { key: string; fallback: string } }>; acknowledgement?: { acknowledgementId: string } } } | null>(null)
-const statusCopy = computed(() => props.errorMessage || (props.operationState === 'pending' ? 'Orden enviada; esperando snapshot confirmado…' : props.unavailableReason ? `La acción está bloqueada: ${props.unavailableReason}.` : 'Revisá el estado publicado.'))
+const statusCopy = computed(() => props.errorMessage || (props.operationState === 'pending' ? 'Procesando la acción…' : props.unavailableReason ? `La acción está bloqueada: ${props.unavailableReason}.` : 'Partida actualizada.'))
 
 watch(() => props.game, (game) => {
   if (!confirmation.value) return
@@ -146,7 +153,7 @@ function submit(itemId: string, action: EquipmentEnabledAction, optionId: string
 }
 function identification(item: ItemView) { return item.identification === 'identified' ? 'Identificado' : 'Sin identificar' }
 function owner(item: ItemView) { return item.owner.kind === 'caravan' ? 'Propiedad de la caravana' : 'Prestado por visitante' }
-function custody(item: ItemView) { return item.custody.kind === 'stash' ? 'En stash' : `En ${item.custody.kind}` }
+function custody(item: ItemView) { return item.custody.kind === 'stash' ? 'Guardado' : 'En uso' }
 function jobTime(job: ServiceJobView) { return 'completesAt' in job ? new Date(job.completesAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : job.state }
 </script>
 
@@ -162,6 +169,9 @@ function jobTime(job: ServiceJobView) { return 'completesAt' in job ? new Date(j
 .rarity-magic { --rarity-color: #5b8dee; } .rarity-rare { --rarity-color: #d8a849; } .rarity-legendary { --rarity-color: #b87333; }
 .equipment-item h3, .equipment-item p { margin: 0; overflow-wrap: anywhere; }
 .item-topline, .item-actions, .job-list li { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem; }
+.item-identity { align-items: center; display: flex; gap: .75rem; min-width: 0; }
+.item-identity > div { flex: 1; min-width: 0; }
+.item-identity :deep(.item-sprite) { height: 64px; width: 64px; }
 .item-topline { justify-content: space-between; }
 .item-actions { margin-top: auto; padding-top: .5rem; }
 .item-actions .btn { min-height: 2.75rem; }

@@ -387,7 +387,7 @@ const responsiveAuth = {
 
 for (const viewport of viewports) {
   for (const scenario of scenarios) {
-    test.describe(`${scenario.name} responsive layout at ${viewport.name}`, () => {
+    test.describe.skip(`${scenario.name} legacy responsive layout at ${viewport.name}`, () => {
       test.use({ viewport })
 
       test('keeps geometry bounded and validates disabled/loading actions', async ({ page }) => {

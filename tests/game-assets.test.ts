@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { HeroClass, ItemType } from '~/types/game'
-import { caravanSpriteByUpgrade, heroSpriteByClass, itemSpriteByType, type CaravanSpriteId } from '~/utils/game-assets'
+import { caravanSpriteByUpgrade, caravanSpriteForV2Upgrade, heroClassForVisitor, heroSpriteByClass, itemSpriteByType, itemTypeForSlot, type CaravanSpriteId } from '~/utils/game-assets'
 
 describe('game asset maps', () => {
   it('defines caravan sprites independently from the economic domain', () => {
@@ -21,6 +21,17 @@ describe('game asset maps', () => {
     expect(Object.keys(itemSpriteByType)).toEqual(itemTypes)
     expect(Object.keys(caravanSpriteByUpgrade)).toEqual(upgrades)
     expect(Object.values(itemSpriteByType).every(path => !/(normal|magic|rare|unique)/.test(path))).toBe(true)
+  })
+
+  it('adapts the current game view to the existing sprite catalog', () => {
+    expect(heroClassForVisitor('visitor-stable')).toBe(heroClassForVisitor('visitor-stable'))
+    expect(Object.keys(heroSpriteByClass)).toContain(heroClassForVisitor('visitor-stable'))
+    expect(itemTypeForSlot('weapon')).toBe('weapon')
+    expect(itemTypeForSlot('armor')).toBe('armor')
+    expect(itemTypeForSlot('accessory')).toBe('ring')
+    expect(caravanSpriteForV2Upgrade('visitor_quarters')).toBe('wagons')
+    expect(caravanSpriteForV2Upgrade('blacksmith')).toBe('stashWagon')
+    expect(caravanSpriteForV2Upgrade('enchanter')).toBe('appraiser')
   })
 
   it('points every map entry at a committed, non-empty RGBA PNG', () => {

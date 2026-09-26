@@ -34,11 +34,12 @@ describe('VisitorCycleV2', () => {
     expect(loading.get('[data-testid="v2-status"]').attributes('aria-live')).toBe('polite')
 
     const empty = mount(VisitorCycleV2, { props: { game: null, loadState: 'empty' } })
-    expect(empty.text()).toContain('No hay datos V2 disponibles')
+    expect(empty.text()).toContain('No pudimos cargar la partida')
 
     const ready = mount(VisitorCycleV2, { props: { game: fixture('integrated-contract'), loadState: 'ready' } })
     expect(ready.get('[data-testid="v2-ready"]').text()).toContain('Ada')
-    expect(ready.text()).toContain('Rev. 10')
+    expect(ready.findAll('img[src^="/images/game/heroes/"]')).toHaveLength(fixture('integrated-contract').visitors.length)
+    expect(ready.text()).toContain('Partida actualizada')
   })
 
   it('shows the published next step for expired historical contracts', () => {
@@ -266,7 +267,7 @@ describe('VisitorCycleV2', () => {
     const unavailable = mount(VisitorCycleV2, { props: { game: fixture('integrated-contract'), loadState: 'ready' } })
     expect(unavailable.get('header button').attributes('disabled')).toBeDefined()
     expect(unavailable.get('header button').attributes('aria-describedby')).toBe('reconcile-reason')
-    expect(unavailable.get('#reconcile-reason').text()).toContain('Acción no publicada')
+    expect(unavailable.get('#reconcile-reason').text()).toContain('no está disponible')
 
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-14T10:30:00Z'))
@@ -426,7 +427,7 @@ describe('VisitorCycleV2', () => {
     expect(wrapper.text()).toContain('Nox')
     expect(wrapper.text()).toContain('Estado terminal sin acciones disponibles')
     expect(wrapper.text()).toContain('Resultado cerrado: death')
-    expect(wrapper.text()).toContain('Preview expirado según snapshot')
+    expect(wrapper.text()).toContain('Este resultado venció')
     expect(wrapper.text()).toContain('Asignado a Visitante no disponible')
     expect(wrapper.text()).toContain('El equipo se perdió.')
     expect(wrapper.text()).toContain('Abandono confirmado.')

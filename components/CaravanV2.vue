@@ -2,28 +2,28 @@
   <div class="caravan-v2" ref="root">
     <div ref="content" class="caravan-content" tabindex="-1">
     <div v-if="!game && loadState === 'loading'" class="card state" aria-busy="true">Cargando caravana confirmada…</div>
-    <div v-else-if="!game" class="card state" role="alert"><h2>No hay caravana disponible</h2><p>El snapshot V2 todavía no está listo.</p><button class="btn primary" type="button" @click="$emit('reload')">Reintentar carga</button></div>
+    <div v-else-if="!game" class="card state" role="alert"><h2>No hay caravana disponible</h2><p>No pudimos cargar la partida.</p><button class="btn primary" type="button" @click="$emit('reload')">Reintentar carga</button></div>
     <template v-else>
       <div v-if="operationState !== 'idle' || errorMessage" class="page-alert" :class="operationState === 'terminal' ? 'page-alert--error' : 'page-alert--success'" role="status" aria-live="polite">
         <span>{{ errorMessage || operationLabel }}</span>
         <button v-if="operationState === 'uncertain'" class="btn" type="button" @click="$emit('retry')">Reintentar la misma orden</button>
-        <button v-else-if="snapshotStale || operationState === 'conflict'" class="btn" type="button" @click="$emit('reload')">Actualizar snapshot</button>
+        <button v-else-if="snapshotStale || operationState === 'conflict'" class="btn" type="button" @click="$emit('reload')">Actualizar partida</button>
       </div>
 
       <section class="caravan-hero card" aria-labelledby="caravan-title">
-        <div><span class="eyebrow">Campamento · V2</span><h2 id="caravan-title">La caravana sostiene el próximo viaje</h2><p class="muted">Capacidad, servicios y manutención tal como los publicó el servidor.</p></div>
+        <div><span class="eyebrow">Campamento</span><h2 id="caravan-title">La caravana sostiene el próximo viaje</h2><p class="muted">Capacidad, servicios y manutención actuales.</p></div>
         <span class="tag">Revisión {{ game.revision }}</span>
       </section>
       <section class="stats" aria-label="Estado de la caravana">
         <div class="stat"><span class="eyebrow">Visitantes</span><strong>{{ game.caravan.visitorCapacity.used }} / {{ game.caravan.visitorCapacity.limit }}</strong><span class="muted">ocupación publicada</span></div>
         <div class="stat"><span class="eyebrow">Manutención</span><strong :class="game.caravan.maintenance.status === 'debt' ? 'debt' : 'ok'">{{ game.caravan.maintenance.status === 'debt' ? 'Con deuda' : 'Al día' }}</strong><span class="muted">{{ game.caravan.maintenance.debtPeriods }} períodos · {{ game.caravan.maintenance.debtGold }} oro</span></div>
-        <div class="stat"><span class="eyebrow">Vencimiento</span><strong>{{ formatDate(game.caravan.maintenance.nextDueAt) }}</strong><span class="muted">reloj del servidor: {{ formatDate(game.serverNow) }}</span></div>
+        <div class="stat"><span class="eyebrow">Próximo vencimiento</span><strong>{{ formatDate(game.caravan.maintenance.nextDueAt) }}</strong><span class="muted">Fecha de la partida</span></div>
       </section>
-      <div v-if="game.caravan.maintenance.status === 'debt'" class="card debt-notice" role="alert"><strong>Hay deuda de manutención.</strong><span>Las acciones bloqueadas se mantienen así hasta que una reconciliación publique un nuevo snapshot.</span></div>
+      <div v-if="game.caravan.maintenance.status === 'debt'" class="card debt-notice" role="alert"><strong>Hay deuda de manutención.</strong><span>Actualizá los sucesos para verificar si vuelve a habilitarse.</span></div>
 
-      <section aria-labelledby="upgrades-title"><div class="section-title"><div><span class="eyebrow">Progresión</span><h2 id="upgrades-title">Mejoras de caravana</h2></div></div><div class="upgrade-grid"><article v-for="upgrade in game.caravan.upgrades" :key="upgrade.upgradeId" class="card upgrade-card"><div class="row"><h3>{{ upgradeName(upgrade.upgradeId) }}</h3><span class="tag">{{ upgrade.level }} / {{ upgrade.maxLevel }}</span></div><div class="upgrade-track" aria-hidden="true"><span :style="{ width: `${upgrade.maxLevel ? (upgrade.level / upgrade.maxLevel) * 100 : 0}%` }" /></div><p class="muted">{{ upgradeDescription(upgrade.upgradeId) }}</p></article></div></section>
+      <section aria-labelledby="upgrades-title"><div class="section-title"><div><span class="eyebrow">Progresión</span><h2 id="upgrades-title">Mejoras de caravana</h2></div></div><div class="upgrade-grid"><article v-for="upgrade in game.caravan.upgrades" :key="upgrade.upgradeId" class="card upgrade-card"><CaravanUpgradeSprite :upgrade-id="caravanSpriteForV2Upgrade(upgrade.upgradeId)" :alt="upgradeName(upgrade.upgradeId)" /><div class="upgrade-copy"><div class="row"><h3>{{ upgradeName(upgrade.upgradeId) }}</h3><span class="tag">{{ upgrade.level }} / {{ upgrade.maxLevel }}</span></div><div class="upgrade-track" aria-hidden="true"><span :style="{ width: `${upgrade.maxLevel ? (upgrade.level / upgrade.maxLevel) * 100 : 0}%` }" /></div><p class="muted">{{ upgradeDescription(upgrade.upgradeId) }}</p></div></article></div></section>
 
-      <section class="card actions-card" aria-labelledby="actions-title"><div class="row"><div><span class="eyebrow">Autorizaciones selladas</span><h2 id="actions-title">Acciones disponibles</h2></div><span v-if="!upgradeAction" class="tag">Sin mejoras habilitadas</span></div><div v-if="upgradeAction" class="upgrade-options"><div v-for="option in upgradeAction.execution.options" :key="option.optionId" class="upgrade-option"><div><strong>{{ option.label.fallback }}</strong><p class="muted">{{ option.description.fallback }}</p></div><button class="btn primary" type="button" :disabled="disabled" @click="openConfirmation(option, $event)">Revisar mejora</button></div></div><p v-else class="muted">La caravana está bloqueada por el snapshot actual. Revisá deuda o esperá una nueva autorización.</p></section>
+      <section class="card actions-card" aria-labelledby="actions-title"><div class="row"><div><span class="eyebrow">Mejoras</span><h2 id="actions-title">Acciones disponibles</h2></div><span v-if="!upgradeAction" class="tag">Sin mejoras habilitadas</span></div><div v-if="upgradeAction" class="upgrade-options"><div v-for="option in upgradeAction.execution.options" :key="option.optionId" class="upgrade-option"><div><strong>{{ option.label.fallback }}</strong><p class="muted">{{ option.description.fallback }}</p></div><button class="btn primary" type="button" :disabled="disabled" @click="openConfirmation(option, $event)">Revisar mejora</button></div></div><p v-else class="muted">No hay mejoras disponibles ahora. Revisá la deuda o volvé más adelante.</p></section>
     </template>
     </div>
 
@@ -33,7 +33,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, toRaw, watch } from 'vue'
+import CaravanUpgradeSprite from '~/components/CaravanUpgradeSprite.vue'
 import type { GameView, UpgradeCaravanAction } from '~/shared/types/v2-game-view'
+import { caravanSpriteForV2Upgrade } from '~/utils/game-assets'
 import { selectionForCaravanUpgrade, type CaravanSelection } from '~/utils/v2-caravan-adapter'
 
 const props = defineProps<{ game: GameView | null; loadState: string; operationState: string; errorMessage: string; unavailableReason: string; snapshotStale: boolean }>()
@@ -48,7 +50,7 @@ const confirmationOptionSignature = ref('')
 const inertElements = new Map<HTMLElement, boolean>()
 const disabled = computed(() => props.snapshotStale || props.operationState === 'pending' || props.operationState === 'uncertain')
 const upgradeAction = computed(() => props.game ? props.game.actions.find((action): action is UpgradeCaravanAction => action.action === 'upgrade_caravan' && action.enabled) ?? null : null)
-const operationLabel = computed(() => props.operationState === 'pending' ? 'Mejora enviada; esperando snapshot confirmado…' : props.unavailableReason ? `La acción está bloqueada: ${props.unavailableReason}.` : 'Revisá el estado publicado.')
+const operationLabel = computed(() => props.operationState === 'pending' ? 'Aplicando la mejora…' : props.unavailableReason ? `La acción está bloqueada: ${props.unavailableReason}.` : 'Revisá el estado de la partida.')
 const reviewIdentity = computed(() => {
   const action = upgradeAction.value
   const option = confirmation.value ? action?.execution.options.find((candidate) => candidate.optionId === confirmation.value?.option.optionId) : null
@@ -137,7 +139,7 @@ onBeforeUnmount(() => setOutsideInert(false))
 .caravan-v2, .caravan-v2 section, .caravan-v2 article, .caravan-v2 .upgrade-option { min-width: 0; overflow-wrap: anywhere; }
 .caravan-content { max-width: 100%; min-width: 0; }
 .caravan-v2 { display: grid; gap: 1rem; }
-.caravan-hero { align-items: end; background: linear-gradient(125deg, rgba(75, 35, 26, .95), rgba(27, 25, 22, .94) 65%); display: flex; gap: 1rem; justify-content: space-between; min-height: 10rem; }
+.caravan-hero { align-items: end; background: linear-gradient(125deg, rgba(75, 35, 26, .9), rgba(27, 25, 22, .8) 65%), url('/images/game/camp-modular/camp-base.png') center 58% / cover; display: flex; gap: 1rem; justify-content: space-between; min-height: 15rem; }
 .caravan-hero h2, .upgrade-card h3, .actions-card h2, .confirm-dialog h2, .confirm-dialog h3 { margin: 0; }
 .stats, .upgrade-grid { display: grid; gap: 1rem; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .stat { background: var(--panel); border: 1px solid var(--line); display: grid; gap: .25rem; min-width: 0; padding: 1rem; }
@@ -146,7 +148,10 @@ onBeforeUnmount(() => setOutsideInert(false))
 .stat strong.ok { color: var(--ok); } .stat strong.debt, .debt-notice { color: var(--bad); }
 .debt-notice { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
 .upgrade-grid { grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); }
-.upgrade-card { display: grid; gap: .75rem; }
+.upgrade-card { align-items: stretch; display: flex; flex-direction: column; gap: .75rem; }
+.upgrade-card :deep(.caravan-upgrade-sprite) { align-self: center; flex: 0 1 auto; height: auto; max-width: 100%; width: min(9rem, 100%); }
+.upgrade-copy { display: grid; flex: 1; gap: .75rem; min-width: 0; }
+.upgrade-copy .row { flex-wrap: wrap; }
 .upgrade-card p { margin: 0; }
 .upgrade-track { background: #14120f; border: 1px solid var(--line); height: .55rem; overflow: hidden; }
 .upgrade-track span { background: var(--accent-2); display: block; height: 100%; }
@@ -161,6 +166,6 @@ onBeforeUnmount(() => setOutsideInert(false))
 .confirm-backdrop { align-items: center; background: rgba(0,0,0,.7); display: flex; inset: 0; justify-content: center; padding: 1rem; position: fixed; z-index: 20; }
 .confirm-dialog { background: var(--panel); border: 1px solid var(--accent-2); max-width: 34rem; padding: 1.25rem; width: 100%; }
 .confirm-dialog p { color: var(--muted); }
-@media (max-width: 700px) { .stats { grid-template-columns: 1fr; } .upgrade-grid { grid-template-columns: minmax(0, 1fr); } .caravan-hero, .upgrade-option { align-items: stretch; flex-direction: column; } }
+@media (max-width: 700px) { .stats { grid-template-columns: 1fr; } .upgrade-grid { grid-template-columns: minmax(0, 1fr); } .caravan-hero, .upgrade-option, .upgrade-card { align-items: stretch; flex-direction: column; } .upgrade-card :deep(.caravan-upgrade-sprite) { align-self: center; max-width: 100%; width: min(11rem, 100%); } }
 @media (max-width: 200px) { .upgrade-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

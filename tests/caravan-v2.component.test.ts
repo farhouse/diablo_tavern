@@ -28,6 +28,7 @@ describe('CaravanV2', () => {
       props: { game, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false }
     })
     const reviewButtons = wrapper.findAll('button').filter((button) => button.text() === 'Revisar mejora')
+    expect(wrapper.findAll('img[src^="/images/game/caravan/"]')).toHaveLength(game.caravan.upgrades.length)
     expect(reviewButtons).toHaveLength(2)
     await reviewButtons[1]!.trigger('click')
     expect(wrapper.get('[role="alertdialog"]').text()).toContain('Desbloquear herrería')

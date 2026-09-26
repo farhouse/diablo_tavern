@@ -7,5 +7,5 @@
 <script setup lang="ts">
 const auth = useAuthStore()
 auth.hydrate()
-await navigateTo(auth.loggedIn ? '/tavern' : '/login')
+await navigateTo(auth.loggedIn ? '/juego' : '/login')
 </script>

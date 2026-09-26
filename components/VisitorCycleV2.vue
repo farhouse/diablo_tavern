@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import HeroSprite from '~/components/HeroSprite.vue'
 import type {
   ActionAvailability,
   AbandonRecoveryAction,
@@ -15,6 +16,7 @@ import type {
   VisitorView
 } from '~/shared/types/v2-game-view'
 import { enabledAction, type VisitorV2Selection } from '~/utils/v2-visitor-adapter'
+import { heroClassForVisitor } from '~/utils/game-assets'
 
 const props = defineProps<{
   game: GameView | null
@@ -53,14 +55,14 @@ const clockServerStartedAt = ref(0)
 let clockTimer: ReturnType<typeof setInterval> | null = null
 
 const statusText = computed(() => {
-  if (props.loadState === 'loading') return 'Cargando snapshot V2.'
-  if (props.loadState === 'empty') return 'No hay snapshot V2 confirmado.'
-  if (operationState.value === 'pending') return 'Procesando orden.'
-  if (operationState.value === 'uncertain') return 'Resultado incierto. Reintentá la misma orden.'
-  if (operationState.value === 'conflict') return props.errorMessage || 'La partida cambió. Revisá el snapshot actualizado.'
+  if (props.loadState === 'loading') return 'Cargando partida.'
+  if (props.loadState === 'empty') return 'No se pudo cargar la partida.'
+  if (operationState.value === 'pending') return 'Procesando acción.'
+  if (operationState.value === 'uncertain') return 'No pudimos confirmar el resultado. Reintentá la misma acción.'
+  if (operationState.value === 'conflict') return props.errorMessage || 'La partida cambió. Revisá el estado actualizado.'
   if (operationState.value === 'unavailable') return props.unavailableReason || 'La acción ya no está disponible.'
-  if (operationState.value === 'terminal') return props.errorMessage || 'La orden terminó sin cambiar el snapshot.'
-  return 'Snapshot V2 listo.'
+  if (operationState.value === 'terminal') return props.errorMessage || 'La acción no produjo cambios.'
+  return 'Partida actualizada.'
 })
 
 const countdownText = computed(() => {
@@ -200,6 +202,15 @@ function recoveryTitle(recovery: RecoveryView): string {
   return names.length ? `Recuperación de ${names.join(', ')}` : 'Recuperación pendiente'
 }
 
+function stateLabel(state: string): string {
+  return ({
+    available: 'Disponible', negotiating: 'Negociando', contracted: 'Contratado', travelling: 'En expedición',
+    awaiting_settlement: 'Esperando resultado', departed: 'Partió', dead: 'Murió', active: 'En curso',
+    completed: 'Completada', settled: 'Resuelta', preview_ready: 'Resultado listo', preview_expired: 'Resultado vencido',
+    open: 'Pendiente', assigned: 'Asignada', recovered: 'Recuperada', failed: 'Fallida', abandoned: 'Abandonada'
+  } as Record<string, string>)[state] ?? state
+}
+
 function toggleLoan(target: Record<Id, Id[]>, ownerId: Id, itemId: Id, checked: boolean) {
   const current = target[ownerId] ?? []
   target[ownerId] = checked ? [...new Set([...current, itemId])] : current.filter((candidate) => candidate !== itemId)
@@ -219,7 +230,7 @@ function setSettlementChoice(settlementId: Id, groupId: Id, optionId: Id) {
 function actionReason(actions: readonly ActionAvailability[], actionName: ActionAvailability['action']): string {
   const disabled = actions.find((action) => action.action === actionName && !action.enabled)
   if (disabled && !disabled.enabled) return label(disabled.reasonText)
-  return enabledAction(actions, actionName) ? '' : 'Acción no publicada en el snapshot.'
+  return enabledAction(actions, actionName) ? '' : 'Esta acción no está disponible en el estado actual.'
 }
 
 function internalId(scope: string, ...indices: number[]): string {
@@ -357,9 +368,9 @@ onBeforeUnmount(() => {
   <section class="v2-cycle" aria-labelledby="v2-cycle-title">
     <header class="v2-cycle__header">
       <div>
-        <h2 id="v2-cycle-title">Visitantes V2</h2>
+        <h2 id="v2-cycle-title">Ciclo de visitantes</h2>
         <p v-if="game" class="v2-cycle__muted">
-          Rev. {{ game.revision }} · servidor {{ game.serverNow }} · {{ countdownText }}
+          {{ countdownText }}
         </p>
       </div>
       <button
@@ -369,7 +380,7 @@ onBeforeUnmount(() => {
         :aria-describedby="reconcileDisabledReason ? 'reconcile-reason' : undefined"
         @click="emit('reconcileGame')"
       >
-        Reconciliar
+        Actualizar sucesos
       </button>
       <span v-if="reconcileDisabledReason" id="reconcile-reason" class="v2-cycle__reason">
         {{ reconcileDisabledReason }}
@@ -386,16 +397,17 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-else-if="loadState === 'empty' || !game" class="v2-cycle__empty" data-testid="v2-empty">
-      <p>No hay datos V2 disponibles para operar sin mezclar autoridades.</p>
+      <p>No pudimos cargar la partida. Reintentá desde esta pantalla.</p>
     </div>
 
     <div v-else class="v2-cycle__body" data-testid="v2-ready">
       <section class="v2-cycle__panel" aria-labelledby="v2-visitors-title">
         <h3 id="v2-visitors-title">Visitantes</h3>
         <article v-for="(visitor, visitorIndex) in game.visitors" :key="visitor.visitorId" class="v2-cycle__row" :data-testid="`visitor-${visitor.state}`">
-          <div>
+          <HeroSprite :hero-class="heroClassForVisitor(visitor.visitorId)" :alt="`Retrato de ${label(visitor.name)}`" />
+          <div class="v2-cycle__details">
             <strong>{{ label(visitor.name) }}</strong>
-            <p class="v2-cycle__muted">Estado: {{ visitor.state }}</p>
+            <p class="v2-cycle__muted">Estado: {{ stateLabel(visitor.state) }}</p>
             <p v-if="visitor.state === 'departed' || visitor.state === 'dead'" class="v2-cycle__muted">
               Estado terminal sin acciones disponibles.
             </p>
@@ -479,7 +491,7 @@ onBeforeUnmount(() => {
         <article v-for="expedition in game.expeditions" :key="expedition.expeditionId" class="v2-cycle__row" :data-testid="`expedition-${expedition.state}`">
           <div>
             <strong>{{ expeditionTitle(expedition.visitorId) }}</strong>
-            <p class="v2-cycle__muted">Estado: {{ expedition.state }}</p>
+            <p class="v2-cycle__muted">Estado: {{ stateLabel(expedition.state) }}</p>
             <p v-if="expedition.state === 'active'" class="v2-cycle__muted">
               {{ expedition.currentHp }}/{{ expedition.maxHp }} vida. El reloj es informativo; sólo el servidor avanza estado.
             </p>
@@ -491,11 +503,11 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="v2-cycle__panel" aria-labelledby="v2-settlements-title">
-        <h3 id="v2-settlements-title">Settlement</h3>
+        <h3 id="v2-settlements-title">Resultados</h3>
         <article v-for="(settlement, settlementIndex) in game.settlements" :key="settlement.settlementId" class="v2-cycle__row" :data-testid="`settlement-${settlement.state}`">
           <div>
             <strong>{{ settlementTitle(settlement) }}</strong>
-            <p class="v2-cycle__muted">Estado: {{ settlement.state }}</p>
+            <p class="v2-cycle__muted">Estado: {{ stateLabel(settlement.state) }}</p>
             <p v-if="'gold' in settlement" class="v2-cycle__muted">
               Oro bruto {{ settlement.gold.gross }}, caravana {{ settlement.gold.caravan }}, visitante {{ settlement.gold.visitor }}.
             </p>
@@ -531,7 +543,7 @@ onBeforeUnmount(() => {
             :aria-describedby="actionReason(actionsOf(settlement), 'confirm_settlement') ? internalId('settlement-reason', settlementIndex) : undefined"
             @click="confirm(settlement)"
           >
-            Confirmar preview
+            Confirmar resultado
           </button>
           <span
             v-if="settlement.state === 'preview_ready' && actionReason(actionsOf(settlement), 'confirm_settlement')"
@@ -541,17 +553,17 @@ onBeforeUnmount(() => {
             {{ actionReason(actionsOf(settlement), 'confirm_settlement') }}
           </span>
           <p v-else-if="settlement.state === 'preview_expired'" class="v2-cycle__muted">
-            Preview expirado según snapshot.
+            Este resultado venció. Actualizá los sucesos para continuar.
           </p>
         </article>
       </section>
 
       <section class="v2-cycle__panel" aria-labelledby="v2-recoveries-title">
-        <h3 id="v2-recoveries-title">Recovery</h3>
+        <h3 id="v2-recoveries-title">Recuperaciones</h3>
         <article v-for="(recovery, recoveryIndex) in game.recoveries" :key="recovery.recoveryId" class="v2-cycle__row" :data-testid="`recovery-${recovery.state}`">
           <div>
             <strong>{{ recoveryTitle(recovery) }}</strong>
-            <p class="v2-cycle__muted">Estado: {{ recovery.state }}</p>
+            <p class="v2-cycle__muted">Estado: {{ stateLabel(recovery.state) }}</p>
             <p v-if="recovery.state === 'assigned'" class="v2-cycle__muted">
               Asignado a {{ visitorLabel(recovery.assignedVisitorId) }} hasta {{ recovery.completesAt }}.
             </p>
@@ -567,7 +579,7 @@ onBeforeUnmount(() => {
               :aria-describedby="actionReason(actionsOf(recovery), 'assign_recovery') ? internalId('assign-reason', recoveryIndex) : undefined"
               @click="assign(recovery)"
             >
-              Asignar recovery
+              Iniciar recuperación
             </button>
             <label v-if="assignAction(recovery)" class="v2-cycle__field">
               Recuperador
@@ -663,7 +675,7 @@ onBeforeUnmount(() => {
       data-testid="v2-reload"
       @click="emit('reload')"
     >
-      Reintentar carga del snapshot
+      Volver a cargar la partida
     </button>
   </section>
 </template>
@@ -703,6 +715,7 @@ onBeforeUnmount(() => {
   background: #14120f;
   border: 1px solid var(--line);
   border-radius: 6px;
+  flex-wrap: wrap;
   padding: 0.75rem;
 }
 
@@ -710,7 +723,13 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  justify-content: end;
+  justify-content: start;
+  width: 100%;
+}
+
+.v2-cycle__details {
+  flex: 1;
+  min-width: 0;
 }
 
 .v2-cycle__field,
@@ -740,7 +759,9 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   color: var(--text);
   min-height: 44px;
+  max-width: 100%;
   padding: 0.5rem;
+  width: 100%;
 }
 
 .v2-cycle__button {

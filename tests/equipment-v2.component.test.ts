@@ -17,7 +17,8 @@ describe('EquipmentV2', () => {
       props: { game: view, loadState: 'ready', operationState: 'idle', errorMessage: '', unavailableReason: '', snapshotStale: false }
     })
     expect(wrapper.text()).toContain('Propiedad de la caravana')
-    expect(wrapper.text()).toContain('En stash')
+    expect(wrapper.text()).toContain('Guardado')
+    expect(wrapper.findAll('img[src^="/images/game/items/"]')).toHaveLength(view.items.length)
     const identify = wrapper.findAll('button').find((entry) => entry.text().toLowerCase().includes('identify'))
     expect(identify).toBeDefined()
     await identify!.trigger('click')

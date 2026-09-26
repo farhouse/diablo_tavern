@@ -6,11 +6,9 @@ import DefaultLayout from '../layouts/default.vue'
 const stores = vi.hoisted(() => ({
   auth: { loggedIn: true, logout: vi.fn(), hydrate: vi.fn() },
   legacy: { save: null, load: vi.fn(), $reset: vi.fn() },
-  v2: { $reset: vi.fn() },
+  v2: { game: null, loadState: 'empty', load: vi.fn(), $reset: vi.fn() },
   chronicle: { $reset: vi.fn() }
 }))
-let routePath = '/tavern'
-
 vi.mock('../stores/auth', () => ({ useAuthStore: () => stores.auth }))
 vi.mock('../stores/game', () => ({ useGameStore: () => stores.legacy }))
 vi.mock('../stores/game-v2', () => ({ useGameV2Store: () => stores.v2 }))
@@ -19,8 +17,6 @@ vi.mock('../stores/chronicle-v2', () => ({ useChronicleV2Store: () => stores.chr
 describe('default layout session isolation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    routePath = '/tavern'
-    vi.stubGlobal('useRoute', () => ({ path: routePath }))
     vi.stubGlobal('navigateTo', vi.fn())
   })
 
@@ -38,8 +34,7 @@ describe('default layout session isolation', () => {
     expect(navigateTo).toHaveBeenCalledWith('/login')
   })
 
-  it('does not load or display legacy state on the V2 route', async () => {
-    routePath = '/visitors-v2'
+  it('loads only the current game and exposes one Spanish navigation', async () => {
     const wrapper = mount(DefaultLayout, {
       global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } }
     })
@@ -47,10 +42,12 @@ describe('default layout session isolation', () => {
     await wrapper.vm.$nextTick()
 
     expect(stores.legacy.load).not.toHaveBeenCalled()
+    expect(stores.v2.load).toHaveBeenCalledOnce()
     expect(wrapper.text()).not.toContain('Round')
-    expect(wrapper.text()).not.toContain('stash')
-    expect(wrapper.text()).toContain('Tavern')
-    expect(wrapper.text()).toContain('Stash')
-    expect(wrapper.text()).toContain('Caravan')
+    expect(wrapper.text()).not.toContain('V2')
+    expect(wrapper.text()).not.toContain('Stash')
+    expect(wrapper.text()).toContain('Inicio')
+    expect(wrapper.text()).toContain('Visitantes')
+    expect(wrapper.text()).toContain('Caravana')
   })
 })

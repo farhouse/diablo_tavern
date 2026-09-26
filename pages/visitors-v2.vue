@@ -2,8 +2,8 @@
   <main class="page visitors-v2-page">
     <header class="section-title">
       <div>
-        <h1>Visitantes V2</h1>
-        <p class="muted">Contratos, expediciones y recuperaciones confirmados por el servidor.</p>
+        <h1>Visitantes</h1>
+        <p class="muted">Elegí un contrato, iniciá la expedición y resolvé su regreso.</p>
       </div>
     </header>
 

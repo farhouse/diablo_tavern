@@ -39,8 +39,9 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       await page.addInitScript((session) => { localStorage.setItem('accessToken', session.accessToken); localStorage.setItem('refreshToken', session.refreshToken); localStorage.setItem('user', JSON.stringify(session.user)) }, auth)
 
       await page.goto('/caravan-v2')
-      await expect(page.getByRole('heading', { name: 'Caravana V2' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Caravana', exact: true })).toBeVisible()
       await expect(page.getByRole('heading', { name: 'Mejoras de caravana' })).toBeVisible()
+      await expect(page.locator('img[src^="/images/game/caravan/"]')).toHaveCount(game.caravan.upgrades.length)
       await expect(page.getByRole('button', { name: 'Actualizar' })).toHaveCSS('min-height', '44px')
       await expect(page.getByRole('button', { name: 'Revisar mejora' }).first()).toHaveCSS('min-height', '44px')
       const review = page.getByRole('button', { name: 'Revisar mejora' }).first()
@@ -54,7 +55,7 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       const response = page.waitForResponse('**/api/v2/caravan/upgrade')
       await page.getByRole('button', { name: 'Confirmar mejora' }).click()
       await request
-      await expect(page.getByText('Mejora enviada; esperando snapshot confirmado…')).toBeVisible()
+      await expect(page.getByText('Aplicando la mejora…')).toBeVisible()
       await expect(page.getByRole('alertdialog')).toHaveCount(0)
       await expect(page.locator('.caravan-content')).toBeFocused()
       releaseUpgrade()
@@ -69,7 +70,7 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       await page.screenshot({ path: test.info().outputPath(`caravan-v2-${viewport.name}.png`), fullPage: true })
 
       await page.goto('/chronicle-v2')
-      await expect(page.getByRole('heading', { name: 'Crónica histórica' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Historial' })).toBeVisible()
       await expect(page.getByText('Visitante llegado')).toBeVisible()
       await expect(page.getByText('Procedencia: Ashen Vale · visitors')).toBeVisible()
       await expect(page.getByRole('button', { name: 'Actualizar' })).toHaveCSS('min-height', '44px')
