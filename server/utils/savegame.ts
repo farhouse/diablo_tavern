@@ -1354,7 +1354,7 @@ export function isPersistedCanonical(
   if (!Number.isInteger(candidate.stashLimit) || Number(candidate.stashLimit) < 0) return false
   if (!Array.isArray(candidate.unlockedRegionIds) || !candidate.unlockedRegionIds.every((id) => typeof id === 'string' && Boolean(id))) return false
   if (!Number.isInteger(candidate.revision) || Number(candidate.revision) < 0) return false
-  if (!Number.isFinite(Date.parse(String(candidate.createdAt))) || !Number.isFinite(Date.parse(String(candidate.updatedAt)))) return false
+  if (!isPersistedTimestamp(candidate.createdAt) || !isPersistedTimestamp(candidate.updatedAt)) return false
   if (!Array.isArray(candidate.requestRecords) || !Array.isArray(candidate.ledger)) return false
   if (!isVisitorCycle(candidate.visitorCycle)) return false
   if (!candidate.businessKeys || typeof candidate.businessKeys !== 'object' || Array.isArray(candidate.businessKeys)) return false
@@ -1651,7 +1651,7 @@ export function isPersistedCanonical(
     if (typeof entry.requestId !== 'string' || !entry.requestId || ledgerRequestIds.has(entry.requestId)
       || typeof entry.operationKey !== 'string' || !entry.operationKey
       || typeof entry.commandHash !== 'string' || !/^[a-f0-9]{64}$/.test(entry.commandHash)) return false
-    if (!Number.isFinite(Date.parse(entry.at)) || !Number.isInteger(entry.revision) || entry.revision < 1) return false
+    if (!isPersistedTimestamp(entry.at) || !Number.isInteger(entry.revision) || entry.revision < 1) return false
     if (entry.revision <= previousLedgerRevision || entry.revision > Number(candidate.revision)) return false
     if (!Number.isInteger(entry.goldDelta) || !isSignedResourceMap(entry.materialDeltas) || !Array.isArray(entry.itemChanges)
       || !entry.itemChanges.every(isItemChange)) return false
@@ -1677,7 +1677,7 @@ export function isPersistedCanonical(
     if (typeof record.commandHash !== 'string' || !/^[a-f0-9]{64}$/.test(record.commandHash) || !Number.isInteger(record.revision)
       || record.revision < 1 || record.revision > Number(candidate.revision)
       || record.response.revision !== record.revision) return false
-    if (!Number.isFinite(Date.parse(record.createdAt)) || !Number.isFinite(Date.parse(record.updatedAt))) return false
+    if (!isPersistedTimestamp(record.createdAt) || !isPersistedTimestamp(record.updatedAt)) return false
     if (containsInternalFields(record.response)) return false
     if (record.persistedResponse !== undefined
       && (!isPersistedCanonical(record.persistedResponse) || record.persistedResponse.revision !== record.revision)) return false
@@ -1715,6 +1715,10 @@ function isSignedResourceMap(value: unknown): value is Record<string, number> {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isPersistedTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value))
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
@@ -1762,13 +1766,13 @@ function isCaravan(value: unknown): value is SaveGame['caravan'] {
 
 function isPersistedRound(value: unknown): value is PersistedVisitRound {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, ['id', 'number', 'slots', 'createdAt'])) return false
-  if (typeof value.id !== 'string' || !value.id || !Number.isInteger(value.number) || !Number.isFinite(Date.parse(String(value.createdAt)))) return false
+  if (typeof value.id !== 'string' || !value.id || !Number.isInteger(value.number) || !isPersistedTimestamp(value.createdAt)) return false
   return Array.isArray(value.slots) && value.slots.every(isPersistedSlot)
 }
 
 function isPersistedSlot(value: unknown): value is PersistedVisitorSlot {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, ['id', 'visitor', 'nextArrivalCheckAt']) || typeof value.id !== 'string' || !value.id) return false
-  if (value.nextArrivalCheckAt !== undefined && !Number.isFinite(Date.parse(String(value.nextArrivalCheckAt)))) return false
+  if (value.nextArrivalCheckAt !== undefined && !isPersistedTimestamp(value.nextArrivalCheckAt)) return false
   return value.visitor === undefined || isPersistedVisitor(value.visitor)
 }
 
@@ -1795,13 +1799,13 @@ function isPersistedVisitor(value: unknown): value is PersistedVisitor {
     && ['player_bought', 'player_sold'].includes(String(trade.kind)) && Number.isInteger(trade.price))) return false
   if (!Array.isArray(value.commissionOptions) || !value.commissionOptions.every(isCommissionOption)) return false
   if (value.commission !== undefined && !isPersistedCommission(value.commission)) return false
-  return value.departedAt === undefined || Number.isFinite(Date.parse(String(value.departedAt)))
+  return value.departedAt === undefined || isPersistedTimestamp(value.departedAt)
 }
 
 function isPersistedOffer(value: unknown): value is PersistedVisitorOffer {
   return isPlainRecord(value) && hasOnlyKeys(value, ['id', 'itemId', 'price', 'purchasedAt'])
     && typeof value.id === 'string' && Boolean(value.id) && typeof value.itemId === 'string' && Boolean(value.itemId)
-    && Number.isInteger(value.price) && (value.purchasedAt === undefined || Number.isFinite(Date.parse(String(value.purchasedAt))))
+    && Number.isInteger(value.price) && (value.purchasedAt === undefined || isPersistedTimestamp(value.purchasedAt))
 }
 
 function isCommissionOption(value: unknown): value is Visitor['commissionOptions'][number] {
@@ -1821,12 +1825,12 @@ function isPersistedCommission(value: unknown): value is PersistedVisitorCommiss
     'optionId', 'title', 'regionId', 'durationMs', 'successChance', 'fullRewardGold', 'partialRewardGold', 'riskLevel', 'failureConsequence'
   ].includes(key))))) return false
   if (typeof value.id !== 'string' || !value.id || !['active', 'ready', 'claimed'].includes(String(value.status))) return false
-  if (!Number.isFinite(Date.parse(String(value.startedAt))) || !Number.isFinite(Date.parse(String(value.finishesAt)))
+  if (!isPersistedTimestamp(value.startedAt) || !isPersistedTimestamp(value.finishesAt)
     || Date.parse(String(value.startedAt)) > Date.parse(String(value.finishesAt)) || !Number.isFinite(value.outcomeRoll)) return false
   if (value.outcome !== undefined && !['complete', 'partial', 'failed'].includes(String(value.outcome))) return false
   if (value.rewardGold !== undefined && (!Number.isInteger(value.rewardGold) || Number(value.rewardGold) < 0)) return false
   if (value.rewardItemId !== undefined && (typeof value.rewardItemId !== 'string' || !value.rewardItemId)) return false
-  return value.claimedAt === undefined || Number.isFinite(Date.parse(String(value.claimedAt)))
+  return value.claimedAt === undefined || isPersistedTimestamp(value.claimedAt)
 }
 
 function isItemChange(value: unknown): boolean {
@@ -1883,7 +1887,7 @@ function isItemV2Map(value: unknown): value is Record<string, PersistedItemV2Sta
       || (entry.provenance.businessKey !== undefined && (typeof entry.provenance.businessKey !== 'string' || !entry.provenance.businessKey))
       || (entry.provenance.combinationId !== undefined && (typeof entry.provenance.combinationId !== 'string' || !entry.provenance.combinationId))
       || (entry.provenance.imperfectPieceId !== undefined && (typeof entry.provenance.imperfectPieceId !== 'string' || !entry.provenance.imperfectPieceId))
-      || !Number.isFinite(Date.parse(String(entry.provenance.droppedAt)))) return false
+      || !isPersistedTimestamp(entry.provenance.droppedAt)) return false
     if (entry.provenance.businessKey) {
       if (lootBusinessKeys.has(entry.provenance.businessKey)) return false
       lootBusinessKeys.add(entry.provenance.businessKey)
@@ -1932,10 +1936,10 @@ function isServiceJobStateMap(value: unknown): value is Record<string, Persisted
     && ['queued', 'active', 'completed', 'failed', 'cancelled'].includes(String(entry.status))
     && ['blacksmith', 'enchanter'].includes(String(entry.service))
     && typeof entry.itemId === 'string' && Boolean(entry.itemId)
-    && ['queuedAt', 'startedAt', 'completesAt'].every((key) => Number.isFinite(Date.parse(String(entry[key]))))
-    && (entry.completedAt === undefined || Number.isFinite(Date.parse(String(entry.completedAt))))
-    && (entry.failedAt === undefined || Number.isFinite(Date.parse(String(entry.failedAt))))
-    && (entry.cancelledAt === undefined || Number.isFinite(Date.parse(String(entry.cancelledAt))))
+    && ['queuedAt', 'startedAt', 'completesAt'].every((key) => isPersistedTimestamp(entry[key]))
+    && (entry.completedAt === undefined || isPersistedTimestamp(entry.completedAt))
+    && (entry.failedAt === undefined || isPersistedTimestamp(entry.failedAt))
+    && (entry.cancelledAt === undefined || isPersistedTimestamp(entry.cancelledAt))
     && isPlainRecord(entry.result)
     && hasOnlyKeys(entry.result, ['blacksmithLevel', 'enchantCount', 'affix'])
     && (entry.result.blacksmithLevel === undefined || (Number.isInteger(entry.result.blacksmithLevel) && Number(entry.result.blacksmithLevel) >= 0))
@@ -1953,8 +1957,8 @@ function isImprint(value: unknown, allowReplacedAt: boolean): boolean {
     && hasOnlyKeys(value, allowReplacedAt ? ['imprintId', 'label', 'grantedAt', 'replacedAt'] : ['imprintId', 'label', 'grantedAt'])
     && typeof value.imprintId === 'string' && Boolean(value.imprintId)
     && typeof value.label === 'string' && Boolean(value.label)
-    && Number.isFinite(Date.parse(String(value.grantedAt)))
-    && (value.replacedAt === undefined || Number.isFinite(Date.parse(String(value.replacedAt))))
+    && isPersistedTimestamp(value.grantedAt)
+    && (value.replacedAt === undefined || isPersistedTimestamp(value.replacedAt))
 }
 
 function isCustodyProjection(value: unknown): boolean {
@@ -1962,19 +1966,19 @@ function isCustodyProjection(value: unknown): boolean {
   if (value.kind === 'legacy_appraiser') return hasOnlyKeys(value, ['kind'])
   if (value.kind === 'expedition') return hasOnlyKeys(value, ['kind', 'visitorId', 'contractId', 'startsAt', 'retainedVisitor'])
     && typeof value.visitorId === 'string' && Boolean(value.visitorId) && typeof value.contractId === 'string' && Boolean(value.contractId)
-    && Number.isFinite(Date.parse(String(value.startsAt)))
+    && isPersistedTimestamp(value.startsAt)
     && (value.retainedVisitor === undefined || (isPlainRecord(value.retainedVisitor)
       && hasOnlyKeys(value.retainedVisitor, ['name', 'departedAt'])
       && typeof value.retainedVisitor.name === 'string' && Boolean(value.retainedVisitor.name)
-      && Number.isFinite(Date.parse(String(value.retainedVisitor.departedAt)))))
+      && isPersistedTimestamp(value.retainedVisitor.departedAt)))
   if (value.kind === 'settlement') return hasOnlyKeys(value, ['kind', 'expeditionId', 'outcome', 'appliedAt'])
     && typeof value.expeditionId === 'string' && Boolean(value.expeditionId) && ['returned', 'retreated', 'death'].includes(String(value.outcome))
-    && Number.isFinite(Date.parse(String(value.appliedAt)))
+    && isPersistedTimestamp(value.appliedAt)
   if (value.kind === 'recovery') return hasOnlyKeys(value, ['kind', 'sourceExpeditionId', 'resolvedAt'])
-    && typeof value.sourceExpeditionId === 'string' && Boolean(value.sourceExpeditionId) && Number.isFinite(Date.parse(String(value.resolvedAt)))
+    && typeof value.sourceExpeditionId === 'string' && Boolean(value.sourceExpeditionId) && isPersistedTimestamp(value.resolvedAt)
   return value.kind === 'service' && hasOnlyKeys(value, ['kind', 'service', 'queuedAt', 'startsAt'])
     && ['blacksmith', 'enchanter'].includes(String(value.service))
-    && Number.isFinite(Date.parse(String(value.queuedAt))) && Number.isFinite(Date.parse(String(value.startsAt)))
+    && isPersistedTimestamp(value.queuedAt) && isPersistedTimestamp(value.startsAt)
 }
 
 function isPublicSaveGame(value: unknown): value is PublicSaveGame {
@@ -1987,7 +1991,7 @@ function isPublicSaveGame(value: unknown): value is PublicSaveGame {
   if (!Array.isArray(value.stash) || !value.stash.every(isItem)) return false
   if (!Array.isArray(value.unlockedRegionIds) || !value.unlockedRegionIds.every((id) => typeof id === 'string' && Boolean(id))) return false
   if (!Number.isInteger(value.revision) || Number(value.revision) < 0) return false
-  if (!Number.isFinite(Date.parse(String(value.createdAt))) || !Number.isFinite(Date.parse(String(value.updatedAt)))) return false
+  if (!isPersistedTimestamp(value.createdAt) || !isPersistedTimestamp(value.updatedAt)) return false
   return isPublicRound(value.visitRound) && Array.isArray(value.visitHistory) && value.visitHistory.every(isPublicRound)
 }
 
@@ -2007,11 +2011,11 @@ function isReplayResponse(value: unknown): value is PublicSaveGame | CommandSucc
 
 function isPublicRound(value: unknown): boolean {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, ['id', 'number', 'slots', 'createdAt'])) return false
-  if (typeof value.id !== 'string' || !value.id || !Number.isInteger(value.number) || !Number.isFinite(Date.parse(String(value.createdAt)))) return false
+  if (typeof value.id !== 'string' || !value.id || !Number.isInteger(value.number) || !isPersistedTimestamp(value.createdAt)) return false
   return Array.isArray(value.slots) && value.slots.every((slot) => isPlainRecord(slot)
     && hasOnlyKeys(slot, ['id', 'visitor', 'nextArrivalCheckAt'])
     && typeof slot.id === 'string' && Boolean(slot.id)
-    && (slot.nextArrivalCheckAt === undefined || Number.isFinite(Date.parse(String(slot.nextArrivalCheckAt))))
+    && (slot.nextArrivalCheckAt === undefined || isPersistedTimestamp(slot.nextArrivalCheckAt))
     && (slot.visitor === undefined || isPublicVisitor(slot.visitor)))
 }
 
@@ -2026,7 +2030,7 @@ function isPublicVisitor(value: unknown): boolean {
   for (const offer of value.offers) {
     if (!isPlainRecord(offer) || !hasOnlyKeys(offer, ['id', 'item', 'price', 'purchasedAt']) || !isItem(offer.item)) return false
     if (typeof offer.id !== 'string' || !offer.id || !Number.isInteger(offer.price)) return false
-    if (offer.purchasedAt !== undefined && !Number.isFinite(Date.parse(String(offer.purchasedAt)))) return false
+    if (offer.purchasedAt !== undefined && !isPersistedTimestamp(offer.purchasedAt)) return false
     offers.push({ id: offer.id, itemId: offer.item.id, price: Number(offer.price), ...(offer.purchasedAt ? { purchasedAt: String(offer.purchasedAt) } : {}) })
   }
   let commission: PersistedVisitorCommission | undefined

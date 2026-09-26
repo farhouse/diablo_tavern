@@ -1085,6 +1085,24 @@ describe('atomic persisted-game mutation', () => {
   })
 
   it.each([
+    ['parseable number', (partial: Record<string, unknown>) => {
+      partial.updatedAt = 2026
+    }],
+    ['BSON Date', (partial: Record<string, unknown>) => {
+      const commission = (partial.visitRound as PersistedGameV3['visitRound']).slots[0]!.visitor!.commission!
+      commission.finishesAt = new Date('2026-09-15T12:00:00.000Z') as unknown as string
+    }]
+  ])('rejects historical V2 map absence paired with a parseable but non-string %s timestamp without writing', async (_label, corrupt) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    const partial = historicalClaimedRewardFixture() as unknown as Record<string, unknown>
+    corrupt(partial)
+    document = partial as unknown as PersistedGameV3
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(collection.replaceOne).not.toHaveBeenCalled()
+  })
+
+  it.each([
     ['loot table', (state: PersistedGameV3['itemV2ById'][string]) => {
       state.provenance!.lootTableId = 'act1-mid'
     }],
@@ -1100,6 +1118,22 @@ describe('atomic persisted-game mutation', () => {
     const backfilled = await getPersistedGameV3('atomic-user')
     const rewardItemId = backfilled.visitRound.slots[0]!.visitor!.commission!.rewardItemId!
     corrupt(backfilled.itemV2ById[rewardItemId]!)
+    document = backfilled
+    vi.clearAllMocks()
+
+    await expect(getPersistedGameV3('atomic-user')).rejects.toBeInstanceOf(PersistedGameCorruptError)
+    expect(collection.replaceOne).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['number', 2026],
+    ['BSON Date', new Date('2026-09-15T12:00:00.000Z')]
+  ])('rejects present historical reward metadata with a non-string droppedAt timestamp (%s)', async (_label, droppedAt) => {
+    const { getPersistedGameV3, PersistedGameCorruptError } = await import('../server/utils/savegame')
+    document = historicalClaimedRewardFixture() as unknown as PersistedGameV3
+    const backfilled = await getPersistedGameV3('atomic-user')
+    const rewardItemId = backfilled.visitRound.slots[0]!.visitor!.commission!.rewardItemId!
+    backfilled.itemV2ById[rewardItemId]!.provenance!.droppedAt = droppedAt as unknown as string
     document = backfilled
     vi.clearAllMocks()
 
