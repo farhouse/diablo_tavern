@@ -13,6 +13,7 @@ import {
   visitorCycleProjection,
   type VisitorV2Selection
 } from '~/utils/v2-visitor-adapter'
+import { caravanUpgradePayload, invalidateCaravanSelection, type CaravanSelection } from '~/utils/v2-caravan-adapter'
 import {
   equipmentActionPayload,
   invalidateEquipmentSelection,
@@ -23,7 +24,7 @@ import {
 
 type LoadState = 'loading' | 'empty' | 'ready'
 type OperationState = 'idle' | 'pending' | 'uncertain' | 'conflict' | 'unavailable' | 'terminal'
-type OperationName = 'accept_contract' | 'start_expedition' | 'reconcile_game' | 'confirm_settlement' | 'assign_recovery' | 'abandon_recovery' | EquipmentAction
+type OperationName = 'accept_contract' | 'start_expedition' | 'reconcile_game' | 'confirm_settlement' | 'assign_recovery' | 'abandon_recovery' | 'upgrade_caravan' | EquipmentAction
 
 type PendingOperation = {
   name: OperationName
@@ -43,6 +44,7 @@ export const useGameV2Store = defineStore('game-v2', {
     errorMessage: '',
     unavailableReason: '',
     selection: null as VisitorV2Selection | null,
+    caravanSelection: null as CaravanSelection | null,
     equipmentSelection: null as EquipmentSelection | null,
     pendingOperation: null as PendingOperation | null,
     pendingEquipmentOperation: null as PendingEquipmentOperation | null,
@@ -70,6 +72,7 @@ export const useGameV2Store = defineStore('game-v2', {
       }
       this.snapshotStale = false
       this.selection = invalidateVisitorV2Selection(game, this.selection)
+      this.caravanSelection = invalidateCaravanSelection(game, this.caravanSelection)
       this.equipmentSelection = invalidateEquipmentSelection(game, this.equipmentSelection)
     },
     select(selection: VisitorV2Selection | null) {
@@ -124,6 +127,18 @@ export const useGameV2Store = defineStore('game-v2', {
       if (!this.game) return this.markTerminal()
       if (this.snapshotStale) return false
       await this.runOperation('abandon_recovery', '/api/v2/recoveries/abandon', abandonRecoveryPayload(this.game, selection))
+    },
+    selectCaravanUpgrade(selection: CaravanSelection | null) {
+      this.caravanSelection = invalidateCaravanSelection(this.game, selection)
+    },
+    async upgradeCaravan(selection: CaravanSelection) {
+      if (!this.game || this.snapshotStale) return false
+      try {
+        return await this.runOperation('upgrade_caravan', '/api/v2/caravan/upgrade', caravanUpgradePayload(this.game, selection))
+      } catch {
+        this.caravanSelection = null
+        return false
+      }
     },
     selectEquipment(selection: EquipmentSelection | null) {
       this.equipmentSelection = invalidateEquipmentSelection(this.game, selection)
@@ -207,6 +222,7 @@ export const useGameV2Store = defineStore('game-v2', {
           this.operationState = 'conflict'
           this.snapshotStale = true
           this.selection = null
+          this.caravanSelection = null
           try {
             const game = await this.api<GameView>('/api/v2/game')
             this.applySnapshot(game)
