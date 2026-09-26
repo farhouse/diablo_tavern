@@ -252,11 +252,15 @@ describe('V2 visitor contract, expedition, settlement and recovery', () => {
     expect(dead.gold).toBe(expedition.gold + settlement.caravanGold)
     expect(dead.visitorCycle.settlements[settlement.settlementId]).toMatchObject({ state: 'settled', outcome: 'death' })
     expect(dead.visitorCycle.visitors[scenario.visitorId]).toMatchObject({ state: 'dead' })
-    expect(Object.keys(dead.visitorCycle.recoveries)).toHaveLength(0)
+    expect(Object.values(dead.visitorCycle.recoveries)).toEqual([expect.objectContaining({
+      state: 'recovered', itemIds: [], recoveredItemIds: []
+    })])
 
     const deadView = mapPersistedGameToGameView(dead, scenario.now)
     validateGameView(deadView)
-    expect(deadView.recoveries).toEqual([])
+    expect(deadView.recoveries).toEqual([expect.objectContaining({
+      state: 'recovered', itemIds: [], recoveredItemIds: [], actions: []
+    })])
     expect(deadView.actions.map((action) => action.action)).not.toEqual(expect.arrayContaining(['assign_recovery', 'abandon_recovery']))
     expect(deadView.visitors.find((visitor) => visitor.visitorId === scenario.visitorId)?.actions.map((action) => action.action))
       .not.toEqual(expect.arrayContaining(['assign_recovery', 'abandon_recovery']))
