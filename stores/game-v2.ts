@@ -13,10 +13,17 @@ import {
   visitorCycleProjection,
   type VisitorV2Selection
 } from '~/utils/v2-visitor-adapter'
+import {
+  equipmentActionPayload,
+  invalidateEquipmentSelection,
+  itemAction,
+  type EquipmentAction,
+  type EquipmentSelection
+} from '~/utils/v2-equipment-adapter'
 
 type LoadState = 'loading' | 'empty' | 'ready'
 type OperationState = 'idle' | 'pending' | 'uncertain' | 'conflict' | 'unavailable' | 'terminal'
-type OperationName = 'accept_contract' | 'start_expedition' | 'reconcile_game' | 'confirm_settlement' | 'assign_recovery' | 'abandon_recovery'
+type OperationName = 'accept_contract' | 'start_expedition' | 'reconcile_game' | 'confirm_settlement' | 'assign_recovery' | 'abandon_recovery' | EquipmentAction
 
 type PendingOperation = {
   name: OperationName
@@ -26,6 +33,8 @@ type PendingOperation = {
   payload: Record<string, unknown>
 }
 
+type PendingEquipmentOperation = PendingOperation & { action: EquipmentAction; selection: EquipmentSelection }
+
 export const useGameV2Store = defineStore('game-v2', {
   state: () => ({
     game: null as GameView | null,
@@ -34,7 +43,9 @@ export const useGameV2Store = defineStore('game-v2', {
     errorMessage: '',
     unavailableReason: '',
     selection: null as VisitorV2Selection | null,
+    equipmentSelection: null as EquipmentSelection | null,
     pendingOperation: null as PendingOperation | null,
+    pendingEquipmentOperation: null as PendingEquipmentOperation | null,
     snapshotStale: false,
     reconciledTransitions: {} as Record<string, true>
   }),
@@ -45,16 +56,21 @@ export const useGameV2Store = defineStore('game-v2', {
   actions: {
     applySnapshot(game: GameView) {
       if (this.game && game.revision < this.game.revision) return
-      if (this.snapshotStale && this.pendingOperation && game.revision <= this.pendingOperation.expectedRevision) {
+      const pendingRevision = this.pendingOperation?.expectedRevision ?? this.pendingEquipmentOperation?.expectedRevision
+      if (this.snapshotStale && pendingRevision !== undefined && game.revision <= pendingRevision) {
         this.loadState = this.game ? 'ready' : 'empty'
         this.errorMessage = 'La partida cambió. El snapshot aún no refleja una revisión nueva. Reintentá la carga.'
         return
       }
       this.game = game
       this.loadState = 'ready'
-      if (this.snapshotStale) this.pendingOperation = null
+      if (this.snapshotStale) {
+        this.pendingOperation = null
+        this.pendingEquipmentOperation = null
+      }
       this.snapshotStale = false
       this.selection = invalidateVisitorV2Selection(game, this.selection)
+      this.equipmentSelection = invalidateEquipmentSelection(game, this.equipmentSelection)
     },
     select(selection: VisitorV2Selection | null) {
       this.selection = this.game ? invalidateVisitorV2Selection(this.game, selection) : null
@@ -108,6 +124,35 @@ export const useGameV2Store = defineStore('game-v2', {
       if (!this.game) return this.markTerminal()
       if (this.snapshotStale) return false
       await this.runOperation('abandon_recovery', '/api/v2/recoveries/abandon', abandonRecoveryPayload(this.game, selection))
+    },
+    selectEquipment(selection: EquipmentSelection | null) {
+      this.equipmentSelection = invalidateEquipmentSelection(this.game, selection)
+    },
+    async runEquipmentAction(selection: EquipmentSelection) {
+      if (!this.game || this.operationState === 'pending' || this.operationState === 'uncertain' || this.snapshotStale) return false
+      const item = this.game.items.find((entry) => entry.itemId === selection.itemId)
+      const action = item ? itemAction(item, selection.action) : null
+      if (!item || !action || selection.revision !== this.game.revision) {
+        this.equipmentSelection = null
+        return false
+      }
+      let payload: Record<string, unknown>
+      try {
+        payload = equipmentActionPayload(this.game, selection.itemId, action, selection.optionId, selection.acknowledgementId)
+      } catch {
+        this.equipmentSelection = null
+        return false
+      }
+      const operation: PendingEquipmentOperation = {
+        name: selection.action,
+        action: selection.action,
+        selection,
+        endpoint: `/api/v2/actions/${selection.action}`,
+        requestId: createRequestId(),
+        expectedRevision: this.game.revision,
+        payload
+      }
+      return await this.postEquipmentPending(operation)
     },
     async retryUncertain() {
       if (!this.pendingOperation || this.operationState !== 'uncertain') return
@@ -184,6 +229,59 @@ export const useGameV2Store = defineStore('game-v2', {
         this.errorMessage = publicErrorMessage(error)
         return false
       }
+    },
+    async postEquipmentPending(operation: PendingEquipmentOperation) {
+      this.pendingEquipmentOperation = operation
+      this.operationState = 'pending'
+      this.errorMessage = ''
+      this.unavailableReason = ''
+      try {
+        const game = await this.api<GameView>(operation.endpoint, {
+          method: 'POST',
+          body: {
+            requestId: operation.requestId,
+            expectedRevision: operation.expectedRevision,
+            ...operation.payload
+          }
+        })
+        if (game.revision <= operation.expectedRevision) {
+          this.operationState = 'uncertain'
+          this.errorMessage = 'La orden no publicó una revisión nueva. Reintentá la misma orden.'
+          return false
+        }
+        this.applySnapshot(game)
+        this.operationState = 'idle'
+        this.pendingEquipmentOperation = null
+        return true
+      } catch (error) {
+        const parsed = publicApiError(error)
+        if (parsed?.error.code === 'uncertain') {
+          this.operationState = 'uncertain'
+          this.errorMessage = 'No se pudo confirmar el resultado. Reintentá la misma orden.'
+          return false
+        }
+        if (parsed?.error.code === 'revision_conflict') {
+          this.operationState = 'conflict'
+          this.snapshotStale = true
+          this.equipmentSelection = null
+          return false
+        }
+        if (parsed?.error.code === 'action_unavailable') {
+          this.operationState = 'unavailable'
+          this.pendingEquipmentOperation = null
+          this.unavailableReason = parsed.error.reason
+          this.errorMessage = publicErrorCopy(parsed.error.code)
+          return false
+        }
+        this.operationState = 'terminal'
+        this.pendingEquipmentOperation = null
+        this.errorMessage = publicErrorMessage(error)
+        return false
+      }
+    },
+    async retryEquipmentUncertain() {
+      if (!this.pendingEquipmentOperation || this.operationState !== 'uncertain') return
+      await this.postEquipmentPending(this.pendingEquipmentOperation)
     },
     markTerminal() {
       this.operationState = 'terminal'
