@@ -449,10 +449,21 @@ describe('VisitorCycleV2', () => {
     if (expiredSettlement) expiredSettlement.state = 'preview_expired'
 
     const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    const ready = wrapper.get('[data-testid="v2-ready"]')
+    const panels = ready.findAll(':scope > .v2-cycle__panel')
+    expect(panels.map((panel) => panel.attributes('aria-labelledby'))).toEqual([
+      'v2-visitors-title',
+      'v2-expeditions-title',
+      'v2-settlements-title',
+      'v2-recoveries-title',
+      'v2-history-title'
+    ])
     const visitorsPanel = wrapper.get('[aria-labelledby="v2-visitors-title"]')
-    const history = visitorsPanel.get('details')
+    const historyPanel = wrapper.get('[aria-labelledby="v2-history-title"]')
+    const history = historyPanel.get('[data-testid="v2-history"]')
 
     expect(visitorsPanel.text()).toContain(current.name.fallback)
+    expect(visitorsPanel.find('[data-testid="visitor-departed"]').exists()).toBe(false)
     expect(history.attributes('open')).toBeUndefined()
     expect(history.get('summary').text()).toContain('8')
     expect(history.findAll('[data-testid="visitor-departed"]')).toHaveLength(8)

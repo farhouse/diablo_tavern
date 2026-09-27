@@ -494,19 +494,6 @@ onBeforeUnmount(() => {
             </span>
           </div>
         </article>
-        <details v-if="historicalVisitors.length" class="v2-cycle__history">
-          <summary>Historial de visitantes ({{ historicalVisitors.length }})</summary>
-          <div class="v2-cycle__history-list">
-            <article v-for="visitor in historicalVisitors" :key="visitor.visitorId" class="v2-cycle__row" :data-testid="`visitor-${visitor.state}`">
-              <HeroSprite :hero-class="heroClassForVisitor(visitor.visitorId)" :alt="`Retrato de ${label(visitor.name)}`" />
-              <div class="v2-cycle__details">
-                <strong>{{ label(visitor.name) }}</strong>
-                <p class="v2-cycle__muted">Estado: {{ stateLabel(visitor.state) }}</p>
-                <p class="v2-cycle__muted">Estado terminal sin acciones disponibles.</p>
-              </div>
-            </article>
-          </div>
-        </details>
       </section>
 
       <section class="v2-cycle__panel" aria-labelledby="v2-expeditions-title">
@@ -680,6 +667,23 @@ onBeforeUnmount(() => {
           </div>
         </article>
       </section>
+
+      <section v-if="historicalVisitors.length" class="v2-cycle__panel v2-cycle__history-panel" aria-labelledby="v2-history-title">
+        <h3 id="v2-history-title">Historial</h3>
+        <details class="v2-cycle__history" data-testid="v2-history">
+          <summary>Historial de visitantes ({{ historicalVisitors.length }})</summary>
+          <div class="v2-cycle__history-list">
+            <article v-for="visitor in historicalVisitors" :key="visitor.visitorId" class="v2-cycle__row" :data-testid="`visitor-${visitor.state}`">
+              <HeroSprite :hero-class="heroClassForVisitor(visitor.visitorId)" :alt="`Retrato de ${label(visitor.name)}`" />
+              <div class="v2-cycle__details">
+                <strong>{{ label(visitor.name) }}</strong>
+                <p class="v2-cycle__muted">Estado: {{ stateLabel(visitor.state) }}</p>
+                <p class="v2-cycle__muted">Estado terminal sin acciones disponibles.</p>
+              </div>
+            </article>
+          </div>
+        </details>
+      </section>
     </div>
 
     <button
@@ -746,6 +750,10 @@ onBeforeUnmount(() => {
 .v2-cycle__history {
   border-top: 1px solid var(--line);
   padding-top: 0.75rem;
+}
+
+.v2-cycle__history-panel {
+  grid-column: 1 / -1;
 }
 
 .v2-cycle__history summary {
