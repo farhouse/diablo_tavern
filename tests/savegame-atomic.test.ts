@@ -173,6 +173,153 @@ describe('atomic persisted-game mutation', () => {
     expect(isPersistedCanonical(document)).toBe(false)
   })
 
+  it('reconciles a long terminal history with an expired settlement and contracts once', async () => {
+    const { getPersistedGameV3, isPersistedCanonical, mutateVisitorCycleAtomic } = await import('../server/utils/savegame')
+    const { applyVisitorCycleCommand } = await import('../server/domain/visitor-cycle')
+    const { mapPersistedGameToGameView } = await import('../server/domain/game-view')
+
+    const initial = await getPersistedGameV3('atomic-user')
+    const [settlementVisitorId, contractsVisitorId] = Object.keys(initial.visitorCycle.visitors)
+    if (!settlementVisitorId || !contractsVisitorId) throw new Error('Expected two V2 visitors')
+    const setupNow = new Date(initial.createdAt)
+    let setupId = 0
+    const setupDependencies = {
+      now: () => setupNow,
+      random: () => 0.9,
+      uuid: () => `combined-${++setupId}`
+    }
+    const settlementVisitor = initial.visitorCycle.visitors[settlementVisitorId]!
+    const settlementOptionId = settlementVisitor.contractOptions[0]!.optionId
+    let combined = applyVisitorCycleCommand(initial, {
+      action: 'accept_contract', visitorId: settlementVisitorId,
+      optionId: settlementOptionId, loanItemIds: []
+    }, setupDependencies)
+    const contract = Object.values(combined.visitorCycle.contracts)[0]!
+    combined = applyVisitorCycleCommand(combined, { action: 'start_expedition', contractId: contract.contractId }, setupDependencies)
+    combined.visitorCycle.expeditions[contract.expeditionId]!.events = [{
+      eventId: 'combined-settlement-event', occursAt: setupNow.toISOString(), damage: 0, gold: 125
+    }]
+    combined = applyVisitorCycleCommand(combined, { action: 'reconcile_game' }, setupDependencies)
+    const settlement = Object.values(combined.visitorCycle.settlements)[0]!
+    const expiredAt = new Date(settlement.expiresAt)
+    settlement.state = 'preview_ready'
+    settlement.grossGold = 125
+    settlement.caravanGold = 31
+    settlement.visitorGold = 94
+    expect(combined.gold).toBe(initial.gold)
+    expect(settlement).toMatchObject({ state: 'preview_ready', grossGold: 125, caravanGold: 31 })
+
+    const contractsVisitor = combined.visitorCycle.visitors[contractsVisitorId]!
+    contractsVisitor.state = 'available'
+    contractsVisitor.contractOptions = contractsVisitor.contractOptions.map((option) => ({
+      ...option, expiresAt: new Date(expiredAt.getTime() - 1).toISOString()
+    }))
+    const historyIds: string[] = []
+    const terminalVisitorIds: string[] = []
+    for (let index = 0; index < 20; index += 1) {
+      const historyId = `combined-history-${index}`
+      const terminalVisitorId = `combined-terminal-${index}`
+      historyIds.push(historyId)
+      terminalVisitorIds.push(terminalVisitorId)
+      combined.visitHistory.push({
+        id: historyId, number: index, createdAt: setupNow.toISOString(), slots: []
+      })
+      const terminal = structuredClone(contractsVisitor)
+      terminal.visitorId = terminalVisitorId
+      terminal.name = `Terminal ${index}`
+      terminal.state = 'departed'
+      terminal.contractOptions = []
+      terminal.departedAt = setupNow.toISOString()
+      terminal.lastExpeditionId = `combined-terminal-expedition-${index}`
+      delete terminal.negotiationId
+      delete terminal.expiresAt
+      delete terminal.contractId
+      delete terminal.expeditionId
+      delete terminal.settlementId
+      delete terminal.outcome
+      delete terminal.diedAt
+      delete terminal.recoveryId
+      delete terminal.busyRecoveryId
+      combined.visitorCycle.visitors[terminal.visitorId] = terminal
+    }
+    combined.revision = 0
+    document = combined
+
+    const reconcileAtExpiry = {
+      now: () => expiredAt,
+      random: () => 0.9,
+      uuid: () => `combined-mutation-${++setupId}`
+    }
+    const first = await mutateVisitorCycleAtomic(
+      'atomic-user', 'combined-reconcile', 0, { action: 'reconcile_game' },
+      'reconcile:combined:first', mapPersistedGameToGameView, reconcileAtExpiry
+    )
+    const afterFirst = await getPersistedGameV3('atomic-user')
+    const firstSettlement = afterFirst.visitorCycle.settlements[settlement.settlementId]!
+    const firstOptions = afterFirst.visitorCycle.visitors[contractsVisitorId]!.contractOptions
+    const goldAfterFirst = afterFirst.gold
+
+    expect(first.revision).toBe(1)
+    expect(first.game.revision).toBe(1)
+    expect(first.game.settlements.find((entry) => entry.settlementId === settlement.settlementId)).toMatchObject({
+      state: 'settled', appliedBy: 'expiry_default'
+    })
+    expect(firstSettlement).toMatchObject({ state: 'settled', appliedBy: 'expiry_default' })
+    expect(firstOptions.length).toBeGreaterThan(0)
+    expect(firstOptions.every((option) => Date.parse(option.expiresAt) > expiredAt.getTime())).toBe(true)
+    expect(afterFirst.gold).toBe(initial.gold + 31)
+    expect(afterFirst.ledger).toHaveLength(1)
+    expect(afterFirst.ledger[0]).toMatchObject({ requestId: 'combined-reconcile', goldDelta: 31 })
+    expect(afterFirst.visitHistory.filter((round) => historyIds.includes(round.id))).toHaveLength(20)
+    for (const historyId of historyIds) {
+      expect(afterFirst.visitHistory.some((round) => round.id === historyId)).toBe(true)
+    }
+    expect(Object.values(afterFirst.visitorCycle.visitors).filter((visitor) => terminalVisitorIds.includes(visitor.visitorId))).toHaveLength(20)
+    for (const terminalVisitorId of terminalVisitorIds) {
+      expect(afterFirst.visitorCycle.visitors[terminalVisitorId]).toMatchObject({ visitorId: terminalVisitorId, state: 'departed' })
+    }
+    const firstContractVisitor = first.game.visitors.find((visitor) => visitor.visitorId === contractsVisitorId)
+    if (!firstContractVisitor || firstContractVisitor.state !== 'available') throw new Error('Expected renewed visitor in projected game view')
+    expect(first.game.visitors.filter((visitor) => terminalVisitorIds.includes(visitor.visitorId))).toHaveLength(20)
+    expect(firstContractVisitor.contractOptions.map((option) => option.optionId)).toEqual(firstOptions.map((option) => option.optionId))
+    const acceptAction = firstContractVisitor.actions.find((action) => action.action === 'accept_contract')
+    if (!acceptAction || acceptAction.action !== 'accept_contract' || !acceptAction.enabled) throw new Error('Expected enabled accept_contract action')
+    expect(acceptAction.execution.bindings.map((binding) => ({ optionId: binding.optionId, expiresAt: binding.expiresAt })))
+      .toEqual(firstOptions.map((option) => ({ optionId: option.optionId, expiresAt: option.expiresAt })))
+    expect(afterFirst.requestRecords).toHaveLength(1)
+    expect(isPersistedCanonical(afterFirst)).toBe(true)
+
+    const replay = await mutateVisitorCycleAtomic(
+      'atomic-user', 'combined-reconcile', 999, { action: 'reconcile_game' },
+      'reconcile:combined:first', mapPersistedGameToGameView, reconcileAtExpiry
+    )
+    expect(replay).toEqual(first)
+    expect(await getPersistedGameV3('atomic-user')).toEqual(afterFirst)
+
+    const second = await mutateVisitorCycleAtomic(
+      'atomic-user', 'combined-reconcile-next', 1, { action: 'reconcile_game' },
+      'reconcile:combined:second', mapPersistedGameToGameView, reconcileAtExpiry
+    )
+    const afterSecond = await getPersistedGameV3('atomic-user')
+    expect(second.revision).toBe(2)
+    expect(afterSecond.revision).toBe(2)
+    expect(afterSecond.gold).toBe(goldAfterFirst)
+    expect(afterSecond.visitorCycle.settlements[settlement.settlementId]).toEqual(firstSettlement)
+    expect(afterSecond.visitorCycle.visitors[contractsVisitorId]!.contractOptions).toEqual(firstOptions)
+    expect(afterSecond.visitHistory.filter((round) => historyIds.includes(round.id))).toHaveLength(20)
+    for (const historyId of historyIds) {
+      expect(afterSecond.visitHistory.some((round) => round.id === historyId)).toBe(true)
+    }
+    expect(Object.values(afterSecond.visitorCycle.visitors).filter((visitor) => terminalVisitorIds.includes(visitor.visitorId))).toHaveLength(20)
+    for (const terminalVisitorId of terminalVisitorIds) {
+      expect(afterSecond.visitorCycle.visitors[terminalVisitorId]).toMatchObject({ visitorId: terminalVisitorId, state: 'departed' })
+    }
+    expect(afterSecond.ledger).toHaveLength(2)
+    expect(afterSecond.ledger[1]).toMatchObject({ requestId: 'combined-reconcile-next', goldDelta: 0 })
+    expect(afterSecond.requestRecords).toHaveLength(2)
+    expect(isPersistedCanonical(afterSecond)).toBe(true)
+  })
+
   it('rejects reuse of an expired requestId before executing another mutation', async () => {
     const { IdempotencyConflictError, mutateSaveGameAtomic, transitionItemAtomic } = await import('../server/utils/savegame')
     const persisted = document as PersistedGameV3
