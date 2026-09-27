@@ -433,6 +433,33 @@ describe('VisitorCycleV2', () => {
     expect(wrapper.text()).toContain('Abandono confirmado.')
   })
 
+  it('prioritizes current visitors and collapses a long terminal history', () => {
+    const game = fixture('integrated-settlement')
+    const current = game.visitors[0]
+    if (!current) throw new Error('Expected current visitor')
+    game.visitors = [current, ...Array.from({ length: 8 }, (_, index) => ({
+      visitorId: `departed-${index}`,
+      name: { key: `v.departed-${index}`, fallback: `Histórico ${index + 1}` },
+      state: 'departed' as const,
+      actions: [],
+      departedAt: '2026-09-14T10:30:00Z',
+      lastExpeditionId: `e-old-${index}`
+    }))]
+    const expiredSettlement = game.settlements[0]
+    if (expiredSettlement) expiredSettlement.state = 'preview_expired'
+
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    const visitorsPanel = wrapper.get('[aria-labelledby="v2-visitors-title"]')
+    const history = visitorsPanel.get('details')
+
+    expect(visitorsPanel.text()).toContain(current.name.fallback)
+    expect(history.attributes('open')).toBeUndefined()
+    expect(history.get('summary').text()).toContain('8')
+    expect(history.findAll('[data-testid="visitor-departed"]')).toHaveLength(8)
+    expect(wrapper.find('[data-testid="settlement-preview_expired"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="v2-visitors-empty"]').exists()).toBe(false)
+  })
+
   it('keeps opaque tokens out of copy and uses safe, unique control identities', () => {
     const game = fixture('integrated-settlement')
     const visitor = game.visitors[0]!

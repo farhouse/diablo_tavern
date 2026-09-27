@@ -74,6 +74,13 @@ const countdownText = computed(() => {
 const reconcileAction = computed(() => enabledAction<ReconcileGameAction>(props.game?.actions, 'reconcile_game'))
 const reconcileDisabledReason = computed(() => actionReason(props.game?.actions ?? [], 'reconcile_game'))
 
+function isHistoricalVisitor(visitor: VisitorView): boolean {
+  return visitor.state === 'departed' || visitor.state === 'dead'
+}
+
+const currentVisitors = computed(() => props.game?.visitors.filter((visitor) => !isHistoricalVisitor(visitor)) ?? [])
+const historicalVisitors = computed(() => props.game?.visitors.filter(isHistoricalVisitor) ?? [])
+
 function label(text: LocalizedText): string {
   return text.fallback
 }
@@ -403,7 +410,10 @@ onBeforeUnmount(() => {
     <div v-else class="v2-cycle__body" data-testid="v2-ready">
       <section class="v2-cycle__panel" aria-labelledby="v2-visitors-title">
         <h3 id="v2-visitors-title">Visitantes</h3>
-        <article v-for="(visitor, visitorIndex) in game.visitors" :key="visitor.visitorId" class="v2-cycle__row" :data-testid="`visitor-${visitor.state}`">
+        <p v-if="currentVisitors.length === 0" class="v2-cycle__muted" data-testid="v2-visitors-empty">
+          No hay visitantes con decisiones pendientes.
+        </p>
+        <article v-for="(visitor, visitorIndex) in currentVisitors" :key="visitor.visitorId" class="v2-cycle__row" :data-testid="`visitor-${visitor.state}`">
           <HeroSprite :hero-class="heroClassForVisitor(visitor.visitorId)" :alt="`Retrato de ${label(visitor.name)}`" />
           <div class="v2-cycle__details">
             <strong>{{ label(visitor.name) }}</strong>
@@ -484,6 +494,19 @@ onBeforeUnmount(() => {
             </span>
           </div>
         </article>
+        <details v-if="historicalVisitors.length" class="v2-cycle__history">
+          <summary>Historial de visitantes ({{ historicalVisitors.length }})</summary>
+          <div class="v2-cycle__history-list">
+            <article v-for="visitor in historicalVisitors" :key="visitor.visitorId" class="v2-cycle__row" :data-testid="`visitor-${visitor.state}`">
+              <HeroSprite :hero-class="heroClassForVisitor(visitor.visitorId)" :alt="`Retrato de ${label(visitor.name)}`" />
+              <div class="v2-cycle__details">
+                <strong>{{ label(visitor.name) }}</strong>
+                <p class="v2-cycle__muted">Estado: {{ stateLabel(visitor.state) }}</p>
+                <p class="v2-cycle__muted">Estado terminal sin acciones disponibles.</p>
+              </div>
+            </article>
+          </div>
+        </details>
       </section>
 
       <section class="v2-cycle__panel" aria-labelledby="v2-expeditions-title">
@@ -698,7 +721,8 @@ onBeforeUnmount(() => {
 .v2-cycle__grid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
 }
 
 .v2-cycle__panel,
@@ -717,6 +741,23 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   flex-wrap: wrap;
   padding: 0.75rem;
+}
+
+.v2-cycle__history {
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
+}
+
+.v2-cycle__history summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding: 0.65rem 0;
+}
+
+.v2-cycle__history-list {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
 }
 
 .v2-cycle__actions {
@@ -819,9 +860,16 @@ onBeforeUnmount(() => {
   }
 
   .v2-cycle__actions,
-  .v2-cycle__button {
+  .v2-cycle__button,
+  .v2-cycle__body,
+  .v2-cycle__grid {
     justify-content: center;
     width: 100%;
+  }
+
+  .v2-cycle__body,
+  .v2-cycle__grid {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -281,3 +281,49 @@ test('shows the published next step for a historical stale contract and reconcil
     await client.close()
   }
 })
+
+test('keeps a long visitor history collapsed on mobile and desktop', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const email = `visitors-v2-layout-${Date.now()}@example.test`
+  const client = new MongoClient(mongoUri!)
+  await client.connect()
+  const database = client.db(mongoDbName!)
+
+  try {
+    await register(page, email)
+    await page.route('**/api/v2/game', async (route) => {
+      const response = await route.fetch()
+      const game = await response.json() as GameSnapshot
+      const historicalVisitor = game.visitors[0]
+      expect(historicalVisitor).toBeDefined()
+      game.visitors = [
+        historicalVisitor!,
+        ...Array.from({ length: 12 }, (_, index) => ({
+          visitorId: `history-${index}`,
+          name: { key: `history-${index}`, fallback: `Histórico ${index + 1}` },
+          state: 'departed' as const,
+          actions: [],
+          departedAt: '2026-09-14T10:30:00Z',
+          lastExpeditionId: `old-expedition-${index}`
+        }))
+      ]
+      await route.fulfill({ response, json: game })
+    })
+
+    await openV2(page)
+    const visitorsPanel = page.locator('[aria-labelledby="v2-visitors-title"]')
+    await expect(visitorsPanel.locator(':scope > [data-testid^="visitor-"]')).toHaveCount(1)
+    expect(await visitorsPanel.locator('details').getAttribute('open')).toBeNull()
+    await expect(visitorsPanel.locator('summary')).toContainText('12')
+    await expect(visitorsPanel.locator('details [data-testid="visitor-departed"]')).toHaveCount(12)
+    expect(await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('visitors-v2-mobile-long-history.png'), fullPage: true })
+
+    await page.setViewportSize({ width: 1280, height: 900 })
+    expect(await visitorsPanel.locator('details').getAttribute('open')).toBeNull()
+    await page.screenshot({ path: testInfo.outputPath('visitors-v2-desktop-long-history.png'), fullPage: true })
+  } finally {
+    await cleanup(database, email)
+    await client.close()
+  }
+})
