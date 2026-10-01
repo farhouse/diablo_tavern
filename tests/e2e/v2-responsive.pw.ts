@@ -12,12 +12,39 @@ type ResponsiveGame = {
 }
 const fixtures = JSON.parse(readFileSync(resolve(process.cwd(), 'contracts/v2-etapa0-4/fixtures.json'), 'utf8')) as { integratedPositiveCases: Array<{ id: string; value: ResponsiveGame }> }
 const game = fixtures.integratedPositiveCases.find((candidate) => candidate.id === 'integrated-system')!.value
+const campGame = fixtures.integratedPositiveCases.find((candidate) => candidate.id === 'integrated-contract')!.value
 const chronicleEntry = { eventId: 'responsive-event', eventKey: 'visitor.arrived', type: 'visitor_arrived', occurredAt: '2026-09-26T12:00:00Z', subject: { kind: 'visitor', id: 'visitor-1' }, text: { key: 'visitor.arrived', fallback: 'Visitante llegado' }, related: { visitorId: 'visitor-1' }, itemProvenance: { zoneId: 'Ashen Vale', lootTableId: 'visitors' } }
 const auth = { user: { id: 'v2-responsive', email: 'v2-responsive@example.test' }, accessToken: 'v2-token', refreshToken: 'v2-refresh' }
 
 for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 'mobile', width: 390, height: 844 }]) {
   test.describe(`V2 responsive ${viewport.name}`, () => {
     test.use({ viewport })
+
+    test('renders the camp as the game hub and opens its services in place', async ({ page }) => {
+      await page.route('**/api/v2/game', (route) => route.fulfill({ json: campGame }))
+      await page.context().addCookies([
+        { name: 'accessToken', value: auth.accessToken, domain: '127.0.0.1', path: '/' },
+        { name: 'refreshToken', value: auth.refreshToken, domain: '127.0.0.1', path: '/' },
+        { name: 'user', value: encodeURIComponent(JSON.stringify(auth.user)), domain: '127.0.0.1', path: '/' }
+      ])
+      await page.addInitScript((session) => { localStorage.setItem('accessToken', session.accessToken); localStorage.setItem('refreshToken', session.refreshToken); localStorage.setItem('user', JSON.stringify(session.user)) }, auth)
+
+      await page.goto('/juego')
+      await expect(page.locator('img[src="/images/game/camp-modular/camp-base.png"]')).toBeVisible()
+      await expect(page.getByRole('region', { name: 'Héroes en el campamento' })).toBeVisible()
+      await expect(page.locator('.hero-portrait').first()).toBeVisible()
+
+      await page.getByRole('button', { name: /Herrería/ }).click()
+      await expect(page.locator('dialog[open]')).toContainText('Herrería')
+      await page.getByRole('button', { name: 'Cerrar' }).click()
+      await expect(page.locator('dialog[open]')).toHaveCount(0)
+
+      await page.getByRole('button', { name: /Tasador/ }).click()
+      await expect(page.locator('dialog[open]')).toContainText('Tasador')
+      await page.keyboard.press('Escape')
+      await expect(page.locator('dialog[open]')).toHaveCount(0)
+      await page.screenshot({ path: test.info().outputPath(`camp-${viewport.name}.png`), fullPage: true })
+    })
 
     test('covers caravan and chronicle states, reduced motion and 400% reflow', async ({ page }) => {
       await page.emulateMedia({ reducedMotion: 'reduce' })

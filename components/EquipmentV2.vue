@@ -14,7 +14,7 @@
         <div class="materials"><span class="eyebrow">Materiales</span><span v-for="(amount, name) in game.resources.materials" :key="name">{{ name }} · {{ amount }}</span></div>
       </section>
 
-      <div v-if="operationState !== 'idle' || errorMessage" class="page-alert" :class="operationState === 'terminal' ? 'page-alert--error' : 'page-alert--success'" role="status" aria-live="polite">
+      <div v-if="operationState !== 'idle' || errorMessage" class="page-alert" :class="statusIsError ? 'page-alert--error' : 'page-alert--success'" :role="statusIsError ? 'alert' : 'status'" :aria-live="statusIsError ? 'assertive' : 'polite'">
         <span>{{ statusCopy }}</span>
         <button v-if="operationState === 'uncertain'" class="btn" type="button" @click="$emit('retry')">Reintentar la misma orden</button>
         <button v-else-if="operationState === 'conflict' || snapshotStale" class="btn" type="button" @click="$emit('reload')">Actualizar partida</button>
@@ -25,7 +25,7 @@
       </section>
 
       <section class="service-board" aria-labelledby="services-title">
-        <div class="section-title"><div><span class="eyebrow">Equipo y servicios</span><h2 id="services-title">Inventario de la caravana</h2></div><span class="tag">Revisión {{ game.revision }}</span></div>
+        <div class="section-title"><div><span class="eyebrow">{{ serviceLabel }}</span><h2 id="services-title">Inventario de la caravana</h2></div><span class="tag">Revisión {{ game.revision }}</span></div>
         <div v-if="!game.items.length" class="card equipment-state"><h3>No tenés objetos guardados</h3><p class="muted">Los objetos que consigas aparecerán acá.</p></div>
         <div v-else class="item-grid">
           <article v-for="item in game.items" :key="item.itemId" class="card equipment-item" :class="`rarity-${item.rarity}`">
@@ -40,7 +40,7 @@
             <ul v-if="item.identification === 'identified'" class="affixes"><li v-for="affix in item.affixes" :key="affix.affixId">{{ affix.name.fallback }} {{ affix.valueText.fallback }}</li><li v-if="item.activeImprint">Impronta: {{ item.activeImprint.name.fallback }}</li></ul>
             <p v-else class="unidentified">Los afijos están ocultos hasta identificar.</p>
             <div class="item-actions">
-              <span v-for="action in item.actions" :key="action.authorizationId" class="action-control">
+              <span v-for="action in visibleActions(item)" :key="action.authorizationId" class="action-control">
                 <button :id="`action-${action.authorizationId}`" class="btn" :disabled="!action.enabled || operationState === 'pending' || operationState === 'uncertain' || snapshotStale" :aria-describedby="!action.enabled ? `reason-${action.authorizationId}` : undefined" @click="choose(item.itemId, action, $event)">{{ action.label.fallback }}</button>
                 <span v-if="!action.enabled" :id="`reason-${action.authorizationId}`" class="action-reason">{{ action.reasonText.fallback }}</span>
               </span>
@@ -49,7 +49,7 @@
         </div>
       </section>
 
-      <section class="jobs" aria-labelledby="jobs-title"><div class="section-title"><h2 id="jobs-title">Trabajos de servicio</h2><span class="muted">El servidor decide cuándo terminan</span></div><div v-if="!game.serviceJobs.length" class="card"><p class="muted">No hay trabajos en curso.</p></div><ul v-else class="job-list"><li v-for="job in game.serviceJobs" :key="job.jobId"><strong>{{ job.service === 'blacksmith' ? 'Herrero' : 'Encantador' }}</strong><span>{{ job.state }}</span><time>{{ jobTime(job) }}</time></li></ul></section>
+      <section v-if="service !== 'appraiser'" class="jobs" aria-labelledby="jobs-title"><div class="section-title"><h2 id="jobs-title">Trabajos de servicio</h2><span class="muted">El servidor decide cuándo terminan</span></div><div v-if="!visibleJobs.length" class="card"><p class="muted">No hay trabajos en curso.</p></div><ul v-else class="job-list"><li v-for="job in visibleJobs" :key="job.jobId"><strong>{{ job.service === 'blacksmith' ? 'Herrero' : 'Encantador' }}</strong><span>{{ job.state }}</span><time>{{ jobTime(job) }}</time></li></ul></section>
     </template>
     </div>
 
@@ -70,7 +70,7 @@ import type { ActionAvailability, GameView, ItemView, ServiceJobView } from '~/s
 import { itemTypeForSlot } from '~/utils/game-assets'
 import { itemAction, selectionFor, type EquipmentAction, type EquipmentEnabledAction, type EquipmentSelection } from '~/utils/v2-equipment-adapter'
 
-const props = defineProps<{ game: GameView | null; loadState: string; operationState: string; errorMessage: string; unavailableReason: string; snapshotStale: boolean }>()
+const props = withDefaults(defineProps<{ game: GameView | null; loadState: string; operationState: string; errorMessage: string; unavailableReason: string; snapshotStale: boolean; service?: 'all' | 'appraiser' | 'blacksmith' }>(), { service: 'all' })
 const emit = defineEmits<{ reload: []; retry: []; action: [selection: EquipmentSelection] }>()
 const content = ref<HTMLElement | null>(null)
 const dialog = ref<HTMLElement | null>(null)
@@ -78,6 +78,9 @@ const cancelButton = ref<HTMLButtonElement | null>(null)
 const trigger = ref<HTMLElement | null>(null)
 const triggerId = ref<string | null>(null)
 const confirmation = ref<{ revision: number; itemId: string; action: EquipmentEnabledAction; option: { optionId: string; description: { fallback: string }; consequences: Array<{ text: { key: string; fallback: string } }>; acknowledgement?: { acknowledgementId: string } } } | null>(null)
+const serviceLabel = computed(() => props.service === 'appraiser' ? 'Tasador' : props.service === 'blacksmith' ? 'Herrería' : 'Equipo y servicios')
+const visibleJobs = computed(() => props.game?.serviceJobs.filter((job) => props.service === 'all' || job.service === props.service) ?? [])
+const statusIsError = computed(() => Boolean(props.errorMessage) || ['terminal', 'conflict', 'uncertain'].includes(props.operationState))
 const statusCopy = computed(() => props.errorMessage || (props.operationState === 'pending' ? 'Procesando la acción…' : props.unavailableReason ? `La acción está bloqueada: ${props.unavailableReason}.` : 'Partida actualizada.'))
 
 watch(() => props.game, (game) => {
@@ -155,6 +158,11 @@ function identification(item: ItemView) { return item.identification === 'identi
 function owner(item: ItemView) { return item.owner.kind === 'caravan' ? 'Propiedad de la caravana' : 'Prestado por visitante' }
 function custody(item: ItemView) { return item.custody.kind === 'stash' ? 'Guardado' : 'En uso' }
 function jobTime(job: ServiceJobView) { return 'completesAt' in job ? new Date(job.completesAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : job.state }
+function visibleActions(item: ItemView) {
+  if (props.service === 'all') return item.actions
+  const allowed = props.service === 'appraiser' ? ['identify_item'] : ['queue_blacksmith_job', 'dismantle_item']
+  return item.actions.filter((action) => allowed.includes(action.action))
+}
 </script>
 
 <style scoped>
