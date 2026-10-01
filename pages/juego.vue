@@ -45,20 +45,25 @@
 
       <section class="hero-dock" aria-label="Héroes en el campamento">
         <p v-if="!activeVisitors.length" class="hero-empty">Las fogatas esperan a los próximos viajeros.</p>
-        <NuxtLink v-for="visitor in activeVisitors" :key="visitor.visitorId" class="hero-portrait" to="/visitors-v2">
+        <button v-for="visitor in activeVisitors" :key="visitor.visitorId" class="hero-portrait" type="button" @click="openVisitor(visitor.visitorId, $event)">
           <HeroSprite :hero-class="heroClassForVisitor(visitor.visitorId)" alt="" />
           <span><strong>{{ visitor.name.fallback }}</strong><small>{{ visitorState(visitor.state) }}</small></span>
-        </NuxtLink>
+        </button>
       </section>
     </section>
 
-    <dialog ref="serviceDialog" class="camp-dialog" aria-labelledby="service-title" @close="onServiceClosed" @click="closeOnBackdrop">
+    <dialog ref="campDialog" class="camp-dialog" :class="{ 'camp-dialog--visitor': selectedVisitor }" aria-labelledby="camp-dialog-title" @close="onDialogClosed" @click="closeOnBackdrop">
       <header class="camp-dialog__header">
-        <div>
-          <h2 id="service-title">{{ service === 'blacksmith' ? 'Herrería' : 'Tasador' }}</h2>
-          <p>{{ service === 'blacksmith' ? 'Mejorá o desmantelá objetos sin abandonar el campamento.' : 'Revelá las propiedades de los objetos sin abandonar el campamento.' }}</p>
+        <div class="camp-dialog__identity">
+          <HeroSprite v-if="selectedVisitor" :hero-class="heroClassForVisitor(selectedVisitor.visitorId)" alt="" />
+          <div>
+            <h2 id="camp-dialog-title">{{ dialogTitle }}</h2>
+            <p>{{ dialogDescription }}</p>
+          </div>
         </div>
-        <button ref="closeButton" class="camp-dialog__close" type="button" autofocus aria-label="Cerrar" @click="closeService">×</button>
+        <button ref="closeButton" class="camp-dialog__close" type="button" autofocus aria-label="Cerrar" @click="closeDialog">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
       </header>
       <EquipmentV2
         v-if="service"
@@ -73,6 +78,25 @@
         @retry="game.retryEquipmentUncertain"
         @action="game.runEquipmentAction"
       />
+      <VisitorCycleV2
+        v-else-if="selectedVisitor"
+        :visitor-id="selectedVisitor.visitorId"
+        :game="game.game"
+        :load-state="game.loadState"
+        :operation-state="game.operationState"
+        :error-message="game.errorMessage"
+        :unavailable-reason="game.unavailableReason"
+        :snapshot-stale="game.snapshotStale"
+        @accept-contract="game.acceptContract"
+        @start-expedition="game.startExpedition"
+        @reconcile-game="game.reconcileGame"
+        @reconcile-due-transition="game.reconcileDueTransition"
+        @confirm-settlement="game.confirmSettlement"
+        @assign-recovery="game.assignRecovery"
+        @abandon-recovery="game.abandonRecovery"
+        @retry="game.retryUncertain"
+        @reload="game.retryConflictReload"
+      />
     </dialog>
   </main>
 </template>
@@ -81,6 +105,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import EquipmentV2 from '~/components/EquipmentV2.vue'
 import HeroSprite from '~/components/HeroSprite.vue'
+import VisitorCycleV2 from '~/components/VisitorCycleV2.vue'
 import type { ActionAvailability } from '~/shared/types/v2-game-view'
 import { heroClassForVisitor } from '~/utils/game-assets'
 import { useGameV2Store } from '~/stores/game-v2'
@@ -89,10 +114,14 @@ type CampService = 'appraiser' | 'blacksmith'
 
 const game = useGameV2Store()
 const service = ref<CampService | null>(null)
-const serviceDialog = ref<HTMLDialogElement | null>(null)
+const selectedVisitorId = ref<string | null>(null)
+const campDialog = ref<HTMLDialogElement | null>(null)
 const closeButton = ref<HTMLButtonElement | null>(null)
-const serviceTrigger = ref<HTMLElement | null>(null)
+const dialogTrigger = ref<HTMLElement | null>(null)
 const activeVisitors = computed(() => game.game?.visitors.filter((visitor) => !['departed', 'dead'].includes(visitor.state)).slice(0, 4) ?? [])
+const selectedVisitor = computed(() => game.game?.visitors.find((visitor) => visitor.visitorId === selectedVisitorId.value) ?? null)
+const dialogTitle = computed(() => selectedVisitor.value?.name.fallback ?? (service.value === 'blacksmith' ? 'Herrería' : 'Tasador'))
+const dialogDescription = computed(() => selectedVisitor.value ? visitorState(selectedVisitor.value.state) : service.value === 'blacksmith' ? 'Mejorá o desmantelá objetos sin abandonar el campamento.' : 'Revelá las propiedades de los objetos sin abandonar el campamento.')
 
 function enabled(actions: readonly ActionAvailability[], action: ActionAvailability['action']) {
   return actions.some((candidate) => candidate.action === action && candidate.enabled)
@@ -118,21 +147,33 @@ async function reload() {
 }
 
 async function openService(nextService: CampService, event: Event) {
-  serviceTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  selectedVisitorId.value = null
   service.value = nextService
+  await openDialog(event)
+}
+
+async function openVisitor(visitorId: string, event: Event) {
+  service.value = null
+  selectedVisitorId.value = visitorId
+  await openDialog(event)
+}
+
+async function openDialog(event: Event) {
+  dialogTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   await nextTick()
-  serviceDialog.value?.showModal()
+  campDialog.value?.showModal()
   closeButton.value?.focus()
 }
 
-function closeService() { serviceDialog.value?.close() }
-function closeOnBackdrop(event: MouseEvent) { if (event.target === serviceDialog.value) closeService() }
-function onServiceClosed() {
+function closeDialog() { campDialog.value?.close() }
+function closeOnBackdrop(event: MouseEvent) { if (event.target === campDialog.value) closeDialog() }
+function onDialogClosed() {
   service.value = null
-  nextTick(() => serviceTrigger.value?.focus())
+  selectedVisitorId.value = null
+  nextTick(() => dialogTrigger.value?.focus())
 }
 function visitorState(state: string) {
-  return ({ available: 'Disponible', negotiating: 'Negociando', contracted: 'Contratado', expedition: 'En expedición', settlement: 'De regreso', recovery: 'En recuperación' } as Record<string, string>)[state] ?? state
+  return ({ available: 'Disponible', negotiating: 'Negociando', contracted: 'Contratado', away: 'En expedición', awaiting_settlement: 'De regreso' } as Record<string, string>)[state] ?? state
 }
 </script>
 
@@ -169,7 +210,7 @@ function visitorState(state: string) {
 .next-order span { color: #d2c3ac; font-size: .82rem; }
 .next-order a { border: 1px solid #9d7444; color: #fff3d4; flex: 0 0 auto; min-height: 2.75rem; padding: .65rem .8rem; }
 .hero-dock { align-items: stretch; background: linear-gradient(180deg, rgba(4, 5, 8, .92), #08090d); border-top: 2px solid #6c5438; bottom: 0; display: flex; gap: .45rem; height: 17%; left: 0; padding: .5rem max(.75rem, 20%); position: absolute; right: 0; z-index: 30; }
-.hero-portrait { align-items: end; border: 1px solid #554a3a; display: flex; flex: 1 1 0; gap: .5rem; justify-content: center; min-width: 0; padding: .25rem .45rem; }
+.hero-portrait { align-items: end; appearance: none; background: transparent; border: 1px solid #554a3a; color: inherit; cursor: pointer; display: flex; flex: 1 1 0; gap: .5rem; justify-content: center; min-width: 0; padding: .25rem .45rem; text-align: left; }
 .hero-portrait:hover, .hero-portrait:focus-visible { background: #1c1711; border-color: #f0c26a; }
 .hero-portrait :deep(.hero-sprite) { height: min(8vw, 6rem); width: min(5.3vw, 4rem); }
 .hero-portrait span { display: grid; min-width: 0; padding-bottom: .25rem; }
@@ -177,13 +218,23 @@ function visitorState(state: string) {
 .hero-portrait small { color: #bdb1a0; }
 .hero-empty { align-self: center; color: #bdb1a0; margin: auto; }
 .camp-loading { align-items: center; background: url('/images/game/camp-modular/camp-base.png') center / cover; border: 1px solid #5c4730; display: flex; justify-content: center; min-height: 38rem; text-shadow: 0 2px 4px #000; }
-.camp-dialog { background: #17130f; border: 1px solid #a77a45; color: var(--text); max-height: 88vh; max-width: 76rem; overflow: auto; padding: 0; width: calc(100% - 2rem); }
-.camp-dialog::backdrop { background: rgba(3, 4, 7, .82); backdrop-filter: blur(3px); }
-.camp-dialog__header { align-items: start; background: #0f0d0b; border-bottom: 1px solid #5c4730; display: flex; justify-content: space-between; padding: 1rem 1.25rem; position: sticky; top: 0; z-index: 5; }
-.camp-dialog__header h2 { color: #f0c26a; font-family: Georgia, 'Times New Roman', serif; font-size: 1.75rem; margin: 0; }
-.camp-dialog__header p { color: #bdb1a0; margin: .25rem 0 0; }
-.camp-dialog__close { background: transparent; border: 1px solid #5c4730; color: #f4e8d2; cursor: pointer; font-size: 1.6rem; height: 2.75rem; width: 2.75rem; }
+.camp-dialog { animation: dialog-enter 180ms cubic-bezier(.16, 1, .3, 1); background: linear-gradient(135deg, rgba(35, 27, 19, .98), rgba(12, 11, 10, .99)); border: 2px solid #9d7444; box-shadow: 0 1.5rem 5rem rgba(0, 0, 0, .75), inset 0 0 0 1px #2d2218; color: var(--text); margin: auto; max-height: 90dvh; max-width: 70rem; overflow: auto; padding: 0; scrollbar-color: #80613d #100d0a; width: calc(100% - 2rem); }
+.camp-dialog--visitor { max-width: 52rem; }
+.camp-dialog::backdrop { background: rgba(3, 4, 7, .88); backdrop-filter: blur(5px) saturate(.65); }
+.camp-dialog__header { align-items: center; background: linear-gradient(90deg, rgba(9, 8, 8, .96), rgba(31, 20, 12, .88)), url('/images/game/camp-modular/camp-base.png') center 42% / cover; border-bottom: 1px solid #8d683e; box-shadow: 0 .75rem 2rem rgba(0, 0, 0, .38); display: flex; justify-content: space-between; min-height: 6rem; padding: 1rem 1.25rem; position: sticky; top: 0; z-index: 5; }
+.camp-dialog__identity { align-items: center; display: flex; gap: 1rem; min-width: 0; text-shadow: 0 2px 4px #000; }
+.camp-dialog__identity :deep(.hero-sprite) { flex: 0 0 auto; height: 5.5rem; width: 3.7rem; }
+.camp-dialog__header h2 { color: #f0c26a; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(1.55rem, 3vw, 2.15rem); letter-spacing: -.02em; margin: 0; }
+.camp-dialog__header p { color: #d8c8ae; margin: .25rem 0 0; }
+.camp-dialog__close { align-items: center; background: rgba(8, 8, 10, .72); border: 1px solid #80613d; color: #f4e8d2; cursor: pointer; display: flex; flex: 0 0 auto; height: 2.75rem; justify-content: center; width: 2.75rem; }
+.camp-dialog__close:hover { background: #2a1d14; border-color: #f0c26a; }
+.camp-dialog__close svg { fill: none; height: 1.25rem; stroke: currentColor; stroke-linecap: round; stroke-width: 1.75; width: 1.25rem; }
 .camp-dialog :deep(.equipment-v2) { padding: 1.25rem; }
+.camp-dialog :deep(.v2-cycle) { padding: 1.25rem; }
+.camp-dialog :deep(.equipment-summary) { background: rgba(8, 8, 10, .58); border-color: #5c4730; }
+.camp-dialog :deep(.equipment-item) { background: rgba(13, 11, 9, .9); border-color: #463827; border-top-color: var(--rarity-color, #80613d); box-shadow: 0 .75rem 1.5rem rgba(0, 0, 0, .22); }
+
+@keyframes dialog-enter { from { opacity: 0; transform: translateY(.75rem) scale(.985); } }
 
 @media (max-width: 900px) {
   .game-home { padding-inline: .5rem; }
@@ -209,5 +260,12 @@ function visitorState(state: string) {
   .next-order { align-items: center; gap: .45rem; }
   .next-order span { display: none; }
   .next-order a { text-align: center; }
+  .camp-dialog { max-height: 94dvh; width: calc(100% - 1rem); }
+  .camp-dialog__header { min-height: 5rem; padding: .75rem; }
+  .camp-dialog__identity { gap: .65rem; }
+  .camp-dialog__identity :deep(.hero-sprite) { height: 4rem; width: 2.7rem; }
+  .camp-dialog :deep(.equipment-v2), .camp-dialog :deep(.v2-cycle) { padding: .75rem; }
 }
+
+@media (prefers-reduced-motion: reduce) { .camp-dialog { animation: none; } }
 </style>

@@ -26,6 +26,7 @@ const props = defineProps<{
   unavailableReason?: string
   snapshotStale?: boolean
   nowMs?: number
+  visitorId?: string
 }>()
 
 const emit = defineEmits<{
@@ -78,8 +79,13 @@ function isHistoricalVisitor(visitor: VisitorView): boolean {
   return visitor.state === 'departed' || visitor.state === 'dead'
 }
 
-const currentVisitors = computed(() => props.game?.visitors.filter((visitor) => !isHistoricalVisitor(visitor)) ?? [])
-const historicalVisitors = computed(() => props.game?.visitors.filter(isHistoricalVisitor) ?? [])
+const visibleVisitors = computed(() => props.game?.visitors.filter((visitor) => !props.visitorId || visitor.visitorId === props.visitorId) ?? [])
+const currentVisitors = computed(() => visibleVisitors.value.filter((visitor) => !isHistoricalVisitor(visitor)))
+const historicalVisitors = computed(() => visibleVisitors.value.filter(isHistoricalVisitor))
+const visibleExpeditions = computed(() => props.game?.expeditions.filter((expedition) => !props.visitorId || expedition.visitorId === props.visitorId) ?? [])
+const visibleExpeditionIds = computed(() => new Set(visibleExpeditions.value.map((expedition) => expedition.expeditionId)))
+const visibleSettlements = computed(() => props.game?.settlements.filter((settlement) => !props.visitorId || visibleExpeditionIds.value.has(settlement.expeditionId)) ?? [])
+const visibleRecoveries = computed(() => props.game?.recoveries.filter((recovery) => !props.visitorId || visibleExpeditionIds.value.has(recovery.sourceExpeditionId) || ('assignedVisitorId' in recovery && recovery.assignedVisitorId === props.visitorId)) ?? [])
 
 function label(text: LocalizedText): string {
   return text.fallback
@@ -372,10 +378,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="v2-cycle" aria-labelledby="v2-cycle-title">
-    <header class="v2-cycle__header">
+  <section
+    class="v2-cycle"
+    :class="{ 'v2-cycle--focused': visitorId }"
+    :aria-labelledby="!visitorId || visibleExpeditions.length ? 'v2-cycle-title' : undefined"
+    :aria-label="visitorId && !visibleExpeditions.length ? 'Acciones del visitante' : undefined"
+  >
+    <header v-if="!visitorId || visibleExpeditions.length" class="v2-cycle__header">
       <div>
-        <h2 id="v2-cycle-title">Ciclo de visitantes</h2>
+        <h2 id="v2-cycle-title">{{ visitorId ? 'Estado del viaje' : 'Ciclo de visitantes' }}</h2>
         <p v-if="game" class="v2-cycle__muted">
           {{ countdownText }}
         </p>
@@ -394,7 +405,7 @@ onBeforeUnmount(() => {
       </span>
     </header>
 
-    <p class="v2-cycle__status" aria-live="polite" data-testid="v2-status">
+    <p v-if="!visitorId || operationState !== 'idle' || errorMessage" class="v2-cycle__status" aria-live="polite" data-testid="v2-status">
       {{ statusText }}
     </p>
 
@@ -409,14 +420,14 @@ onBeforeUnmount(() => {
 
     <div v-else class="v2-cycle__body" data-testid="v2-ready">
       <section class="v2-cycle__panel" aria-labelledby="v2-visitors-title">
-        <h3 id="v2-visitors-title">Visitantes</h3>
+        <h3 id="v2-visitors-title">{{ visitorId ? 'Decisión actual' : 'Visitantes' }}</h3>
         <p v-if="currentVisitors.length === 0" class="v2-cycle__muted" data-testid="v2-visitors-empty">
           No hay visitantes con decisiones pendientes.
         </p>
         <article v-for="(visitor, visitorIndex) in currentVisitors" :key="visitor.visitorId" class="v2-cycle__row" :data-testid="`visitor-${visitor.state}`">
-          <HeroSprite :hero-class="heroClassForVisitor(visitor.visitorId)" :alt="`Retrato de ${label(visitor.name)}`" />
+          <HeroSprite v-if="!visitorId" :hero-class="heroClassForVisitor(visitor.visitorId)" :alt="`Retrato de ${label(visitor.name)}`" />
           <div class="v2-cycle__details">
-            <strong>{{ label(visitor.name) }}</strong>
+            <strong v-if="!visitorId">{{ label(visitor.name) }}</strong>
             <p class="v2-cycle__muted">Estado: {{ stateLabel(visitor.state) }}</p>
             <p v-if="visitor.state === 'departed' || visitor.state === 'dead'" class="v2-cycle__muted">
               Estado terminal sin acciones disponibles.
@@ -496,9 +507,9 @@ onBeforeUnmount(() => {
         </article>
       </section>
 
-      <section class="v2-cycle__panel" aria-labelledby="v2-expeditions-title">
+      <section v-if="!visitorId || visibleExpeditions.length" class="v2-cycle__panel" aria-labelledby="v2-expeditions-title">
         <h3 id="v2-expeditions-title">Expediciones</h3>
-        <article v-for="expedition in game.expeditions" :key="expedition.expeditionId" class="v2-cycle__row" :data-testid="`expedition-${expedition.state}`">
+        <article v-for="expedition in visibleExpeditions" :key="expedition.expeditionId" class="v2-cycle__row" :data-testid="`expedition-${expedition.state}`">
           <div>
             <strong>{{ expeditionTitle(expedition.visitorId) }}</strong>
             <p class="v2-cycle__muted">Estado: {{ stateLabel(expedition.state) }}</p>
@@ -512,9 +523,9 @@ onBeforeUnmount(() => {
         </article>
       </section>
 
-      <section class="v2-cycle__panel" aria-labelledby="v2-settlements-title">
+      <section v-if="!visitorId || visibleSettlements.length" class="v2-cycle__panel" aria-labelledby="v2-settlements-title">
         <h3 id="v2-settlements-title">Resultados</h3>
-        <article v-for="(settlement, settlementIndex) in game.settlements" :key="settlement.settlementId" class="v2-cycle__row" :data-testid="`settlement-${settlement.state}`">
+        <article v-for="(settlement, settlementIndex) in visibleSettlements" :key="settlement.settlementId" class="v2-cycle__row" :data-testid="`settlement-${settlement.state}`">
           <div>
             <strong>{{ settlementTitle(settlement) }}</strong>
             <p class="v2-cycle__muted">Estado: {{ stateLabel(settlement.state) }}</p>
@@ -568,9 +579,9 @@ onBeforeUnmount(() => {
         </article>
       </section>
 
-      <section class="v2-cycle__panel" aria-labelledby="v2-recoveries-title">
+      <section v-if="!visitorId || visibleRecoveries.length" class="v2-cycle__panel" aria-labelledby="v2-recoveries-title">
         <h3 id="v2-recoveries-title">Recuperaciones</h3>
-        <article v-for="(recovery, recoveryIndex) in game.recoveries" :key="recovery.recoveryId" class="v2-cycle__row" :data-testid="`recovery-${recovery.state}`">
+        <article v-for="(recovery, recoveryIndex) in visibleRecoveries" :key="recovery.recoveryId" class="v2-cycle__row" :data-testid="`recovery-${recovery.state}`">
           <div>
             <strong>{{ recoveryTitle(recovery) }}</strong>
             <p class="v2-cycle__muted">Estado: {{ stateLabel(recovery.state) }}</p>
@@ -711,6 +722,21 @@ onBeforeUnmount(() => {
 .v2-cycle {
   display: grid;
   gap: 1rem;
+}
+
+.v2-cycle--focused .v2-cycle__body {
+  grid-template-columns: 1fr;
+}
+
+.v2-cycle--focused .v2-cycle__panel {
+  background: rgba(20, 17, 13, .92);
+  border-color: #5c4730;
+  border-radius: 0;
+}
+
+.v2-cycle--focused .v2-cycle__row {
+  background: rgba(8, 8, 10, .7);
+  border-color: #463827;
 }
 
 .v2-cycle__header,

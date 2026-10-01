@@ -29,7 +29,7 @@ describe('game home', () => {
 
   it('guides a new player to the next contract without exposing V2 jargon', () => {
     store.game = fixture('integrated-contract')
-    const wrapper = mount(GameHome, { global: { stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' }, EquipmentV2: true, HeroSprite: true } } })
+    const wrapper = mount(GameHome, { global: { stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' }, EquipmentV2: true, HeroSprite: true, VisitorCycleV2: true } } })
 
     expect(wrapper.get('img[src="/images/game/camp-modular/camp-base.png"]')).toBeDefined()
     expect(wrapper.text()).toContain('Diablo Tavern')
@@ -37,13 +37,14 @@ describe('game home', () => {
     expect(wrapper.get('.next-order a[href="/visitors-v2"]').text()).toBe('Ver visitantes')
     expect(wrapper.text()).toContain('Herrería')
     expect(wrapper.text()).toContain('Tasador')
+    expect(wrapper.get('.hero-portrait').element.tagName).toBe('BUTTON')
     expect(wrapper.text()).not.toContain('snapshot')
     expect(wrapper.text()).not.toContain('V2')
   })
 
   it('prioritizes resolving a ready expedition result', () => {
     store.game = fixture('integrated-settlement')
-    const wrapper = mount(GameHome, { global: { stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' }, EquipmentV2: true, HeroSprite: true } } })
+    const wrapper = mount(GameHome, { global: { stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' }, EquipmentV2: true, HeroSprite: true, VisitorCycleV2: true } } })
 
     expect(wrapper.text()).toContain('Confirmá el resultado de una expedición')
     expect(wrapper.get('.next-order a[href="/visitors-v2"]').text()).toBe('Ver resultado')

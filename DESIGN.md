@@ -81,7 +81,7 @@ Herrería y Tasador usan un `dialog` modal con fondo atenuado, encabezado fijo y
 
 ### Héroes
 
-Los héroes visibles representan visitantes activos, no unidades contratables. Cada retrato combina sprite, nombre y estado textual, enlaza al flujo de visitantes y admite truncado seguro sin perder el nombre accesible.
+Los héroes visibles representan visitantes activos, no unidades contratables. Cada retrato combina sprite, nombre y estado textual, abre su flujo contextual en un diálogo sin abandonar el campamento y admite truncado seguro sin perder el nombre accesible.
 
 ### Estado y acciones
 
