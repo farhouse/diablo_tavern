@@ -185,7 +185,7 @@ describe('atomic persisted-game mutation', () => {
     let setupId = 0
     const setupDependencies = {
       now: () => setupNow,
-      random: () => 0.9,
+      random: () => 0.1,
       uuid: () => `combined-${++setupId}`
     }
     const settlementVisitor = initial.visitorCycle.visitors[settlementVisitorId]!
@@ -242,6 +242,39 @@ describe('atomic persisted-game mutation', () => {
       delete terminal.busyRecoveryId
       combined.visitorCycle.visitors[terminal.visitorId] = terminal
     }
+    const evictedVisitor = structuredClone(initial.visitRound.slots.find((slot) => slot.visitor)?.visitor)
+    if (!evictedVisitor) throw new Error('Expected a legacy visitor')
+    const evictedOption = evictedVisitor.commissionOptions[0]
+    if (!evictedOption) throw new Error('Expected a legacy commission option')
+    evictedVisitor.id = 'combined-evicted-visitor'
+    evictedVisitor.name = 'Evicted Visitor'
+    evictedVisitor.state = 'departed'
+    evictedVisitor.offers = []
+    evictedVisitor.buyQuotes = {}
+    evictedVisitor.trades = []
+    evictedVisitor.commissionOptions = []
+    evictedVisitor.commission = {
+      ...evictedOption, id: 'combined-orphan-expedition', status: 'claimed',
+      startedAt: setupNow.toISOString(), finishesAt: setupNow.toISOString(), outcomeRoll: 0.1,
+      outcome: 'complete', rewardGold: evictedOption.fullRewardGold, claimedAt: setupNow.toISOString()
+    }
+    evictedVisitor.departedAt = setupNow.toISOString()
+    const evictedHistoryId = combined.visitHistory[19]!.id
+    const retainedHistoryIds = historyIds.filter((id) => id !== evictedHistoryId)
+    combined.visitHistory[19]!.slots = [{ id: 'combined-evicted-slot', visitor: evictedVisitor }]
+    combined.expeditionsById['combined-orphan-expedition'] = {
+      id: 'combined-orphan-expedition', itemIds: [], projection: {
+        kind: 'expedition', visitorId: evictedVisitor.id,
+        contractId: 'combined-orphan-expedition', startsAt: setupNow.toISOString()
+      }
+    }
+    combined.settlementsById['combined-orphan-settlement'] = {
+      id: 'combined-orphan-settlement', itemIds: [], projection: {
+        kind: 'settlement', expeditionId: 'combined-orphan-expedition',
+        outcome: 'returned', appliedAt: setupNow.toISOString()
+      }
+    }
+    expect(isPersistedCanonical(combined)).toBe(true)
     combined.revision = 0
     document = combined
 
@@ -270,8 +303,9 @@ describe('atomic persisted-game mutation', () => {
     expect(afterFirst.gold).toBe(initial.gold + 31)
     expect(afterFirst.ledger).toHaveLength(1)
     expect(afterFirst.ledger[0]).toMatchObject({ requestId: 'combined-reconcile', goldDelta: 31 })
-    expect(afterFirst.visitHistory.filter((round) => historyIds.includes(round.id))).toHaveLength(20)
-    for (const historyId of historyIds) {
+    expect(afterFirst.visitHistory.filter((round) => retainedHistoryIds.includes(round.id))).toHaveLength(retainedHistoryIds.length)
+    expect(afterFirst.visitHistory.some((round) => round.id === evictedHistoryId)).toBe(false)
+    for (const historyId of retainedHistoryIds) {
       expect(afterFirst.visitHistory.some((round) => round.id === historyId)).toBe(true)
     }
     expect(Object.values(afterFirst.visitorCycle.visitors).filter((visitor) => terminalVisitorIds.includes(visitor.visitorId))).toHaveLength(20)
@@ -287,6 +321,8 @@ describe('atomic persisted-game mutation', () => {
     expect(acceptAction.execution.bindings.map((binding) => ({ optionId: binding.optionId, expiresAt: binding.expiresAt })))
       .toEqual(firstOptions.map((option) => ({ optionId: option.optionId, expiresAt: option.expiresAt })))
     expect(afterFirst.requestRecords).toHaveLength(1)
+    expect(afterFirst.expeditionsById).not.toHaveProperty('combined-orphan-expedition')
+    expect(afterFirst.settlementsById).not.toHaveProperty('combined-orphan-settlement')
     expect(isPersistedCanonical(afterFirst)).toBe(true)
 
     const replay = await mutateVisitorCycleAtomic(
@@ -306,8 +342,9 @@ describe('atomic persisted-game mutation', () => {
     expect(afterSecond.gold).toBe(goldAfterFirst)
     expect(afterSecond.visitorCycle.settlements[settlement.settlementId]).toEqual(firstSettlement)
     expect(afterSecond.visitorCycle.visitors[contractsVisitorId]!.contractOptions).toEqual(firstOptions)
-    expect(afterSecond.visitHistory.filter((round) => historyIds.includes(round.id))).toHaveLength(20)
-    for (const historyId of historyIds) {
+    expect(afterSecond.visitHistory.filter((round) => retainedHistoryIds.includes(round.id))).toHaveLength(retainedHistoryIds.length)
+    expect(afterSecond.visitHistory.some((round) => round.id === evictedHistoryId)).toBe(false)
+    for (const historyId of retainedHistoryIds) {
       expect(afterSecond.visitHistory.some((round) => round.id === historyId)).toBe(true)
     }
     expect(Object.values(afterSecond.visitorCycle.visitors).filter((visitor) => terminalVisitorIds.includes(visitor.visitorId))).toHaveLength(20)

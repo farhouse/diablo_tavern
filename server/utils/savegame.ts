@@ -521,6 +521,13 @@ export async function mutateVisitorCycleAtomic(
     const scopedDependencies = { ...dependencies, now: () => now }
     const next = applyVisitorCycleCommand(current, command, scopedDependencies)
     if (command.action === 'reconcile_game') reconcileCaravanMaintenance(next, now)
+    pruneEmptyOrphanedLifecycle(
+      next.expeditionsById,
+      next.settlementsById,
+      next.recoveriesById,
+      next.visitRound,
+      next.visitHistory
+    )
     next.revision = expectedRevision + 1
     next.updatedAt = now.toISOString()
     const response: CommandSuccess = {
