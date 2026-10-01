@@ -5,7 +5,11 @@ import { resolve } from 'node:path'
 const expectedSha = process.env.PLAYWRIGHT_EXPECTED_SHA
 if (!expectedSha) throw new Error('PLAYWRIGHT_EXPECTED_SHA must be supplied by playwright.config.ts.')
 
-type ResponsiveGame = { revision: number; actions: Array<{ action: string; execution: { options: Array<{ optionId: string }> } }> }
+type ResponsiveGame = {
+  revision: number
+  actions: Array<{ action: string; execution: { options: Array<{ optionId: string }> } }>
+  caravan: { upgrades: unknown[] }
+}
 const fixtures = JSON.parse(readFileSync(resolve(process.cwd(), 'contracts/v2-etapa0-4/fixtures.json'), 'utf8')) as { integratedPositiveCases: Array<{ id: string; value: ResponsiveGame }> }
 const game = fixtures.integratedPositiveCases.find((candidate) => candidate.id === 'integrated-system')!.value
 const chronicleEntry = { eventId: 'responsive-event', eventKey: 'visitor.arrived', type: 'visitor_arrived', occurredAt: '2026-09-26T12:00:00Z', subject: { kind: 'visitor', id: 'visitor-1' }, text: { key: 'visitor.arrived', fallback: 'Visitante llegado' }, related: { visitorId: 'visitor-1' }, itemProvenance: { zoneId: 'Ashen Vale', lootTableId: 'visitors' } }
