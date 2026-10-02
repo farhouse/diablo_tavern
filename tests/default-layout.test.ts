@@ -18,6 +18,7 @@ describe('default layout session isolation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.stubGlobal('navigateTo', vi.fn())
+    vi.stubGlobal('useRoute', () => ({ path: '/visitors-v2' }))
   })
 
   it('clears both legacy and V2 snapshots on logout', async () => {
@@ -49,5 +50,12 @@ describe('default layout session isolation', () => {
     expect(wrapper.text()).toContain('Inicio')
     expect(wrapper.text()).toContain('Visitantes')
     expect(wrapper.text()).toContain('Caravana')
+  })
+
+  it('lets the camp map own section navigation', () => {
+    vi.stubGlobal('useRoute', () => ({ path: '/juego' }))
+    const wrapper = mount(DefaultLayout, { global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } } })
+    expect(wrapper.find('nav').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Salir')
   })
 })

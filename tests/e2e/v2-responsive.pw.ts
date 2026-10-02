@@ -25,7 +25,9 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     test.use({ viewport })
 
     test('renders the camp as the game hub and opens its services in place', async ({ page }) => {
-      await page.route('**/api/v2/game', (route) => route.fulfill({ json: campGame }))
+      let activeCampGame: GameView = campGame
+      await page.route('**/api/v2/game', (route) => route.fulfill({ json: activeCampGame }))
+      await page.route('**/api/v2/chronicle?limit=30', (route) => route.fulfill({ json: { entries: [chronicleEntry], nextCursor: null } }))
       await page.context().addCookies([
         { name: 'accessToken', value: auth.accessToken, domain: '127.0.0.1', path: '/' },
         { name: 'refreshToken', value: auth.refreshToken, domain: '127.0.0.1', path: '/' },
@@ -37,6 +39,7 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       await expect(page.locator('img[src="/images/game/camp-modular/camp-base.png"]')).toBeVisible()
       await expect(page.getByRole('region', { name: 'Héroes en el campamento' })).toBeVisible()
       await expect(page.locator('.hero-portrait').first()).toBeVisible()
+      await expect(page.locator('.topbar nav')).toHaveCount(0)
 
       const hero = page.locator('.hero-portrait').first()
       await hero.click()
@@ -53,6 +56,37 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       await page.getByRole('button', { name: 'Volver al campamento' }).click()
       await expect(page).toHaveURL(/\/juego$/)
       await expect(hero).toBeFocused()
+
+      const caravan = page.locator('.camp-place--wagon')
+      await caravan.click()
+      await expect(page.locator('dialog[open]')).toContainText('Mejoras de caravana')
+      await expect(page.locator('dialog[open]')).toHaveCSS('transform', 'none')
+      await expect(page).toHaveURL(/\/juego$/)
+      await page.screenshot({ path: test.info().outputPath(`caravan-dialog-${viewport.name}.png`), fullPage: true })
+      await page.getByRole('button', { name: 'Cerrar' }).click()
+      await expect(caravan).toBeFocused()
+
+      const tavern = page.locator('.camp-place--tavern')
+      await tavern.click()
+      await expect(page.locator('dialog[open]')).toContainText('Ciclo de visitantes')
+      await expect(page.locator('dialog[open]')).toHaveCSS('transform', 'none')
+      await expect(page).toHaveURL(/\/juego$/)
+      await page.screenshot({ path: test.info().outputPath(`tavern-dialog-${viewport.name}.png`), fullPage: true })
+      await page.keyboard.press('Escape')
+      await expect(tavern).toBeFocused()
+
+      const chronicle = page.locator('.camp-place--chronicle')
+      await chronicle.click()
+      await expect(page.locator('dialog[open]')).toContainText('Visitante llegado')
+      await expect(page.locator('dialog[open]')).toHaveCSS('transform', 'none')
+      await expect(page).toHaveURL(/\/juego$/)
+      await page.screenshot({ path: test.info().outputPath(`chronicle-dialog-${viewport.name}.png`), fullPage: true })
+      await page.getByRole('button', { name: 'Cerrar' }).click()
+      await expect(chronicle).toBeFocused()
+
+      await page.getByRole('button', { name: 'Ver visitantes' }).click()
+      await expect(page.locator('dialog[open]')).toContainText('Ciclo de visitantes')
+      await page.getByRole('button', { name: 'Cerrar' }).click()
 
       const blacksmith = page.getByRole('button', { name: /Herrería/ })
       await blacksmith.click()
@@ -73,6 +107,26 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       await page.screenshot({ path: test.info().outputPath(`appraiser-dialog-${viewport.name}.png`), fullPage: true })
       await page.keyboard.press('Escape')
       await expect(page.locator('dialog[open]')).toHaveCount(0)
+
+      activeCampGame = { ...campGame, visitors: [] }
+      await page.getByRole('button', { name: 'Actualizar', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Ver equipo' })).toBeVisible()
+      await page.getByRole('button', { name: 'Ver equipo' }).click()
+      await expect(page.locator('dialog[open]')).toContainText('Inventario de la caravana')
+      await expect(page).toHaveURL(/\/juego$/)
+      await page.getByRole('button', { name: 'Cerrar' }).click()
+
+      activeCampGame = game as unknown as GameView
+      await page.getByRole('button', { name: 'Actualizar', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Ver caravana' })).toBeVisible()
+      await page.getByRole('button', { name: 'Ver caravana' }).click()
+      await page.getByRole('button', { name: 'Revisar mejora' }).first().click()
+      await expect(page.getByRole('alertdialog')).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('alertdialog')).toHaveCount(0)
+      await expect(page.locator('dialog[open]')).toBeVisible()
+      await page.getByRole('button', { name: 'Cerrar' }).click()
+
       await page.screenshot({ path: test.info().outputPath(`camp-${viewport.name}.png`), fullPage: true })
     })
 

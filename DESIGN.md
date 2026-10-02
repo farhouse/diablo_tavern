@@ -73,13 +73,15 @@ Controles y tarjetas usan curvas discretas; las superficies ligadas al mapa y lo
 
 ### Lugares del campamento
 
-Cada edificio es navegación contextual: zona completa clicable, nombre persistente y descripción secundaria. Hover y foco comparten borde dorado y realce interior. Caravana, Taberna y Mesa de campaña navegan; Herrería y Tasador abren servicios sin abandonar el campamento.
+Cada edificio es navegación contextual: zona completa clicable, nombre persistente y descripción secundaria. Hover y foco comparten borde dorado y realce interior. Caravana, Taberna, Herrería, Tasador y Mesa de campaña abren su contenido en el mismo marco modal sin abandonar el campamento. La próxima acción abre también su lugar correspondiente. En la portada, el mapa reemplaza la navegación superior entre secciones; las rutas completas siguen disponibles para accesos directos.
 
 ### Diálogos de servicio
 
 Herrería y Tasador usan un `dialog` modal con fondo atenuado, encabezado fijo y cierre explícito. Al abrir, el foco entra al diálogo; Escape, botón y backdrop permiten cerrar; al cerrar, el foco vuelve al edificio que lo abrió. Confirmaciones internas atrapan el foco, anuncian consecuencias y dejan inerte el contenido subyacente.
 
 El campamento sigue reconocible detrás del diálogo. Los servicios comparten marco y usan un recorte de su propio lugar en el encabezado. El inventario se presenta en filas separadas por líneas, con sprite, nombre, nivel, rareza textual y acciones de altura normal; no anidar tarjetas.
+
+Caravana, Taberna, Equipo y Crónica reutilizan sus controles y estados publicados dentro de este marco. En el modal, sus filas y secciones se separan con líneas; no repetir el encabezado de página ni la decoración de tarjetas completas. La crónica carga sus eventos al abrirse. El contenido largo se desplaza dentro del diálogo y el cierre devuelve el foco al edificio o recomendación que lo abrió.
 
 ### Mesa de trato
 

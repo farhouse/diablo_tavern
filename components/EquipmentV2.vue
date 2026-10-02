@@ -1,5 +1,5 @@
 <template>
-  <div class="equipment-v2" :class="{ 'equipment-v2--service': service !== 'all' }">
+  <div class="equipment-v2" :class="{ 'equipment-v2--service': service !== 'all' || modal }">
     <div ref="content" class="equipment-content" tabindex="-1" :inert="Boolean(confirmation)">
     <div v-if="loadState === 'loading' && !game" class="equipment-state" aria-busy="true">{{ service === 'all' ? 'Cargando inventario confirmado…' : 'Preparando los objetos…' }}</div>
     <div v-else-if="!game" class="equipment-state" role="alert">
@@ -74,7 +74,7 @@ import type { ActionAvailability, GameView, ItemView, ServiceJobView } from '~/s
 import { itemTypeForSlot } from '~/utils/game-assets'
 import { itemAction, selectionFor, type EquipmentAction, type EquipmentEnabledAction, type EquipmentSelection } from '~/utils/v2-equipment-adapter'
 
-const props = withDefaults(defineProps<{ game: GameView | null; loadState: string; operationState: string; errorMessage: string; unavailableReason: string; snapshotStale: boolean; service?: 'all' | 'appraiser' | 'blacksmith' }>(), { service: 'all' })
+const props = withDefaults(defineProps<{ game: GameView | null; loadState: string; operationState: string; errorMessage: string; unavailableReason: string; snapshotStale: boolean; service?: 'all' | 'appraiser' | 'blacksmith'; modal?: boolean }>(), { service: 'all', modal: false })
 const emit = defineEmits<{ reload: []; retry: []; action: [selection: EquipmentSelection] }>()
 const content = ref<HTMLElement | null>(null)
 const dialog = ref<HTMLElement | null>(null)

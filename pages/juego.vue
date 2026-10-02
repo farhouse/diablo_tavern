@@ -30,17 +30,17 @@
         <img class="camp-expansion camp-expansion--wagon pixel-sprite" src="/images/game/camp-modular/expansion-stash-wagon.png" alt="" width="360" height="272">
         <img class="camp-expansion camp-expansion--appraiser pixel-sprite" src="/images/game/camp-modular/expansion-appraiser.png" alt="" width="447" height="321">
 
-        <NuxtLink class="camp-place camp-place--wagon" to="/caravan-v2"><span>Caravana</span><small>Mejoras y manutención</small></NuxtLink>
-        <NuxtLink class="camp-place camp-place--tavern" to="/visitors-v2"><span>Taberna</span><small>Visitantes y expediciones</small></NuxtLink>
+        <button class="camp-place camp-place--wagon" type="button" @click="openLocation('caravan', $event)"><span>Caravana</span><small>Mejoras y manutención</small></button>
+        <button class="camp-place camp-place--tavern" type="button" @click="openLocation('tavern', $event)"><span>Taberna</span><small>Visitantes y expediciones</small></button>
         <button class="camp-place camp-place--blacksmith" type="button" @click="openService('blacksmith', $event)"><span>Herrería</span><small>Mejorar y desmantelar</small></button>
         <button class="camp-place camp-place--appraiser" type="button" @click="openService('appraiser', $event)"><span>Tasador</span><small>Identificar objetos</small></button>
-        <NuxtLink class="camp-place camp-place--chronicle" to="/chronicle-v2"><span>Mesa de campaña</span><small>Crónica del viaje</small></NuxtLink>
+        <button class="camp-place camp-place--chronicle" type="button" @click="openLocation('chronicle', $event)"><span>Mesa de campaña</span><small>Crónica del viaje</small></button>
 
       </div>
 
       <aside class="next-order" aria-label="Próxima acción recomendada">
         <div><strong>{{ nextStep.title }}</strong><span>{{ nextStep.description }}</span></div>
-        <NuxtLink :to="nextStep.to">{{ nextStep.button }}</NuxtLink>
+        <button type="button" @click="openNextStep($event)">{{ nextStep.button }}</button>
       </aside>
 
       <section class="hero-dock" aria-label="Héroes en el campamento">
@@ -52,7 +52,7 @@
       </section>
     </section>
 
-    <dialog ref="campDialog" class="camp-dialog" :class="{ 'camp-dialog--trade': selectedVisitor && !selectedVisitorRecovering && ['available', 'negotiating'].includes(selectedVisitor.state), 'camp-dialog--appraiser': service === 'appraiser', 'camp-dialog--blacksmith': service === 'blacksmith' }" aria-labelledby="camp-dialog-title" @close="onDialogClosed" @click="closeOnBackdrop">
+    <dialog ref="campDialog" class="camp-dialog" :class="{ 'camp-dialog--trade': selectedVisitor && !selectedVisitorRecovering && ['available', 'negotiating'].includes(selectedVisitor.state), 'camp-dialog--appraiser': service === 'appraiser', 'camp-dialog--blacksmith': service === 'blacksmith', 'camp-dialog--equipment': service === 'all', 'camp-dialog--caravan': location === 'caravan', 'camp-dialog--tavern': location === 'tavern', 'camp-dialog--chronicle': location === 'chronicle' }" aria-labelledby="camp-dialog-title" @close="onDialogClosed" @click="closeOnBackdrop">
       <header class="camp-dialog__header">
         <div class="camp-dialog__identity">
           <HeroSprite v-if="selectedVisitor" :hero-class="heroClassForVisitor(selectedVisitor.visitorId)" alt="" />
@@ -68,6 +68,7 @@
       <EquipmentV2
         v-if="service"
         :service="service"
+        modal
         :game="game.game"
         :load-state="game.loadState"
         :operation-state="game.operationState"
@@ -79,8 +80,8 @@
         @action="game.runEquipmentAction"
       />
       <VisitorCycleV2
-        v-else-if="selectedVisitor"
-        :visitor-id="selectedVisitor.visitorId"
+        v-else-if="selectedVisitor || location === 'tavern'"
+        :visitor-id="selectedVisitor?.visitorId"
         :game="game.game"
         :load-state="game.loadState"
         :operation-state="game.operationState"
@@ -98,23 +99,52 @@
         @reload="game.retryConflictReload"
         @close="closeDialog"
       />
+      <CaravanV2
+        v-else-if="location === 'caravan'"
+        :game="game.game"
+        :load-state="game.loadState"
+        :operation-state="game.operationState"
+        :error-message="game.errorMessage"
+        :unavailable-reason="game.unavailableReason"
+        :snapshot-stale="game.snapshotStale"
+        @reload="reload"
+        @retry="game.retryUncertain"
+        @upgrade="game.upgradeCaravan"
+      />
+      <ChronicleV2
+        v-else-if="location === 'chronicle'"
+        :entries="chronicle.entries"
+        :load-state="chronicle.loadState"
+        :error-message="chronicle.errorMessage"
+        :load-more-state="chronicle.loadMoreState"
+        :load-more-error="chronicle.loadMoreError"
+        :has-more="chronicle.hasMore"
+        @reload="chronicle.load"
+        @load-more="chronicle.loadMore"
+      />
     </dialog>
   </main>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
+import CaravanV2 from '~/components/CaravanV2.vue'
+import ChronicleV2 from '~/components/ChronicleV2.vue'
 import EquipmentV2 from '~/components/EquipmentV2.vue'
 import HeroSprite from '~/components/HeroSprite.vue'
 import VisitorCycleV2 from '~/components/VisitorCycleV2.vue'
 import type { ActionAvailability } from '~/shared/types/v2-game-view'
 import { heroClassForVisitor } from '~/utils/game-assets'
 import { useGameV2Store } from '~/stores/game-v2'
+import { useChronicleV2Store } from '~/stores/chronicle-v2'
 
-type CampService = 'appraiser' | 'blacksmith'
+type CampService = 'appraiser' | 'blacksmith' | 'all'
+type CampLocation = 'caravan' | 'tavern' | 'chronicle'
 
 const game = useGameV2Store()
+const chronicle = useChronicleV2Store()
 const service = ref<CampService | null>(null)
+const location = ref<CampLocation | null>(null)
 const selectedVisitorId = ref<string | null>(null)
 const campDialog = ref<HTMLDialogElement | null>(null)
 const closeButton = ref<HTMLButtonElement | null>(null)
@@ -122,8 +152,8 @@ const dialogTrigger = ref<HTMLElement | null>(null)
 const activeVisitors = computed(() => game.game?.visitors.filter((visitor) => !['departed', 'dead'].includes(visitor.state)).slice(0, 4) ?? [])
 const selectedVisitor = computed(() => game.game?.visitors.find((visitor) => visitor.visitorId === selectedVisitorId.value) ?? null)
 const selectedVisitorRecovering = computed(() => game.game?.recoveries.some((recovery) => recovery.state === 'assigned' && recovery.assignedVisitorId === selectedVisitorId.value) ?? false)
-const dialogTitle = computed(() => selectedVisitor.value?.name.fallback ?? (service.value === 'blacksmith' ? 'Herrería' : 'Tasador'))
-const dialogDescription = computed(() => selectedVisitor.value ? (selectedVisitorRecovering.value ? 'En recuperación' : visitorState(selectedVisitor.value.state)) : service.value === 'blacksmith' ? 'Mejorá o desmantelá objetos sin abandonar el campamento.' : 'Revelá las propiedades de los objetos sin abandonar el campamento.')
+const dialogTitle = computed(() => selectedVisitor.value?.name.fallback ?? ({ blacksmith: 'Herrería', appraiser: 'Tasador', all: 'Equipo', caravan: 'Caravana', tavern: 'Taberna', chronicle: 'Crónica' } as Record<string, string>)[service.value ?? location.value ?? ''] ?? '')
+const dialogDescription = computed(() => selectedVisitor.value ? (selectedVisitorRecovering.value ? 'En recuperación' : visitorState(selectedVisitor.value.state)) : ({ blacksmith: 'Mejorá o desmantelá objetos sin abandonar el campamento.', appraiser: 'Revelá las propiedades de los objetos sin abandonar el campamento.', all: 'Inventario y trabajos de la caravana.', caravan: 'Capacidad, manutención y mejoras.', tavern: 'Visitantes, expediciones y resultados.', chronicle: 'Los sucesos de tu caravana.' } as Record<string, string>)[service.value ?? location.value ?? ''] ?? '')
 
 function enabled(actions: readonly ActionAvailability[], action: ActionAvailability['action']) {
   return actions.some((candidate) => candidate.action === action && candidate.enabled)
@@ -131,14 +161,14 @@ function enabled(actions: readonly ActionAvailability[], action: ActionAvailabil
 
 const nextStep = computed(() => {
   const view = game.game
-  if (!view) return { title: 'Cargá tu partida', description: 'Necesitamos el estado actual para recomendarte el próximo paso.', button: 'Actualizar', to: '/juego' }
-  if (view.settlements.some((entry) => entry.state === 'preview_ready' && enabled(entry.actions, 'confirm_settlement'))) return { title: 'Confirmá el resultado de una expedición', description: 'La recompensa está lista para resolver.', button: 'Ver resultado', to: '/visitors-v2' }
-  if (view.recoveries.some((entry) => entry.state === 'open')) return { title: 'Resolvé una recuperación pendiente', description: 'Todavía podés recuperar objetos prestados.', button: 'Ver recuperación', to: '/visitors-v2' }
-  if (view.visitors.some((entry) => entry.state === 'contracted' && enabled(entry.actions, 'start_expedition'))) return { title: 'Iniciá la expedición contratada', description: 'El visitante está preparado para salir.', button: 'Iniciar', to: '/visitors-v2' }
-  if (view.visitors.some((entry) => (entry.state === 'available' || entry.state === 'negotiating') && enabled(entry.actions, 'accept_contract'))) return { title: 'Elegí un contrato', description: 'Hay visitantes esperando en la taberna.', button: 'Ver visitantes', to: '/visitors-v2' }
-  if (view.expeditions.some((entry) => entry.state === 'active')) return { title: 'Hay una expedición en marcha', description: 'Actualizá sus sucesos cuando esté lista.', button: 'Ver expedición', to: '/visitors-v2' }
-  if (view.items.some((item) => item.actions.some((action) => action.enabled))) return { title: 'Prepará tu equipo', description: 'Hay servicios disponibles en el campamento.', button: 'Ver equipo', to: '/equipment-v2' }
-  return { title: 'El campamento está en calma', description: 'Podés preparar mejoras o consultar la crónica.', button: 'Ver caravana', to: '/caravan-v2' }
+  if (!view) return { title: 'Cargá tu partida', description: 'Necesitamos el estado actual para recomendarte el próximo paso.', button: 'Actualizar', target: 'refresh' as const }
+  if (view.settlements.some((entry) => entry.state === 'preview_ready' && enabled(entry.actions, 'confirm_settlement'))) return { title: 'Confirmá el resultado de una expedición', description: 'La recompensa está lista para resolver.', button: 'Ver resultado', target: 'tavern' as const }
+  if (view.recoveries.some((entry) => entry.state === 'open')) return { title: 'Resolvé una recuperación pendiente', description: 'Todavía podés recuperar objetos prestados.', button: 'Ver recuperación', target: 'tavern' as const }
+  if (view.visitors.some((entry) => entry.state === 'contracted' && enabled(entry.actions, 'start_expedition'))) return { title: 'Iniciá la expedición contratada', description: 'El visitante está preparado para salir.', button: 'Iniciar', target: 'tavern' as const }
+  if (view.visitors.some((entry) => (entry.state === 'available' || entry.state === 'negotiating') && enabled(entry.actions, 'accept_contract'))) return { title: 'Elegí un contrato', description: 'Hay visitantes esperando en la taberna.', button: 'Ver visitantes', target: 'tavern' as const }
+  if (view.expeditions.some((entry) => entry.state === 'active')) return { title: 'Hay una expedición en marcha', description: 'Actualizá sus sucesos cuando esté lista.', button: 'Ver expedición', target: 'tavern' as const }
+  if (view.items.some((item) => item.actions.some((action) => action.enabled))) return { title: 'Prepará tu equipo', description: 'Hay servicios disponibles en el campamento.', button: 'Ver equipo', target: 'equipment' as const }
+  return { title: 'El campamento está en calma', description: 'Podés preparar mejoras o consultar la crónica.', button: 'Ver caravana', target: 'caravan' as const }
 })
 
 onMounted(() => { if (!game.game) void game.load() })
@@ -150,14 +180,31 @@ async function reload() {
 
 async function openService(nextService: CampService, event: Event) {
   selectedVisitorId.value = null
+  location.value = null
   service.value = nextService
+  await openDialog(event)
+}
+
+async function openLocation(nextLocation: CampLocation, event: Event) {
+  selectedVisitorId.value = null
+  service.value = null
+  location.value = nextLocation
+  if (nextLocation === 'chronicle') void chronicle.load()
   await openDialog(event)
 }
 
 async function openVisitor(visitorId: string, event: Event) {
   service.value = null
+  location.value = null
   selectedVisitorId.value = visitorId
   await openDialog(event)
+}
+
+function openNextStep(event: Event) {
+  const target = nextStep.value.target
+  if (target === 'refresh') return reload()
+  if (target === 'equipment') return openService('all', event)
+  return openLocation(target, event)
 }
 
 async function openDialog(event: Event) {
@@ -171,6 +218,7 @@ function closeDialog() { campDialog.value?.close() }
 function closeOnBackdrop(event: MouseEvent) { if (event.target === campDialog.value) closeDialog() }
 function onDialogClosed() {
   service.value = null
+  location.value = null
   selectedVisitorId.value = null
   nextTick(() => dialogTrigger.value?.focus())
 }
@@ -210,7 +258,8 @@ function visitorState(state: string) {
 .next-order div { display: grid; gap: .15rem; }
 .next-order strong { color: #f0c26a; }
 .next-order span { color: #d2c3ac; font-size: .82rem; }
-.next-order a { border: 1px solid #9d7444; color: #fff3d4; flex: 0 0 auto; min-height: 2.75rem; padding: .65rem .8rem; }
+.next-order button { background: #a94327; border: 1px solid #bf6144; color: #fff3d4; cursor: pointer; flex: 0 0 auto; font: inherit; min-height: 2.75rem; padding: .65rem .8rem; }
+.next-order button:hover, .next-order button:focus-visible { background: #bd4c2e; border-color: #f0c26a; }
 .hero-dock { align-items: stretch; background: linear-gradient(180deg, rgba(4, 5, 8, .92), #08090d); border-top: 2px solid #6c5438; bottom: 0; display: flex; gap: .45rem; height: 17%; left: 0; padding: .5rem max(.75rem, 20%); position: absolute; right: 0; z-index: 30; }
 .hero-portrait { align-items: end; appearance: none; background: transparent; border: 1px solid #554a3a; color: inherit; cursor: pointer; display: flex; flex: 1 1 0; gap: .5rem; justify-content: center; min-width: 0; padding: .25rem .45rem; text-align: left; }
 .hero-portrait:hover, .hero-portrait:focus-visible { background: #1c1711; border-color: #f0c26a; }
@@ -227,6 +276,8 @@ function visitorState(state: string) {
 .camp-dialog__header { align-items: center; background: linear-gradient(90deg, rgba(15, 12, 9, .94), rgba(22, 16, 10, .42)), url('/images/game/camp-modular/camp-base.png') center 42% / cover; border-bottom: 1px solid #725536; display: flex; flex: 0 0 auto; gap: 1rem; justify-content: space-between; min-height: 8rem; padding: .75rem 1.5rem; z-index: 5; }
 .camp-dialog--blacksmith .camp-dialog__header { background-position: center, left 58%; background-size: cover, 140%; }
 .camp-dialog--appraiser .camp-dialog__header { background-image: linear-gradient(90deg, #100e14 30%, rgba(20, 14, 28, .35)), url('/images/game/camp-modular/expansion-appraiser.png'); background-position: center, right 45%; background-repeat: no-repeat; background-size: cover, 24rem; }
+.camp-dialog--caravan .camp-dialog__header { background-image: linear-gradient(90deg, #100e0c 30%, rgba(26, 19, 12, .4)), url('/images/game/camp-modular/expansion-stash-wagon.png'); background-position: center, right 40%; background-repeat: no-repeat; background-size: cover, 25rem; }
+.camp-dialog--chronicle .camp-dialog__header { background-position: center, 70% 66%; }
 .camp-dialog__identity { align-items: center; display: flex; gap: 1rem; min-width: 0; text-shadow: 0 2px 4px #000; }
 .camp-dialog__identity :deep(.hero-sprite) { flex: 0 0 auto; height: 8rem; width: 5.3rem; }
 .camp-dialog__header h2 { color: #f0c26a; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(1.55rem, 3vw, 2.15rem); letter-spacing: -.02em; margin: 0; }
@@ -234,8 +285,20 @@ function visitorState(state: string) {
 .camp-dialog__close { align-items: center; background: rgba(8, 8, 10, .72); border: 1px solid #80613d; color: #f4e8d2; cursor: pointer; display: flex; flex: 0 0 auto; height: 2.75rem; justify-content: center; width: 2.75rem; }
 .camp-dialog__close:hover { background: #2a1d14; border-color: #f0c26a; }
 .camp-dialog__close svg { fill: none; height: 1.25rem; stroke: currentColor; stroke-linecap: round; stroke-width: 1.75; width: 1.25rem; }
-.camp-dialog :deep(.equipment-v2), .camp-dialog :deep(.v2-cycle) { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1.5rem; }
+.camp-dialog :deep(.equipment-v2), .camp-dialog :deep(.v2-cycle), .camp-dialog :deep(.caravan-v2), .camp-dialog :deep(.chronicle) { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1.5rem; }
 .camp-dialog :deep(.v2-cycle--trade) { flex: 1; overflow: hidden; padding: 0; }
+.camp-dialog--tavern :deep(.v2-cycle__body) { grid-template-columns: minmax(0, 1fr); }
+.camp-dialog--tavern :deep(.v2-cycle__panel) { background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 0 0 1.25rem; }
+.camp-dialog--tavern :deep(.v2-cycle__row) { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: .85rem 0; }
+.camp-dialog--caravan :deep(.caravan-hero) { display: none; }
+.camp-dialog--caravan :deep(.caravan-v2) { width: 100%; }
+.camp-dialog--caravan :deep(.stat), .camp-dialog--caravan :deep(.upgrade-card), .camp-dialog--caravan :deep(.actions-card) { background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.camp-dialog--caravan :deep(.stat) { padding: .75rem 0; }
+.camp-dialog--caravan :deep(.upgrade-card) { padding: 1rem .5rem; }
+.camp-dialog--caravan :deep(.actions-card) { padding-inline: 0; }
+.camp-dialog--chronicle :deep(.timeline-entry) { background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: .85rem 0; }
+.camp-dialog--chronicle :deep(.chronicle > .section-title .eyebrow) { display: none; }
+.camp-dialog--equipment :deep(.equipment-v2 .section-title .eyebrow), .camp-dialog--equipment :deep(.equipment-v2 .section-title .tag) { display: none; }
 
 @keyframes dialog-enter { from { opacity: 0; transform: translateY(.75rem) scale(.985); } }
 
@@ -262,13 +325,13 @@ function visitorState(state: string) {
   .camp-place span { font-size: .72rem; }
   .next-order { align-items: center; gap: .45rem; }
   .next-order span { display: none; }
-  .next-order a { text-align: center; }
+  .next-order button { text-align: center; }
   .camp-dialog { max-height: 94dvh; width: calc(100% - 1rem); }
   .camp-dialog--trade { height: 94dvh; }
   .camp-dialog__header { min-height: 5rem; padding: .75rem; }
   .camp-dialog__identity { gap: .65rem; }
   .camp-dialog__identity :deep(.hero-sprite) { height: 5.5rem; width: 3.7rem; }
-  .camp-dialog :deep(.equipment-v2), .camp-dialog :deep(.v2-cycle) { padding: .75rem; }
+  .camp-dialog :deep(.equipment-v2), .camp-dialog :deep(.v2-cycle), .camp-dialog :deep(.caravan-v2), .camp-dialog :deep(.chronicle) { padding: .75rem; }
   .camp-dialog :deep(.v2-cycle--trade) { padding: 0; }
 }
 

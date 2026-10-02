@@ -2,7 +2,7 @@
   <div class="shell">
     <header v-if="auth.loggedIn" class="topbar">
       <NuxtLink class="brand" to="/juego">Diablo Tavern</NuxtLink>
-      <nav class="nav">
+      <nav v-if="!isCamp" class="nav">
         <NuxtLink to="/juego">Inicio</NuxtLink>
         <NuxtLink to="/visitors-v2">Visitantes</NuxtLink>
         <NuxtLink to="/equipment-v2">Equipo</NuxtLink>
@@ -10,7 +10,7 @@
         <NuxtLink to="/chronicle-v2">Crónica</NuxtLink>
       </nav>
       <div class="row topbar-stats">
-        <template v-if="gameV2.game">
+        <template v-if="gameV2.game && !isCamp">
           <span class="tag">{{ gameV2.game.resources.gold }} oro</span>
           <span class="tag">{{ gameV2.game.caravan.visitorCapacity.used }}/{{ gameV2.game.caravan.visitorCapacity.limit }} visitantes</span>
           <span class="tag">{{ gameV2.game.capacity.used }}/{{ gameV2.game.capacity.limit }} objetos</span>
@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useGameStore } from '~/stores/game'
 import { useGameV2Store } from '~/stores/game-v2'
@@ -33,6 +33,8 @@ const auth = useAuthStore()
 const game = useGameStore()
 const gameV2 = useGameV2Store()
 const chronicleV2 = useChronicleV2Store()
+const route = useRoute()
+const isCamp = computed(() => route.path === '/juego')
 onMounted(() => {
   auth.hydrate()
   if (auth.loggedIn && !gameV2.game && gameV2.loadState !== 'loading') void gameV2.load()
