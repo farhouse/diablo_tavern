@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import fixtures from '../contracts/v2-etapa0-4/fixtures.json'
-import type { GameView, VisitorView } from '../shared/types/v2-game-view'
+import type { ExpeditionView, GameView, VisitorView } from '../shared/types/v2-game-view'
 import VisitorCycleV2 from '../components/VisitorCycleV2.vue'
 import { campTradeFixture } from './fixtures/camp-trade'
 
@@ -65,6 +65,25 @@ describe('VisitorCycleV2', () => {
     const copy = wrapper.get('[data-testid="visitor-available"]').text()
     expect(copy).toContain('Reconciliá la partida')
     expect(copy).not.toContain('Acción no publicada en el snapshot')
+  })
+
+  it('shows expedition status, exact life and translated outcomes', () => {
+    const game = fixture('integrated-settlement')
+    const publishedActive = retainedCases.find((candidate) => candidate.id === 'expedition-active')?.value as ExpeditionView | undefined
+    if (!publishedActive || publishedActive.state !== 'active') throw new Error('Expected active expedition fixture')
+    game.expeditions.unshift({ ...publishedActive, expeditionId: 'e-active' })
+
+    const wrapper = mount(VisitorCycleV2, { props: { game, loadState: 'ready' } })
+    const active = wrapper.get('[data-testid="expedition-active"]')
+    expect(active.text()).toContain('En curso')
+    expect(active.text()).toContain('18 / 20')
+    expect(active.get('progress').attributes()).toMatchObject({ value: '18', max: '20', 'aria-label': 'Vida de Ada' })
+    expect(active.get('time').attributes('datetime')).toBe(publishedActive.nextEventAt)
+    const awaiting = wrapper.get('[data-testid="expedition-awaiting_settlement"]')
+    expect(awaiting.text()).toContain('Por resolver')
+    expect(awaiting.text()).toContain('Se retiró')
+    expect(awaiting.text()).not.toContain('retreated')
+    wrapper.unmount()
   })
 
   it('emits exact UI intentions for contract, expedition, settlement and recovery actions', async () => {
@@ -233,7 +252,7 @@ describe('VisitorCycleV2', () => {
     expect(assigned.isVisible()).toBe(true)
     expect(assigned.text()).toContain(visitor.name.fallback)
     expect(assigned.text()).toContain(completesAt)
-    expect(wrapper.get('header').text()).toContain('Actualizar sucesos')
+    expect(wrapper.get('header').text()).toContain('Próximo suceso en 1 día')
     wrapper.unmount()
   })
 
@@ -318,9 +337,8 @@ describe('VisitorCycleV2', () => {
 
   it('derives reconcile availability from game actions and keeps signalling while a visible transition is due', async () => {
     const unavailable = mount(VisitorCycleV2, { props: { game: fixture('integrated-contract'), loadState: 'ready' } })
-    expect(unavailable.get('header button').attributes('disabled')).toBeDefined()
-    expect(unavailable.get('header button').attributes('aria-describedby')).toBe('reconcile-reason')
-    expect(unavailable.get('#reconcile-reason').text()).toContain('no está disponible')
+    expect(unavailable.find('header button').exists()).toBe(false)
+    expect(unavailable.find('#reconcile-reason').exists()).toBe(false)
 
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-14T10:30:00Z'))
@@ -479,7 +497,7 @@ describe('VisitorCycleV2', () => {
     expect(wrapper.text()).toContain('Iria')
     expect(wrapper.text()).toContain('Nox')
     expect(wrapper.text()).toContain('Estado terminal sin acciones disponibles')
-    expect(wrapper.text()).toContain('Resultado cerrado: death')
+    expect(wrapper.text()).toContain('Resultado: Murió')
     expect(wrapper.text()).toContain('Este resultado venció')
     expect(wrapper.text()).toContain('Asignado a Visitante no disponible')
     expect(wrapper.text()).toContain('El equipo se perdió.')

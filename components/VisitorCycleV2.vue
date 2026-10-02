@@ -8,6 +8,8 @@ import type {
   AcceptContractAction,
   AssignRecoveryAction,
   ConfirmSettlementAction,
+  ExpeditionOutcome,
+  ExpeditionView,
   GameView,
   Id,
   ItemView,
@@ -72,11 +74,12 @@ const statusText = computed(() => {
 const countdownText = computed(() => {
   if (!props.game?.nextTransitionAt) return 'Sin transición programada'
   const remaining = Math.max(0, Date.parse(props.game.nextTransitionAt) - currentNowMs.value)
-  return remaining === 0 ? 'Transición lista para reconciliar' : `${Math.ceil(remaining / 1000)}s hasta la próxima transición`
+  return remaining === 0 ? 'Hay sucesos por actualizar' : `Próximo suceso en ${durationLabel(Math.ceil(remaining / 1000))}`
 })
 
+const reconcileOffer = computed(() => props.game?.actions.find((candidate) => candidate.action === 'reconcile_game'))
 const reconcileAction = computed(() => enabledAction<ReconcileGameAction>(props.game?.actions, 'reconcile_game'))
-const reconcileDisabledReason = computed(() => actionReason(props.game?.actions ?? [], 'reconcile_game'))
+const reconcileDisabledReason = computed(() => reconcileOffer.value && !reconcileOffer.value.enabled ? label(reconcileOffer.value.reasonText) : '')
 
 function isHistoricalVisitor(visitor: VisitorView): boolean {
   return visitor.state === 'departed' || visitor.state === 'dead'
@@ -118,8 +121,10 @@ function rarityLabel(rarity: ItemView['rarity']): string {
 }
 
 function durationLabel(seconds: number): string {
-  const minutes = Math.floor(seconds / 60)
-  return [minutes ? `${minutes} min` : '', seconds % 60 ? `${seconds % 60} s` : ''].filter(Boolean).join(' ') || '0 s'
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return [days ? `${days} ${days === 1 ? 'día' : 'días'}` : '', hours ? `${hours} h` : '', minutes ? `${minutes} min` : '', seconds % 60 ? `${seconds % 60} s` : ''].filter(Boolean).slice(0, 2).join(' ') || '0 s'
 }
 
 function label(text: LocalizedText): string {
@@ -239,6 +244,17 @@ function visitorLabel(visitorId: Id): string {
 function expeditionTitle(visitorId: Id): string {
   return `Expedición de ${visitorLabel(visitorId)}`
 }
+
+function expeditionStateLabel(state: ExpeditionView['state']): string {
+  return { scheduled: 'Programada', active: 'En curso', awaiting_settlement: 'Por resolver', settled: 'Cerrada' }[state]
+}
+
+function expeditionOutcomeLabel(outcome: ExpeditionOutcome): string {
+  return { returned: 'Regresó', retreated: 'Se retiró', death: 'Murió' }[outcome]
+}
+
+const expeditionDateFormat = new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+function expeditionDate(value: string): string { return expeditionDateFormat.format(new Date(value)) }
 
 function settlementTitle(settlement: SettlementView): string {
   const expedition = props.game?.expeditions.find((candidate) => candidate.expeditionId === settlement.expeditionId)
@@ -428,6 +444,7 @@ onBeforeUnmount(() => {
         </p>
       </div>
       <button
+        v-if="reconcileOffer"
         class="v2-cycle__button"
         type="button"
         :disabled="locked || !game || !reconcileAction"
@@ -533,7 +550,7 @@ onBeforeUnmount(() => {
               Estado terminal sin acciones disponibles.
             </p>
           </div>
-          <div class="v2-cycle__actions">
+          <div v-if="visitor.state === 'available' || visitor.state === 'negotiating' || visitor.state === 'contracted'" class="v2-cycle__actions">
             <button
               v-if="visitor.state === 'available' || visitor.state === 'negotiating'"
               class="v2-cycle__button"
@@ -580,7 +597,7 @@ onBeforeUnmount(() => {
               </label>
             </fieldset>
             <span
-              v-if="actionReason(actionsOf(visitor), 'accept_contract')"
+              v-if="(visitor.state === 'available' || visitor.state === 'negotiating') && actionReason(actionsOf(visitor), 'accept_contract')"
               :id="internalId('accept-reason', visitorIndex)"
               class="v2-cycle__reason"
             >
@@ -607,20 +624,27 @@ onBeforeUnmount(() => {
         </article>
       </section>
 
-      <section v-if="!visitorId || visibleExpeditions.length" class="v2-cycle__panel" aria-labelledby="v2-expeditions-title">
+      <section v-if="!visitorId || visibleExpeditions.length" class="v2-cycle__panel v2-cycle__panel--expeditions" aria-labelledby="v2-expeditions-title">
         <h3 id="v2-expeditions-title">Expediciones</h3>
-        <article v-for="expedition in visibleExpeditions" :key="expedition.expeditionId" class="v2-cycle__row" :data-testid="`expedition-${expedition.state}`">
-          <div>
-            <strong>{{ expeditionTitle(expedition.visitorId) }}</strong>
-            <p class="v2-cycle__muted">Estado: {{ stateLabel(expedition.state) }}</p>
-            <p v-if="expedition.state === 'active'" class="v2-cycle__muted">
-              {{ expedition.currentHp }}/{{ expedition.maxHp }} vida. El reloj es informativo; sólo el servidor avanza estado.
-            </p>
-            <p v-if="expedition.state === 'settled'" class="v2-cycle__muted">
-              Resultado cerrado: {{ expedition.outcome }}.
-            </p>
+        <p v-if="!visibleExpeditions.length" class="v2-cycle__muted">Todavía no hay expediciones. Contratá un visitante para comenzar.</p>
+        <article v-for="expedition in visibleExpeditions" :key="expedition.expeditionId" class="expedition-entry" :data-testid="`expedition-${expedition.state}`">
+          <HeroSprite v-if="!visitorId" :hero-class="heroClassForVisitor(expedition.visitorId)" alt="" />
+          <div class="expedition-entry__content">
+            <div class="expedition-entry__heading">
+              <strong>{{ expeditionTitle(expedition.visitorId) }}</strong>
+              <span class="expedition-entry__state">{{ expeditionStateLabel(expedition.state) }}</span>
+            </div>
+            <template v-if="expedition.state === 'active'">
+              <div class="expedition-entry__life"><span>Vida</span><strong>{{ expedition.currentHp }} / {{ expedition.maxHp }}</strong></div>
+              <progress :value="Math.max(0, expedition.currentHp)" :max="Math.max(1, expedition.maxHp)" :aria-label="`Vida de ${visitorLabel(expedition.visitorId)}`" />
+              <p>Próximo suceso <time :datetime="expedition.nextEventAt">{{ expeditionDate(expedition.nextEventAt) }}</time></p>
+            </template>
+            <p v-else-if="expedition.state === 'scheduled'">Salida prevista <time :datetime="expedition.startsAt">{{ expeditionDate(expedition.startsAt) }}</time></p>
+            <p v-else-if="expedition.state === 'awaiting_settlement'">Resultado: <strong>{{ expeditionOutcomeLabel(expedition.outcome) }}</strong></p>
+            <p v-else>Resultado: <strong>{{ expeditionOutcomeLabel(expedition.outcome) }}</strong> · Cerrada <time :datetime="expedition.settledAt">{{ expeditionDate(expedition.settledAt) }}</time></p>
           </div>
         </article>
+        <p v-if="reconcileOffer && visibleExpeditions.some(expedition => expedition.state === 'active')" class="expedition-entry__note">La partida se actualiza desde «Actualizar sucesos».</p>
       </section>
 
       <section v-if="!visitorId || visibleSettlements.length" class="v2-cycle__panel" aria-labelledby="v2-settlements-title">
@@ -872,6 +896,23 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   padding: 0.75rem;
 }
+
+.v2-cycle__panel--expeditions { align-content: start; }
+.expedition-entry { border-top: 1px solid var(--line); display: flex; gap: 1rem; min-width: 0; padding: 1rem 0; }
+.expedition-entry :deep(.hero-sprite) { height: 4.5rem; width: 3rem; }
+.expedition-entry__content { flex: 1; min-width: 0; }
+.expedition-entry__heading { align-items: baseline; display: flex; flex-wrap: wrap; gap: .5rem 1rem; justify-content: space-between; }
+.expedition-entry__heading strong { color: var(--text); font-weight: 600; }
+.expedition-entry__state { border: 1px solid #80613d; color: var(--accent-2); font-size: .75rem; padding: .2rem .5rem; white-space: nowrap; }
+.expedition-entry__content p { color: var(--muted); font-size: .875rem; line-height: 1.5; margin: .65rem 0 0; }
+.expedition-entry__content p strong, .expedition-entry__content time { color: var(--text); font-weight: 600; }
+.expedition-entry__life { color: var(--muted); display: flex; font-size: .875rem; justify-content: space-between; margin-top: 1rem; }
+.expedition-entry__life strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.expedition-entry progress { appearance: none; background: #342b20; border: 0; display: block; height: .5rem; margin-top: .4rem; width: 100%; }
+.expedition-entry progress::-webkit-progress-bar { background: #342b20; }
+.expedition-entry progress::-webkit-progress-value { background: var(--ok); }
+.expedition-entry progress::-moz-progress-bar { background: var(--ok); }
+.expedition-entry__note { border-top: 1px solid var(--line); color: var(--muted); font-size: .8125rem; line-height: 1.5; margin: 0; padding-top: .75rem; }
 
 .v2-cycle__history {
   border-top: 1px solid var(--line);

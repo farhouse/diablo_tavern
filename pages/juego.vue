@@ -254,6 +254,10 @@ function visitorState(state: string) {
 .camp-place--blacksmith { height: 34%; left: 2%; top: 38%; width: 28%; }
 .camp-place--appraiser { height: 35%; left: 72%; top: 22%; width: 27%; }
 .camp-place--chronicle { height: 30%; left: 58%; top: 50%; width: 32%; }
+@media (hover: hover) and (pointer: fine) {
+  .camp-place::after, .camp-place span, .camp-place small { opacity: 0; transition: opacity 160ms ease-out; }
+  .camp-place:is(:hover, :focus-visible)::after, .camp-place:is(:hover, :focus-visible) span, .camp-place:is(:hover, :focus-visible) small { opacity: 1; }
+}
 .next-order { align-items: center; background: linear-gradient(90deg, rgba(10, 9, 10, .94), rgba(29, 19, 13, .9)); border: 1px solid #725536; bottom: 18%; display: flex; gap: 1rem; justify-content: space-between; left: 1rem; max-width: min(34rem, calc(100% - 2rem)); padding: .65rem .8rem; position: absolute; z-index: 31; }
 .next-order div { display: grid; gap: .15rem; }
 .next-order strong { color: #f0c26a; }
@@ -335,5 +339,5 @@ function visitorState(state: string) {
   .camp-dialog :deep(.v2-cycle--trade) { padding: 0; }
 }
 
-@media (prefers-reduced-motion: reduce) { .camp-dialog { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .camp-dialog { animation: none; } .camp-place::after, .camp-place span, .camp-place small { transition: none; } }
 </style>

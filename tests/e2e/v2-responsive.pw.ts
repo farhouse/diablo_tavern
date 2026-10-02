@@ -22,7 +22,7 @@ const auth = { user: { id: 'v2-responsive', email: 'v2-responsive@example.test' 
 
 for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 'mobile', width: 390, height: 844 }]) {
   test.describe(`V2 responsive ${viewport.name}`, () => {
-    test.use({ viewport })
+    test.use({ viewport, hasTouch: viewport.name === 'mobile', isMobile: viewport.name === 'mobile' })
 
     test('renders the camp as the game hub and opens its services in place', async ({ page }) => {
       let activeCampGame: GameView = campGame
@@ -40,6 +40,21 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       await expect(page.getByRole('region', { name: 'Héroes en el campamento' })).toBeVisible()
       await expect(page.locator('.hero-portrait').first()).toBeVisible()
       await expect(page.locator('.topbar nav')).toHaveCount(0)
+
+      const place = page.locator('.camp-place--wagon')
+      if (viewport.name === 'desktop') {
+        await expect(place.locator('span')).toHaveCSS('opacity', '0')
+        await place.hover()
+        await expect(place.locator('span')).toHaveCSS('opacity', '1')
+        await page.mouse.move(0, 0)
+        await expect(place.locator('span')).toHaveCSS('opacity', '0')
+        await page.locator('.camp-refresh').focus()
+        await page.keyboard.press('Tab')
+        await expect(place).toBeFocused()
+        await expect(place.locator('span')).toHaveCSS('opacity', '1')
+      } else {
+        await expect(place.locator('span')).toHaveCSS('opacity', '1')
+      }
 
       const hero = page.locator('.hero-portrait').first()
       await hero.click()
@@ -125,6 +140,19 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       await page.keyboard.press('Escape')
       await expect(page.getByRole('alertdialog')).toHaveCount(0)
       await expect(page.locator('dialog[open]')).toBeVisible()
+      await page.getByRole('button', { name: 'Cerrar' }).click()
+
+      const expeditionGame = structuredClone(fixtures.integratedPositiveCases.find((candidate) => candidate.id === 'integrated-settlement')!.value) as unknown as GameView
+      expeditionGame.expeditions.unshift({ expeditionId: 'e-active', visitorId: 'v1', contractId: 'c1', state: 'active', startedAt: '2026-09-14T10:00:00Z', nextEventAt: '2026-09-14T10:05:00Z', currentHp: 18, maxHp: 20, actions: [] })
+      activeCampGame = expeditionGame
+      await page.getByRole('button', { name: 'Actualizar', exact: true }).click()
+      await page.locator('.camp-place--tavern').click()
+      const activeExpedition = page.getByTestId('expedition-active')
+      await expect(activeExpedition.getByRole('progressbar', { name: 'Vida de Ada' })).toHaveAttribute('value', '18')
+      await expect(page.getByTestId('expedition-awaiting_settlement')).toContainText('Se retiró')
+      await expect(page.locator('dialog[open]')).toHaveCSS('transform', 'none')
+      if (viewport.name === 'mobile') await activeExpedition.scrollIntoViewIfNeeded()
+      await page.screenshot({ path: test.info().outputPath(`expeditions-dialog-${viewport.name}.png`), fullPage: true })
       await page.getByRole('button', { name: 'Cerrar' }).click()
 
       await page.screenshot({ path: test.info().outputPath(`camp-${viewport.name}.png`), fullPage: true })
