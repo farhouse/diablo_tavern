@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import HeroSprite from '~/components/HeroSprite.vue'
+import ItemSprite from '~/components/ItemSprite.vue'
 import type {
   ActionAvailability,
   AbandonRecoveryAction,
@@ -9,6 +10,7 @@ import type {
   ConfirmSettlementAction,
   GameView,
   Id,
+  ItemView,
   LocalizedText,
   RecoveryView,
   ReconcileGameAction,
@@ -16,7 +18,7 @@ import type {
   VisitorView
 } from '~/shared/types/v2-game-view'
 import { enabledAction, type VisitorV2Selection } from '~/utils/v2-visitor-adapter'
-import { heroClassForVisitor } from '~/utils/game-assets'
+import { heroClassForVisitor, itemTypeForSlot } from '~/utils/game-assets'
 
 const props = defineProps<{
   game: GameView | null
@@ -39,6 +41,7 @@ const emit = defineEmits<{
   abandonRecovery: [selection: Extract<VisitorV2Selection, { kind: 'abandon_recovery' }>]
   retry: []
   reload: []
+  close: []
 }>()
 
 const operationState = computed(() => props.operationState ?? 'idle')
@@ -86,6 +89,38 @@ const visibleExpeditions = computed(() => props.game?.expeditions.filter((expedi
 const visibleExpeditionIds = computed(() => new Set(visibleExpeditions.value.map((expedition) => expedition.expeditionId)))
 const visibleSettlements = computed(() => props.game?.settlements.filter((settlement) => !props.visitorId || visibleExpeditionIds.value.has(settlement.expeditionId)) ?? [])
 const visibleRecoveries = computed(() => props.game?.recoveries.filter((recovery) => !props.visitorId || visibleExpeditionIds.value.has(recovery.sourceExpeditionId) || ('assignedVisitorId' in recovery && recovery.assignedVisitorId === props.visitorId)) ?? [])
+const hasAssignedRecovery = computed(() => visibleRecoveries.value.some((recovery) => recovery.state === 'assigned' && recovery.assignedVisitorId === props.visitorId))
+const showJourneyHeader = computed(() => !props.visitorId || (!tradeVisitor.value && (visibleExpeditions.value.length > 0 || hasAssignedRecovery.value)))
+const tradeVisitor = computed(() => props.visitorId && !hasAssignedRecovery.value ? currentVisitors.value.find((visitor) => visitor.state === 'available' || visitor.state === 'negotiating') : undefined)
+const tradeBinding = computed(() => tradeVisitor.value ? selectedContractBinding(tradeVisitor.value) : null)
+const tradeOption = computed(() => {
+  const visitor = tradeVisitor.value
+  const options = visitor?.state === 'available' ? visitor.contractOptions : visitor?.state === 'negotiating' ? visitor.options : []
+  return options.find((option) => option.optionId === tradeBinding.value?.optionId)
+})
+const selectedTradeLoans = computed(() => (contractLoans.value[tradeVisitor.value?.visitorId ?? ''] ?? []).filter((id) => tradeBinding.value?.eligibleLoanItemIds.includes(id)))
+const loanGroups = computed(() => {
+  const groups = new Map<string, ItemView[]>()
+  const eligible = new Set(tradeBinding.value?.eligibleLoanItemIds ?? [])
+  for (const item of props.game?.items ?? []) {
+    if (!eligible.has(item.itemId)) continue
+    // Unidentified copies may have different hidden properties: never collapse them.
+    const key = item.identification === 'unidentified' ? item.itemId : JSON.stringify([item.name, item.slot, item.rarity, item.level, item.affixes, item.activeImprint, item.owner, item.custody])
+    const group = groups.get(key)
+    if (group) group.push(item)
+    else groups.set(key, [item])
+  }
+  return Array.from(groups.values())
+})
+
+function rarityLabel(rarity: ItemView['rarity']): string {
+  return { common: 'Común', magic: 'Mágico', rare: 'Raro', legendary: 'Legendario' }[rarity]
+}
+
+function durationLabel(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  return [minutes ? `${minutes} min` : '', seconds % 60 ? `${seconds % 60} s` : ''].filter(Boolean).join(' ') || '0 s'
+}
 
 function label(text: LocalizedText): string {
   return text.fallback
@@ -380,11 +415,12 @@ onBeforeUnmount(() => {
 <template>
   <section
     class="v2-cycle"
-    :class="{ 'v2-cycle--focused': visitorId }"
-    :aria-labelledby="!visitorId || visibleExpeditions.length ? 'v2-cycle-title' : undefined"
-    :aria-label="visitorId && !visibleExpeditions.length ? 'Acciones del visitante' : undefined"
+    :class="{ 'v2-cycle--focused': visitorId, 'v2-cycle--trade': tradeVisitor }"
+    :aria-labelledby="showJourneyHeader ? 'v2-cycle-title' : undefined"
+    :aria-label="!showJourneyHeader ? 'Acciones del visitante' : undefined"
+    :aria-busy="operationState === 'pending'"
   >
-    <header v-if="!visitorId || visibleExpeditions.length" class="v2-cycle__header">
+    <header v-if="showJourneyHeader" class="v2-cycle__header">
       <div>
         <h2 id="v2-cycle-title">{{ visitorId ? 'Estado del viaje' : 'Ciclo de visitantes' }}</h2>
         <p v-if="game" class="v2-cycle__muted">
@@ -417,6 +453,70 @@ onBeforeUnmount(() => {
     <div v-else-if="loadState === 'empty' || !game" class="v2-cycle__empty" data-testid="v2-empty">
       <p>No pudimos cargar la partida. Reintentá desde esta pantalla.</p>
     </div>
+
+    <form v-else-if="tradeVisitor" class="trade-desk" data-testid="v2-ready" @submit.prevent="!locked && accept(tradeVisitor)">
+      <div class="trade-desk__body">
+        <section class="trade-contract" aria-labelledby="trade-contract-title">
+          <h3 id="trade-contract-title">El trato</h3>
+          <label v-if="contractAction(tradeVisitor)" class="v2-cycle__field">
+            Contrato
+            <select v-model="contractOptions[tradeVisitor.visitorId]" class="v2-cycle__select" :disabled="locked">
+              <option v-for="binding in contractAction(tradeVisitor)?.execution.bindings" :key="binding.optionId" :value="binding.optionId">{{ contractOptionLabel(tradeVisitor, binding.optionId) }}</option>
+            </select>
+          </label>
+          <template v-if="tradeOption">
+            <p class="trade-contract__description">{{ label(tradeOption.description) }}</p>
+            <dl class="trade-terms">
+              <div><dt>Duración</dt><dd>{{ durationLabel(tradeOption.durationSeconds) }}</dd></div>
+              <div><dt>Oro para la caravana</dt><dd>{{ tradeOption.caravanGoldShareBps / 100 }}%</dd></div>
+              <div><dt>Prioridad del botín</dt><dd>{{ tradeOption.lootPriority === 'caravan_first' ? 'Caravana' : 'Visitante' }}</dd></div>
+              <div><dt>Retirada</dt><dd>{{ tradeOption.retreatThreshold === null ? 'Sin retirada' : `${tradeOption.retreatThreshold} de vida` }}</dd></div>
+              <div><dt>Comisión por objeto</dt><dd>{{ tradeOption.loanFeeGold }} oro</dd></div>
+            </dl>
+            <p class="trade-contract__note">La comisión se suma a la parte de oro de la caravana, hasta el botín disponible.</p>
+            <ul v-if="tradeOption.consequences.length" class="trade-consequences"><li v-for="consequence in tradeOption.consequences" :key="consequence.text.key">{{ label(consequence.text) }}</li></ul>
+          </template>
+          <div v-if="!tradeBinding" class="trade-unavailable" role="status">
+            <p>{{ actionReason(actionsOf(tradeVisitor), 'accept_contract') }}</p>
+            <button v-if="reconcileAction" class="v2-cycle__button" type="button" :disabled="locked" @click="emit('reconcileGame')">Actualizar sucesos</button>
+          </div>
+        </section>
+        <section class="trade-equipment" aria-labelledby="trade-equipment-title">
+          <div class="trade-equipment__heading"><h3 id="trade-equipment-title">Equipo en préstamo</h3><span>Opcional</span></div>
+          <p class="trade-equipment__intro">Elegí qué objetos acompañarán al visitante.</p>
+          <div v-if="loanGroups.length" class="loan-list">
+            <component :is="group.length > 1 ? 'details' : 'div'" v-for="group in loanGroups" :key="group[0]!.itemId" class="loan-group">
+              <summary v-if="group.length > 1">
+                <ItemSprite :item-type="itemTypeForSlot(group[0]!.slot)" />
+                <span class="loan-row__copy"><strong>{{ label(group[0]!.name) }}</strong><span>Nivel {{ group[0]!.level }} · {{ rarityLabel(group[0]!.rarity) }}</span><small>{{ group.length }} copias iguales · Elegir copias</small></span>
+                <span class="loan-group__count">{{ group.filter(item => selectedTradeLoans.includes(item.itemId)).length }}/{{ group.length }}</span>
+              </summary>
+              <label v-for="(item, index) in group" :key="item.itemId" class="loan-row" :class="{ 'loan-row--selected': selectedTradeLoans.includes(item.itemId) }">
+                <input type="checkbox" :value="item.itemId" :disabled="locked" :checked="selectedTradeLoans.includes(item.itemId)" @change="toggleLoan(contractLoans, tradeVisitor.visitorId, item.itemId, eventChecked($event))">
+                <ItemSprite :item-type="itemTypeForSlot(item.slot)" />
+                <span class="loan-row__copy">
+                  <strong>{{ label(item.name) }}<span v-if="group.length > 1" class="loan-row__instance"> · Copia {{ index + 1 }}</span></strong>
+                  <span>Nivel {{ item.level }} · {{ rarityLabel(item.rarity) }}</span>
+                  <small v-if="item.identification === 'unidentified'">Sin identificar</small>
+                  <template v-else>
+                    <small v-for="affix in item.affixes" :key="affix.affixId">{{ label(affix.name) }}: {{ label(affix.valueText) }}</small>
+                    <small v-if="item.activeImprint">{{ label(item.activeImprint.name) }}: {{ label(item.activeImprint.effectText) }}</small>
+                  </template>
+                </span>
+              </label>
+            </component>
+          </div>
+          <p v-else class="trade-equipment__empty">No hay objetos disponibles para prestar con este contrato.</p>
+        </section>
+      </div>
+      <footer class="trade-footer">
+        <p aria-live="polite"><strong>{{ selectedTradeLoans.length }}</strong> {{ selectedTradeLoans.length === 1 ? 'objeto en préstamo' : 'objetos en préstamo' }}</p>
+        <div class="trade-footer__actions">
+          <button class="v2-cycle__button trade-footer__back" type="button" @click="emit('close')">Volver al campamento</button>
+          <button class="v2-cycle__button v2-cycle__button--primary" type="submit" :disabled="locked || !tradeBinding">{{ operationState === 'pending' ? 'Aceptando…' : 'Aceptar contrato' }}</button>
+        </div>
+      </footer>
+    </form>
 
     <div v-else class="v2-cycle__body" data-testid="v2-ready">
       <section class="v2-cycle__panel" aria-labelledby="v2-visitors-title">
@@ -795,6 +895,7 @@ onBeforeUnmount(() => {
 }
 
 .v2-cycle__actions {
+  align-items: flex-start;
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
@@ -884,6 +985,62 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   display: block;
   min-height: 8rem;
+}
+
+.v2-cycle--trade { display: flex; flex-direction: column; gap: 0; min-height: 0; overflow: hidden; }
+.v2-cycle--trade > .v2-cycle__status { flex: 0 0 auto; margin: 0; padding: .75rem 1.5rem; }
+.v2-cycle--trade > .v2-cycle__button { align-self: stretch; flex: 0 0 auto; margin: .5rem 1.5rem; width: auto; }
+.trade-desk { color-scheme: dark; display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.trade-desk__body { display: grid; flex: 1; gap: 2rem; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); min-height: 0; overflow: hidden; padding: 1.5rem; }
+.trade-desk h3 { color: var(--text); font-family: Georgia, 'Times New Roman', serif; font-size: 1.4rem; margin: 0 0 1rem; }
+.trade-contract, .trade-equipment { min-height: 0; min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.trade-contract .v2-cycle__field { align-content: start; color: var(--muted); font-size: .875rem; gap: .5rem; }
+.trade-contract .v2-cycle__select { color: var(--text); font-size: 1rem; height: 2.875rem; }
+.trade-contract__description { line-height: 1.6; margin: 1rem 0; }
+.trade-terms { margin: 1.5rem 0 0; }
+.trade-terms div { align-items: baseline; border-top: 1px solid var(--line); display: flex; gap: 1rem; justify-content: space-between; padding: .75rem 0; }
+.trade-terms dt { color: var(--muted); font-size: .875rem; }
+.trade-terms dd { font-variant-numeric: tabular-nums; margin: 0; text-align: right; }
+.trade-contract__note { color: var(--muted); font-size: .8125rem; line-height: 1.55; margin: .5rem 0 0; }
+.trade-consequences { color: var(--accent-2); font-size: .875rem; line-height: 1.6; padding-left: 1rem; }
+.trade-unavailable { color: var(--accent-2); line-height: 1.6; }
+.trade-equipment { border-left: 1px solid var(--line); padding-left: 2rem; }
+.trade-equipment__heading { align-items: baseline; display: flex; flex-wrap: wrap; gap: .5rem 1rem; justify-content: space-between; }
+.trade-equipment__heading h3 { margin-bottom: .4rem; }
+.trade-equipment__heading > span, .trade-equipment__intro { color: var(--muted); font-size: .875rem; }
+.trade-equipment__intro { line-height: 1.5; margin: 0 0 1rem; }
+.trade-equipment__empty { color: var(--muted); line-height: 1.6; margin: 2rem 0; }
+.loan-group { border-top: 1px solid var(--line); }
+.loan-group summary { align-items: center; cursor: pointer; display: flex; gap: .75rem; list-style: none; min-height: 4.75rem; padding: .65rem .25rem; }
+.loan-group summary::-webkit-details-marker { display: none; }
+.loan-group summary::after { border-bottom: 1.5px solid currentColor; border-right: 1.5px solid currentColor; content: ''; flex: 0 0 auto; height: .4rem; margin-right: .5rem; transform: rotate(45deg); width: .4rem; }
+.loan-group[open] summary::after { transform: rotate(225deg); }
+.loan-group__count { color: var(--accent-2); font-size: .875rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.loan-row { align-items: center; cursor: pointer; display: flex; gap: .65rem; min-height: 4.75rem; padding: .65rem .25rem; }
+.loan-row--selected { background: #2b241a; }
+.loan-row:hover, .loan-group summary:hover { background: var(--panel-2); }
+.loan-row input { accent-color: var(--accent-2); flex: 0 0 auto; height: 1.125rem; margin: 0 .15rem; width: 1.125rem; }
+.loan-row__copy { display: grid; flex: 1; gap: .2rem; min-width: 0; overflow-wrap: anywhere; }
+.loan-row__copy strong { font-size: .9375rem; font-weight: 600; line-height: 1.35; }
+.loan-row__copy > span, .loan-row__copy small, .loan-row__instance { color: var(--muted); font-size: .8125rem; font-weight: 400; line-height: 1.4; }
+.loan-group :deep(.item-sprite) { height: 2.75rem; width: 2.75rem; }
+.trade-footer { align-items: center; background: #201a14; border-top: 1px solid #5c4730; display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: .75rem; justify-content: space-between; padding: 1rem 1.5rem; }
+.trade-footer p { color: var(--muted); font-size: .875rem; margin: 0; }
+.trade-footer p strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.trade-footer__actions { display: flex; gap: .75rem; }
+.trade-footer .v2-cycle__button { justify-content: center; }
+.trade-footer__back { background: transparent; border-color: transparent; }
+.trade-footer .v2-cycle__button--primary { background: #a94327; border-color: #bf6144; color: #fff4e8; }
+.trade-footer .v2-cycle__button--primary:not(:disabled):hover { background: #bd4c2e; }
+.trade-desk :is(button, select, input, summary):focus-visible { outline: 3px solid var(--accent-2); outline-offset: 3px; }
+
+@media (max-width: 680px) {
+  .trade-desk__body { align-content: start; gap: 1.75rem; grid-template-columns: 1fr; overflow-y: auto; overscroll-behavior: contain; padding: 1rem; }
+  .trade-contract, .trade-equipment { min-height: auto; overflow: visible; }
+  .trade-equipment { border-left: 0; border-top: 1px solid var(--line); padding: 1.5rem 0 0; }
+  .trade-footer { gap: .5rem; padding: .75rem 1rem; }
+  .trade-footer__actions { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; width: 100%; }
+  .trade-footer .v2-cycle__button { font-size: .8125rem; padding: .5rem; }
 }
 
 @media (max-width: 680px) {

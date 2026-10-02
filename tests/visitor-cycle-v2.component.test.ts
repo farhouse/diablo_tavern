@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import fixtures from '../contracts/v2-etapa0-4/fixtures.json'
 import type { GameView, VisitorView } from '../shared/types/v2-game-view'
 import VisitorCycleV2 from '../components/VisitorCycleV2.vue'
+import { campTradeFixture } from './fixtures/camp-trade'
 
 const cases = fixtures.integratedPositiveCases.map((candidate) => ({ id: candidate.id, value: candidate.value as GameView }))
 const retainedCases = fixtures.retainedPositiveCases as Array<{ id: string, value: unknown }>
@@ -182,6 +183,58 @@ describe('VisitorCycleV2', () => {
     await recovery.get('[data-testid="recovery-open"] input[type="checkbox"]').setValue(true)
     await recovery.get('[data-testid="recovery-open"] button').trigger('click')
     expect(recovery.emitted('assignRecovery')?.[0]).toEqual([{ kind: 'recovery', recoveryId: 'r1', visitorId: 'v3', optionId: 'ro2', loanItemIds: ['i4'] }])
+  })
+
+  it('groups only equivalent loans and submits individual eligible IDs from a large inventory', async () => {
+    const wrapper = mount(VisitorCycleV2, { props: { game: campTradeFixture(), visitorId: 'v1', loadState: 'ready' } })
+    const desk = wrapper.get('.trade-desk')
+    const group = desk.get('details.loan-group')
+    expect(desk.findAll('details.loan-group')).toHaveLength(1)
+    expect(group.findAll('input[type="checkbox"]').map((input) => input.attributes('value'))).toEqual(['loan-1', 'loan-2', 'loan-3', 'loan-4'])
+    expect(desk.findAll('input[type="checkbox"]')).toHaveLength(19)
+    expect(desk.text()).not.toContain('Reliquia no disponible')
+    expect(desk.get('input[value="loan-5"]').element.closest('details.loan-group')).toBeNull()
+    expect(desk.get('input[value="loan-6"]').element.closest('details.loan-group')).toBeNull()
+    expect(desk.get('input[value="loan-5"]').element.closest('.loan-row')?.textContent).toContain('7')
+    expect(desk.get('input[value="loan-6"]').element.closest('.loan-row')?.textContent).toContain('+8')
+
+    for (const itemId of ['loan-1', 'loan-2', 'loan-5', 'loan-6']) await desk.get(`input[value="${itemId}"]`).setValue(true)
+    expect((desk.get('input[value="loan-3"]').element as HTMLInputElement).checked).toBe(false)
+    await desk.trigger('submit')
+    expect(wrapper.emitted('acceptContract')?.[0]).toEqual([{ kind: 'contract', visitorId: 'v1', optionId: 'o1', loanItemIds: ['loan-1', 'loan-2', 'loan-5', 'loan-6'] }])
+
+    await desk.get('select').setValue('o2')
+    expect(desk.findAll('input[type="checkbox"]').map((input) => input.attributes('value'))).toEqual(['loan-2', 'loan-3'])
+    await desk.trigger('submit')
+    expect(wrapper.emitted('acceptContract')?.[1]).toEqual([{ kind: 'contract', visitorId: 'v1', optionId: 'o2', loanItemIds: ['loan-2'] }])
+    wrapper.unmount()
+  })
+
+  it('keeps an assigned recovery visible when its focused visitor is still available', () => {
+    const game = fixture('integrated-recovery')
+    const visitor = game.visitors[0]!
+    const recovery = game.recoveries[0]!
+    const completesAt = '2026-09-14T11:30:00Z'
+    expect(visitor.state).toBe('available')
+    game.recoveries = [{
+      recoveryId: recovery.recoveryId,
+      sourceExpeditionId: recovery.sourceExpeditionId,
+      itemIds: recovery.itemIds,
+      state: 'assigned',
+      actions: [],
+      assignedVisitorId: visitor.visitorId,
+      assignedAt: game.serverNow,
+      completesAt
+    }]
+
+    const wrapper = mount(VisitorCycleV2, { props: { game, visitorId: visitor.visitorId, loadState: 'ready' } })
+    expect(wrapper.find('.trade-desk').exists()).toBe(false)
+    const assigned = wrapper.get('[data-testid="recovery-assigned"]')
+    expect(assigned.isVisible()).toBe(true)
+    expect(assigned.text()).toContain(visitor.name.fallback)
+    expect(assigned.text()).toContain(completesAt)
+    expect(wrapper.get('header').text()).toContain('Actualizar sucesos')
+    wrapper.unmount()
   })
 
   it('keeps recovery bindings distinct when opaque IDs contain separators and renders only published copy', async () => {

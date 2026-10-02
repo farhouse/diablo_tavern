@@ -52,7 +52,7 @@
       </section>
     </section>
 
-    <dialog ref="campDialog" class="camp-dialog" :class="{ 'camp-dialog--visitor': selectedVisitor }" aria-labelledby="camp-dialog-title" @close="onDialogClosed" @click="closeOnBackdrop">
+    <dialog ref="campDialog" class="camp-dialog" :class="{ 'camp-dialog--trade': selectedVisitor && !selectedVisitorRecovering && ['available', 'negotiating'].includes(selectedVisitor.state), 'camp-dialog--appraiser': service === 'appraiser', 'camp-dialog--blacksmith': service === 'blacksmith' }" aria-labelledby="camp-dialog-title" @close="onDialogClosed" @click="closeOnBackdrop">
       <header class="camp-dialog__header">
         <div class="camp-dialog__identity">
           <HeroSprite v-if="selectedVisitor" :hero-class="heroClassForVisitor(selectedVisitor.visitorId)" alt="" />
@@ -96,6 +96,7 @@
         @abandon-recovery="game.abandonRecovery"
         @retry="game.retryUncertain"
         @reload="game.retryConflictReload"
+        @close="closeDialog"
       />
     </dialog>
   </main>
@@ -120,8 +121,9 @@ const closeButton = ref<HTMLButtonElement | null>(null)
 const dialogTrigger = ref<HTMLElement | null>(null)
 const activeVisitors = computed(() => game.game?.visitors.filter((visitor) => !['departed', 'dead'].includes(visitor.state)).slice(0, 4) ?? [])
 const selectedVisitor = computed(() => game.game?.visitors.find((visitor) => visitor.visitorId === selectedVisitorId.value) ?? null)
+const selectedVisitorRecovering = computed(() => game.game?.recoveries.some((recovery) => recovery.state === 'assigned' && recovery.assignedVisitorId === selectedVisitorId.value) ?? false)
 const dialogTitle = computed(() => selectedVisitor.value?.name.fallback ?? (service.value === 'blacksmith' ? 'Herrería' : 'Tasador'))
-const dialogDescription = computed(() => selectedVisitor.value ? visitorState(selectedVisitor.value.state) : service.value === 'blacksmith' ? 'Mejorá o desmantelá objetos sin abandonar el campamento.' : 'Revelá las propiedades de los objetos sin abandonar el campamento.')
+const dialogDescription = computed(() => selectedVisitor.value ? (selectedVisitorRecovering.value ? 'En recuperación' : visitorState(selectedVisitor.value.state)) : service.value === 'blacksmith' ? 'Mejorá o desmantelá objetos sin abandonar el campamento.' : 'Revelá las propiedades de los objetos sin abandonar el campamento.')
 
 function enabled(actions: readonly ActionAvailability[], action: ActionAvailability['action']) {
   return actions.some((candidate) => candidate.action === action && candidate.enabled)
@@ -218,21 +220,22 @@ function visitorState(state: string) {
 .hero-portrait small { color: #bdb1a0; }
 .hero-empty { align-self: center; color: #bdb1a0; margin: auto; }
 .camp-loading { align-items: center; background: url('/images/game/camp-modular/camp-base.png') center / cover; border: 1px solid #5c4730; display: flex; justify-content: center; min-height: 38rem; text-shadow: 0 2px 4px #000; }
-.camp-dialog { animation: dialog-enter 180ms cubic-bezier(.16, 1, .3, 1); background: linear-gradient(135deg, rgba(35, 27, 19, .98), rgba(12, 11, 10, .99)); border: 2px solid #9d7444; box-shadow: 0 1.5rem 5rem rgba(0, 0, 0, .75), inset 0 0 0 1px #2d2218; color: var(--text); margin: auto; max-height: 90dvh; max-width: 70rem; overflow: auto; padding: 0; scrollbar-color: #80613d #100d0a; width: calc(100% - 2rem); }
-.camp-dialog--visitor { max-width: 52rem; }
-.camp-dialog::backdrop { background: rgba(3, 4, 7, .88); backdrop-filter: blur(5px) saturate(.65); }
-.camp-dialog__header { align-items: center; background: linear-gradient(90deg, rgba(9, 8, 8, .96), rgba(31, 20, 12, .88)), url('/images/game/camp-modular/camp-base.png') center 42% / cover; border-bottom: 1px solid #8d683e; box-shadow: 0 .75rem 2rem rgba(0, 0, 0, .38); display: flex; justify-content: space-between; min-height: 6rem; padding: 1rem 1.25rem; position: sticky; top: 0; z-index: 5; }
+.camp-dialog { animation: dialog-enter 180ms cubic-bezier(.16, 1, .3, 1); background: #1b1712; border: 1px solid #9d7444; box-shadow: 0 1.5rem 5rem rgba(0, 0, 0, .65); color: var(--text); margin: auto; max-height: 90dvh; max-width: 64rem; overflow: hidden; padding: 0; scrollbar-color: #80613d #100d0a; width: calc(100% - 2rem); }
+.camp-dialog[open] { display: flex; flex-direction: column; }
+.camp-dialog--trade { height: min(48rem, 90dvh); }
+.camp-dialog::backdrop { background: rgba(3, 4, 7, .62); backdrop-filter: blur(1px); }
+.camp-dialog__header { align-items: center; background: linear-gradient(90deg, rgba(15, 12, 9, .94), rgba(22, 16, 10, .42)), url('/images/game/camp-modular/camp-base.png') center 42% / cover; border-bottom: 1px solid #725536; display: flex; flex: 0 0 auto; gap: 1rem; justify-content: space-between; min-height: 8rem; padding: .75rem 1.5rem; z-index: 5; }
+.camp-dialog--blacksmith .camp-dialog__header { background-position: center, left 58%; background-size: cover, 140%; }
+.camp-dialog--appraiser .camp-dialog__header { background-image: linear-gradient(90deg, #100e14 30%, rgba(20, 14, 28, .35)), url('/images/game/camp-modular/expansion-appraiser.png'); background-position: center, right 45%; background-repeat: no-repeat; background-size: cover, 24rem; }
 .camp-dialog__identity { align-items: center; display: flex; gap: 1rem; min-width: 0; text-shadow: 0 2px 4px #000; }
-.camp-dialog__identity :deep(.hero-sprite) { flex: 0 0 auto; height: 5.5rem; width: 3.7rem; }
+.camp-dialog__identity :deep(.hero-sprite) { flex: 0 0 auto; height: 8rem; width: 5.3rem; }
 .camp-dialog__header h2 { color: #f0c26a; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(1.55rem, 3vw, 2.15rem); letter-spacing: -.02em; margin: 0; }
 .camp-dialog__header p { color: #d8c8ae; margin: .25rem 0 0; }
 .camp-dialog__close { align-items: center; background: rgba(8, 8, 10, .72); border: 1px solid #80613d; color: #f4e8d2; cursor: pointer; display: flex; flex: 0 0 auto; height: 2.75rem; justify-content: center; width: 2.75rem; }
 .camp-dialog__close:hover { background: #2a1d14; border-color: #f0c26a; }
 .camp-dialog__close svg { fill: none; height: 1.25rem; stroke: currentColor; stroke-linecap: round; stroke-width: 1.75; width: 1.25rem; }
-.camp-dialog :deep(.equipment-v2) { padding: 1.25rem; }
-.camp-dialog :deep(.v2-cycle) { padding: 1.25rem; }
-.camp-dialog :deep(.equipment-summary) { background: rgba(8, 8, 10, .58); border-color: #5c4730; }
-.camp-dialog :deep(.equipment-item) { background: rgba(13, 11, 9, .9); border-color: #463827; border-top-color: var(--rarity-color, #80613d); box-shadow: 0 .75rem 1.5rem rgba(0, 0, 0, .22); }
+.camp-dialog :deep(.equipment-v2), .camp-dialog :deep(.v2-cycle) { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1.5rem; }
+.camp-dialog :deep(.v2-cycle--trade) { flex: 1; overflow: hidden; padding: 0; }
 
 @keyframes dialog-enter { from { opacity: 0; transform: translateY(.75rem) scale(.985); } }
 
@@ -261,10 +264,12 @@ function visitorState(state: string) {
   .next-order span { display: none; }
   .next-order a { text-align: center; }
   .camp-dialog { max-height: 94dvh; width: calc(100% - 1rem); }
+  .camp-dialog--trade { height: 94dvh; }
   .camp-dialog__header { min-height: 5rem; padding: .75rem; }
   .camp-dialog__identity { gap: .65rem; }
-  .camp-dialog__identity :deep(.hero-sprite) { height: 4rem; width: 2.7rem; }
+  .camp-dialog__identity :deep(.hero-sprite) { height: 5.5rem; width: 3.7rem; }
   .camp-dialog :deep(.equipment-v2), .camp-dialog :deep(.v2-cycle) { padding: .75rem; }
+  .camp-dialog :deep(.v2-cycle--trade) { padding: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) { .camp-dialog { animation: none; } }

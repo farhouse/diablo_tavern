@@ -79,6 +79,12 @@ Cada edificio es navegación contextual: zona completa clicable, nombre persiste
 
 Herrería y Tasador usan un `dialog` modal con fondo atenuado, encabezado fijo y cierre explícito. Al abrir, el foco entra al diálogo; Escape, botón y backdrop permiten cerrar; al cerrar, el foco vuelve al edificio que lo abrió. Confirmaciones internas atrapan el foco, anuncian consecuencias y dejan inerte el contenido subyacente.
 
+El campamento sigue reconocible detrás del diálogo. Los servicios comparten marco y usan un recorte de su propio lugar en el encabezado. El inventario se presenta en filas separadas por líneas, con sprite, nombre, nivel, rareza textual y acciones de altura normal; no anidar tarjetas.
+
+### Mesa de trato
+
+El visitante conserva su sprite destacado, nombre y estado en el encabezado. La negociación separa las condiciones del contrato del equipo opcional en dos columnas; en móvil se apilan. Las condiciones vienen de la partida, no se calculan probabilidades ni recompensas inventadas. Sólo se agrupan copias identificadas con las mismas propiedades visibles; al expandirlas se elige cada objeto por separado. El cuerpo puede desplazarse, pero el conteo de préstamos, «Volver al campamento» y «Aceptar contrato» permanecen accesibles en el pie. La acción principal usa terracota, reservando dorado para foco y valores.
+
 ### Héroes
 
 Los héroes visibles representan visitantes activos, no unidades contratables. Cada retrato combina sprite, nombre y estado textual, abre su flujo contextual en un diálogo sin abandonar el campamento y admite truncado seguro sin perder el nombre accesible.

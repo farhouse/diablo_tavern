@@ -1,7 +1,7 @@
 <template>
-  <div class="equipment-v2">
-    <div ref="content" tabindex="-1" :inert="Boolean(confirmation)">
-    <div v-if="loadState === 'loading' && !game" class="equipment-state" aria-busy="true">Cargando inventario confirmado…</div>
+  <div class="equipment-v2" :class="{ 'equipment-v2--service': service !== 'all' }">
+    <div ref="content" class="equipment-content" tabindex="-1" :inert="Boolean(confirmation)">
+    <div v-if="loadState === 'loading' && !game" class="equipment-state" aria-busy="true">{{ service === 'all' ? 'Cargando inventario confirmado…' : 'Preparando los objetos…' }}</div>
     <div v-else-if="!game" class="equipment-state" role="alert">
       <h2>No hay inventario disponible</h2>
       <p>No pudimos cargar la partida.</p>
@@ -11,7 +11,7 @@
       <section class="equipment-summary" aria-label="Recursos y capacidad">
         <div><span class="eyebrow">Oro</span><strong>{{ game.resources.gold }}g</strong></div>
         <div><span class="eyebrow">Capacidad</span><strong>{{ game.capacity.used }} / {{ game.capacity.limit }}</strong><small v-if="game.capacity.reserved">{{ game.capacity.reserved }} reservados</small></div>
-        <div class="materials"><span class="eyebrow">Materiales</span><span v-for="(amount, name) in game.resources.materials" :key="name">{{ name }} · {{ amount }}</span></div>
+        <div class="materials"><span class="eyebrow">Materiales</span><span v-for="(amount, name) in game.resources.materials" :key="name">{{ name }} · {{ amount }}</span><span v-if="service !== 'all' && !Object.keys(game.resources.materials).length">Sin materiales</span></div>
       </section>
 
       <div v-if="operationState !== 'idle' || errorMessage" class="page-alert" :class="statusIsError ? 'page-alert--error' : 'page-alert--success'" :role="statusIsError ? 'alert' : 'status'" :aria-live="statusIsError ? 'assertive' : 'polite'">
@@ -25,23 +25,23 @@
       </section>
 
       <section class="service-board" aria-labelledby="services-title">
-        <div class="section-title"><div><span class="eyebrow">{{ serviceLabel }}</span><h2 id="services-title">Inventario de la caravana</h2></div><span class="tag">Revisión {{ game.revision }}</span></div>
-        <div v-if="!game.items.length" class="card equipment-state"><h3>No tenés objetos guardados</h3><p class="muted">Los objetos que consigas aparecerán acá.</p></div>
+        <div class="section-title"><div><span v-if="service === 'all'" class="eyebrow">{{ serviceLabel }}</span><h2 id="services-title">{{ service === 'all' ? 'Inventario de la caravana' : 'Objetos de la caravana' }}</h2></div><span v-if="service === 'all'" class="tag">Revisión {{ game.revision }}</span><span v-else class="inventory-count">{{ game.items.length }} {{ game.items.length === 1 ? 'objeto' : 'objetos' }}</span></div>
+        <div v-if="!game.items.length" class="card equipment-state"><h3>No tenés objetos guardados</h3><p class="muted">{{ service === 'all' ? 'Los objetos que consigas aparecerán acá.' : 'Revisá tus expediciones y volvé cuando tengas objetos guardados.' }}</p></div>
         <div v-else class="item-grid">
           <article v-for="item in game.items" :key="item.itemId" class="card equipment-item" :class="`rarity-${item.rarity}`">
             <div class="item-identity">
-              <ItemSprite :item-type="itemTypeForSlot(item.slot)" :alt="`Objeto: ${item.name.fallback}`" />
+              <ItemSprite :item-type="itemTypeForSlot(item.slot)" :alt="service === 'all' ? `Objeto: ${item.name.fallback}` : ''" />
               <div>
-                <div class="item-topline"><span class="tag">{{ item.rarity }}</span><span class="muted">nivel {{ item.level }}</span></div>
+                <div class="item-topline"><span class="tag">{{ service === 'all' ? item.rarity : rarityLabel(item.rarity) }}</span><span class="muted">nivel {{ item.level }}</span></div>
                 <h3>{{ item.name.fallback }}</h3>
                 <p class="muted">{{ identification(item) }} · {{ owner(item) }} · {{ custody(item) }}</p>
               </div>
             </div>
             <ul v-if="item.identification === 'identified'" class="affixes"><li v-for="affix in item.affixes" :key="affix.affixId">{{ affix.name.fallback }} {{ affix.valueText.fallback }}</li><li v-if="item.activeImprint">Impronta: {{ item.activeImprint.name.fallback }}</li></ul>
-            <p v-else class="unidentified">Los afijos están ocultos hasta identificar.</p>
+            <p v-else class="unidentified">{{ service === 'all' ? 'Los afijos están ocultos hasta identificar.' : 'Propiedades sin revelar.' }}</p>
             <div class="item-actions">
               <span v-for="action in visibleActions(item)" :key="action.authorizationId" class="action-control">
-                <button :id="`action-${action.authorizationId}`" class="btn" :disabled="!action.enabled || operationState === 'pending' || operationState === 'uncertain' || snapshotStale" :aria-describedby="!action.enabled ? `reason-${action.authorizationId}` : undefined" @click="choose(item.itemId, action, $event)">{{ action.label.fallback }}</button>
+                <button :id="`action-${action.authorizationId}`" class="btn" :class="{ primary: service !== 'all' && action.action !== 'dismantle_item' }" :disabled="!action.enabled || operationState === 'pending' || operationState === 'uncertain' || snapshotStale" :aria-describedby="!action.enabled ? `reason-${action.authorizationId}` : undefined" @click="choose(item.itemId, action, $event)">{{ service !== 'all' && action.action === 'queue_blacksmith_job' ? 'Mejorar' : action.label.fallback }}</button>
                 <span v-if="!action.enabled" :id="`reason-${action.authorizationId}`" class="action-reason">{{ action.reasonText.fallback }}</span>
               </span>
             </div>
@@ -49,12 +49,16 @@
         </div>
       </section>
 
-      <section v-if="service !== 'appraiser'" class="jobs" aria-labelledby="jobs-title"><div class="section-title"><h2 id="jobs-title">Trabajos de servicio</h2><span class="muted">El servidor decide cuándo terminan</span></div><div v-if="!visibleJobs.length" class="card"><p class="muted">No hay trabajos en curso.</p></div><ul v-else class="job-list"><li v-for="job in visibleJobs" :key="job.jobId"><strong>{{ job.service === 'blacksmith' ? 'Herrero' : 'Encantador' }}</strong><span>{{ job.state }}</span><time>{{ jobTime(job) }}</time></li></ul></section>
+      <section v-if="service !== 'appraiser'" class="jobs" aria-labelledby="jobs-title">
+        <div class="section-title"><h2 id="jobs-title">{{ service === 'all' ? 'Trabajos de servicio' : 'Trabajos de herrería' }}</h2><span v-if="service === 'all'" class="muted">El servidor decide cuándo terminan</span></div>
+        <div v-if="!visibleJobs.length" class="card jobs-empty"><p class="muted">{{ service === 'all' ? 'No hay trabajos en curso.' : 'No hay trabajos en curso. Las mejoras que encargues aparecerán acá.' }}</p></div>
+        <ul v-else class="job-list"><li v-for="job in visibleJobs" :key="job.jobId"><strong>{{ service === 'all' ? (job.service === 'blacksmith' ? 'Herrero' : 'Encantador') : job.label.fallback }}</strong><span>{{ service === 'all' ? job.state : jobStateLabel(job.state) }}</span><time v-if="service === 'all' || 'completesAt' in job">{{ service !== 'all' ? 'Listo a las ' : '' }}{{ jobTime(job) }}</time></li></ul>
+      </section>
     </template>
     </div>
 
     <div v-if="confirmation" class="confirm-backdrop" role="presentation" @click.self="closeConfirmation()">
-      <section ref="dialog" class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" tabindex="-1" @keydown="trapFocus" @keydown.esc="closeConfirmation()">
+      <section ref="dialog" class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" tabindex="-1" @keydown="trapFocus" @keydown.esc.stop.prevent="closeConfirmation()">
         <h2 id="confirm-title">{{ confirmation.action.label.fallback }}</h2><p>{{ confirmation.option.description.fallback }}</p>
         <ul><li v-for="consequence in confirmation.option.consequences" :key="consequence.text.key">{{ consequence.text.fallback }}</li></ul>
         <div class="item-actions"><button ref="cancelButton" class="btn ghost" type="button" @click="closeConfirmation()">Cancelar</button><button class="btn primary" type="button" @click="confirm">Confirmar</button></div>
@@ -155,6 +159,8 @@ function submit(itemId: string, action: EquipmentEnabledAction, optionId: string
   }
 }
 function identification(item: ItemView) { return item.identification === 'identified' ? 'Identificado' : 'Sin identificar' }
+function rarityLabel(rarity: ItemView['rarity']) { return { common: 'Común', magic: 'Mágico', rare: 'Raro', legendary: 'Legendario' }[rarity] }
+function jobStateLabel(state: ServiceJobView['state']) { return { queued: 'En espera', active: 'En curso', completed: 'Completado', failed: 'Fallido', cancelled: 'Cancelado' }[state] }
 function owner(item: ItemView) { return item.owner.kind === 'caravan' ? 'Propiedad de la caravana' : 'Prestado por visitante' }
 function custody(item: ItemView) { return item.custody.kind === 'stash' ? 'Guardado' : 'En uso' }
 function jobTime(job: ServiceJobView) { return 'completesAt' in job ? new Date(job.completesAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : job.state }
@@ -196,6 +202,58 @@ function visibleActions(item: ItemView) {
 .confirm-backdrop { align-items: center; background: rgba(0,0,0,.7); display: flex; inset: 0; justify-content: center; padding: 1rem; position: fixed; z-index: 20; }
 .confirm-dialog { background: var(--panel); border: 1px solid var(--accent-2); max-width: 32rem; padding: 1.25rem; width: 100%; }
 .confirm-dialog h2, .confirm-dialog p { margin-top: 0; }
+.equipment-v2--service { font-size: 1rem; line-height: 1.5; }
+.equipment-v2--service .equipment-content { display: grid; gap: 1.5rem; min-width: 0; }
+.equipment-v2--service .equipment-summary { align-items: start; background: transparent; border: 0; border-bottom: 1px solid var(--line); gap: 1rem 2rem; grid-template-columns: auto auto minmax(0, 1fr); padding: 0 0 1.25rem; }
+.equipment-v2--service .equipment-summary strong { color: var(--text); font-size: 1rem; font-variant-numeric: tabular-nums; }
+.equipment-v2--service .equipment-summary > div:first-child strong { color: var(--accent-2); }
+.equipment-v2--service .equipment-summary .eyebrow { color: var(--muted); font-size: .875rem; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.equipment-v2--service .equipment-summary small { font-size: .875rem; }
+.equipment-v2--service .materials { align-content: start; display: flex; flex-wrap: wrap; gap: .25rem 1rem; font-size: .875rem; }
+.equipment-v2--service .materials .eyebrow { flex-basis: 100%; }
+.equipment-v2--service .materials span:not(.eyebrow) { color: var(--text); }
+.equipment-v2--service .section-title { align-items: center; gap: .5rem 1rem; margin-bottom: .75rem; }
+.equipment-v2--service .section-title h2 { font-size: 1rem; font-weight: 600; }
+.inventory-count { color: var(--muted); font-size: .875rem; white-space: nowrap; }
+.equipment-v2--service .item-grid { gap: 0; grid-template-columns: minmax(0, 1fr); }
+.equipment-v2--service .equipment-item { background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; column-gap: 1.5rem; grid-template-columns: minmax(0, 1fr) auto; padding: 1.25rem 0; row-gap: .5rem; }
+.equipment-v2--service .equipment-item:first-child { padding-top: .5rem; }
+.equipment-v2--service .item-identity { align-items: start; grid-column: 1; }
+.equipment-v2--service .item-identity > div { display: flex; flex-direction: column; gap: .25rem; }
+.equipment-v2--service .item-identity :deep(.item-sprite) { background: var(--panel-2); border: 1px solid var(--line); height: 56px; padding: .25rem; width: 56px; }
+.equipment-v2--service .equipment-item h3 { font-size: 1rem; font-weight: 600; line-height: 1.4; order: -1; }
+.equipment-v2--service .item-topline { gap: .5rem .75rem; justify-content: start; font-size: .875rem; }
+.equipment-v2--service .item-topline .tag { background: transparent; border: 0; color: var(--rarity-color, var(--muted)); font-size: inherit; padding: 0; }
+.equipment-v2--service .rarity-magic { --rarity-color: #83a8ee; }
+.equipment-v2--service .rarity-legendary { --rarity-color: #d3965f; }
+.equipment-v2--service .item-identity p { font-size: .875rem; }
+.equipment-v2--service .affixes, .equipment-v2--service .unidentified { font-size: .875rem; grid-column: 1; margin-left: 4.25rem; }
+.equipment-v2--service .affixes { color: var(--text); }
+.equipment-v2--service .unidentified { font-style: normal; }
+.equipment-v2--service .equipment-item > .item-actions { align-content: center; align-items: start; grid-column: 2; grid-row: 1 / span 2; justify-content: end; margin: 0; max-width: 19rem; padding: 0; }
+.equipment-v2--service .action-control { flex: 1 1 7.5rem; }
+.equipment-v2--service .item-actions .btn { font-size: .875rem; justify-content: center; }
+.equipment-v2--service .action-reason { font-size: .875rem; line-height: 1.4; max-width: 19rem; }
+.equipment-v2--service .equipment-state { background: transparent; border: 0; padding: 1rem 0 1.5rem; }
+.equipment-v2--service .equipment-state h3 { font-size: 1rem; }
+.equipment-v2--service .equipment-state p { color: var(--muted); max-width: 48ch; }
+.equipment-v2--service .jobs-empty { background: transparent; border: 0; padding: 0; }
+.equipment-v2--service .jobs-empty p { margin: 0; font-size: .875rem; }
+.equipment-v2--service .job-list { gap: 0; }
+.equipment-v2--service .job-list li { background: transparent; border: 0; border-bottom: 1px solid var(--line); font-size: .875rem; padding: .75rem 0; }
+.equipment-v2--service .job-list strong { flex: 1; font-weight: 500; }
+.equipment-v2--service .confirm-dialog { max-height: calc(100dvh - 2rem); overflow-y: auto; }
 @media (max-width: 600px) { .equipment-summary { grid-template-columns: repeat(2, 1fr); } .equipment-summary .materials { grid-column: 1 / -1; } }
+@media (max-width: 700px) {
+  .equipment-v2--service .equipment-item { grid-template-columns: minmax(0, 1fr); }
+  .equipment-v2--service .equipment-item > .item-actions { grid-column: 1; grid-row: auto; justify-content: start; margin-top: .25rem; max-width: none; }
+  .equipment-v2--service .action-control { flex: 0 1 auto; }
+}
+@media (max-width: 600px) {
+  .equipment-v2--service .equipment-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .equipment-v2--service .section-title { align-items: baseline; }
+  .equipment-v2--service .action-control { flex: 1 1 8rem; }
+  .equipment-v2--service .action-reason { max-width: none; }
+}
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
